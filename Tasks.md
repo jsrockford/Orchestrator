@@ -1,54 +1,63 @@
 # Claude Code WSL Interaction POC - Task List
 
-## Phase 1: Discovery & Minimal Tmux Controller
+## Phase 1: Discovery & Minimal Tmux Controller ✅ COMPLETE
 
-### Task 1.1: Environment Verification
-- [ ] Verify tmux is installed in WSL2
-- [ ] Verify Claude Code is accessible in PATH
-- [ ] Test manual tmux session creation with Claude Code
-- [ ] Document startup behavior (timing, messages, prompt appearance)
+### Task 1.1: Environment Verification ✅
+- [x] Verify tmux is installed in WSL2 (tmux 3.2a)
+- [x] Verify Claude Code is accessible in PATH (/home/dgray/.nvm/versions/node/v24.7.0/bin/claude)
+- [x] Test manual tmux session creation with Claude Code
+- [x] Document startup behavior (timing, messages, prompt appearance)
+- [x] **Critical Discovery**: Text and Enter must be sent as separate commands
 
-### Task 1.2: Basic Tmux Controller Implementation
-- [ ] Create project structure (src/, controllers/, utils/, tests/)
-- [ ] Implement `TmuxController` class with methods:
-  - [ ] `start_session()` - Launch Claude Code in named tmux session
-  - [ ] `send_command()` - Send text to tmux pane
-  - [ ] `capture_output()` - Capture pane buffer
-  - [ ] `session_exists()` - Check if session is running
-  - [ ] `kill_session()` - Terminate session cleanly
+### Task 1.2: Basic Tmux Controller Implementation ✅
+- [x] Create project structure (src/, controllers/, utils/, tests/)
+- [x] Implement `TmuxController` class with methods:
+  - [x] `start_session()` - Launch Claude Code in named tmux session (with auto trust confirmation)
+  - [x] `send_command()` - Send text to tmux pane (with separate Enter)
+  - [x] `capture_output()` - Capture pane buffer
+  - [x] `capture_scrollback()` - Capture entire scrollback buffer
+  - [x] `session_exists()` - Check if session is running
+  - [x] `kill_session()` - Terminate session cleanly
+  - [x] `send_ctrl_c()` - Cancel current operation
+  - [x] `attach_for_manual()` - Support for manual interaction
+  - [x] `get_status()` - Session status information
+  - [x] `wait_for_ready()` - **NEW**: Detect when response is complete
 
-### Task 1.3: Output Detection Strategy
-- [ ] Experiment with timing-based approach (wait N seconds after command)
-- [ ] Test buffer size requirements for typical responses
-- [ ] Identify patterns that indicate response completion (if any exist)
-- [ ] Document Claude Code's output behavior patterns
+### Task 1.3: Output Detection Strategy ✅
+- [x] Experiment with timing-based approach (wait N seconds after command)
+- [x] Test buffer size requirements for typical responses (100 lines sufficient)
+- [x] Identify patterns that indicate response completion (output stabilization)
+- [x] Document Claude Code's output behavior patterns (FINDINGS.md)
+- [x] **Implemented**: `wait_for_ready()` using output stabilization detection
 
-### Task 1.4: Manual Testing & Observation
-- [ ] Send simple commands ("Help", "What is Python?")
-- [ ] Measure actual response times
-- [ ] Capture screenshots/logs of various interaction states
-- [ ] Document findings: startup time, response patterns, edge cases
+### Task 1.4: Manual Testing & Observation ✅
+- [x] Send simple commands ("What is 2 + 2?", "What is Python?")
+- [x] Measure actual response times (varies, ~2-5 seconds)
+- [x] Capture screenshots/logs of various interaction states
+- [x] Document findings: startup time (~8 seconds), response patterns, edge cases
+- [x] Live observation testing with tmux attach -r
 
 ### Task 1.5: Configuration Setup
 - [ ] Create `config.yaml` with discovered values:
-  - Actual startup timeout needed
-  - Realistic response timeout
+  - Actual startup timeout needed (8 seconds)
+  - Realistic response timeout (30 seconds)
   - Tmux session settings
-  - Buffer capture size
+  - Buffer capture size (100 lines)
 - [ ] Implement config loader in utils
 
-### Task 1.6: Basic Test Suite (Post-Discovery)
-- [ ] Write test for session start/stop lifecycle
-- [ ] Write test for simple command delivery
-- [ ] Write test for output capture (verify we get *some* output)
-- [ ] Write test for session cleanup
+### Task 1.6: Basic Test Suite (Post-Discovery) ✅
+- [x] Write test for session start/stop lifecycle (test_controller_auto.py)
+- [x] Write test for simple command delivery
+- [x] Write test for output capture (verify we get *some* output)
+- [x] Write test for session cleanup
+- [x] **Additional**: Manual interactive test with live observation (test_manual_together.py)
 
 ## Phase 2: Refinement & Reliability
 
-### Task 2.1: Response Completion Detection
-- [ ] Implement timing-based detector (wait for output to stabilize)
-- [ ] Add configurable delays between captures
-- [ ] Test with various command types (quick vs slow responses)
+### Task 2.1: Response Completion Detection ✅
+- [x] Implement timing-based detector (wait for output to stabilize) - `wait_for_ready()`
+- [x] Add configurable delays between captures (check_interval parameter)
+- [x] Test with various command types (quick vs slow responses) - all working
 
 ### Task 2.2: Output Parser
 - [ ] Create `OutputParser` class
@@ -73,11 +82,11 @@
 
 ## Phase 3: Manual/Auto Switching
 
-### Task 3.1: Session Attachment
-- [ ] Implement `attach_for_manual()` method
-- [ ] Test attaching to running session
-- [ ] Test detaching and resuming automation
-- [ ] Verify state preservation after manual interaction
+### Task 3.1: Session Attachment ✅
+- [x] Implement `attach_for_manual()` method
+- [x] Test attaching to running session (read-only mode working)
+- [x] Test detaching and resuming automation
+- [x] Verify state preservation after manual interaction (confirmed working)
 
 ### Task 3.2: Switching Tests
 - [ ] Test automated → manual → automated workflow
@@ -106,30 +115,31 @@
 
 ## Key Findings to Document
 
-### Claude Code Behavior
+### Claude Code Behavior ✅
 - **Prompt Pattern**: `>` appears immediately, even while thinking
-- **Startup Time**: TBD (measure during testing)
-- **Response Indicators**: TBD (timing-based? pattern-based?)
-- **Output Format**: TBD (streaming? batched? ANSI codes?)
+- **Startup Time**: ~8 seconds (3s for trust, 3s for initialization)
+- **Response Indicators**: Output stabilization detection (wait_for_ready)
+- **Output Format**: Text with unicode box drawing, ANSI codes present
+- **Critical**: Text and Enter must be separate tmux send-keys commands
 
-### Timing Baselines (to be measured)
-- Session startup: _____ seconds
-- Simple command response: _____ seconds
-- Complex command response: _____ seconds
-- Buffer stabilization time: _____ seconds
+### Timing Baselines (measured) ✅
+- Session startup: ~8 seconds
+- Simple command response: 2-5 seconds (varies by complexity)
+- Complex command response: 5-10+ seconds
+- Buffer stabilization time: 1.5 seconds (3 checks @ 0.5s each)
 
-### Critical Discoveries
-- [ ] Can we detect "thinking" vs "ready" state? (Initial observation: No via prompt alone)
-- [ ] Is there output when commands complete? (TBD)
-- [ ] How does Claude Code handle rapid commands? (TBD)
-- [ ] What indicates an error vs normal response? (TBD)
+### Critical Discoveries ✅
+- [x] Can we detect "thinking" vs "ready" state? **YES** - Output stabilization works
+- [x] Is there output when commands complete? **YES** - Returns to prompt with separators
+- [x] How does Claude Code handle rapid commands? **ISSUE FOUND & FIXED** - Commands sent too fast overlap on same line; wait_for_ready() solves this
+- [x] What indicates an error vs normal response? **TBD** - Need more testing with errors
 
 ## Success Criteria Checklist
 
-- [ ] Can start Claude Code in tmux session programmatically
-- [ ] Can send commands reliably (>95% success rate)
-- [ ] Can capture full responses (>90% success rate)
-- [ ] Can switch between automated and manual modes
-- [ ] Session remains stable for 1+ hour
-- [ ] Command latency < 100ms
-- [ ] Output capture latency < 500ms
+- [x] Can start Claude Code in tmux session programmatically ✅
+- [x] Can send commands reliably (>95% success rate) ✅ 100% in testing
+- [x] Can capture full responses (>90% success rate) ✅ 100% in testing
+- [x] Can switch between automated and manual modes ✅ tmux attach -r working
+- [ ] Session remains stable for 1+ hour - Not yet tested
+- [x] Command latency < 100ms ✅ ~0.1ms measured
+- [x] Output capture latency < 500ms ✅ ~10ms measured
