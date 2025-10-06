@@ -73,6 +73,9 @@
   - [x] Format conversation in readable Q&A format
 - [x] Create test_output_parser.py with real Claude output
 - [x] All parsing functions validated and working
+- [x] **Updated**: Support both Claude (●) and Gemini (✦) response markers
+- [x] **Updated**: Support Gemini's boxed question format (│ > Question │)
+- [x] Verified compatibility with both AI CLIs (test_gemini_output_parser.py)
 
 ### Task 2.3: Error Handling
 - [ ] Handle "session already exists" scenario
@@ -100,35 +103,35 @@
 - [ ] Verify command history is maintained
 - [ ] Test edge cases (attach during command processing)
 
-## Phase 4: Gemini CLI Integration
+## Phase 4: Gemini CLI Integration ✅ COMPLETE
 
-### Task 4.1: Architecture Refactoring
-- [ ] Create GeminiDev git branch for safe development
-- [ ] Refactor TmuxController to be AI-agnostic
-- [ ] Create base class structure for multi-AI support
-- [ ] Update config.yaml with Gemini-specific settings
-- [ ] Ensure Claude Code functionality remains intact
+### Task 4.1: Architecture Refactoring ✅
+- [x] Create GeminiDev git branch for safe development
+- [x] Refactor TmuxController to be AI-agnostic (accepts ai_config parameter)
+- [x] Create base class structure for multi-AI support
+- [x] Update config.yaml with Gemini-specific settings (startup_timeout, response markers, etc.)
+- [x] Ensure Claude Code functionality remains intact (verified with tests)
 
-### Task 4.2: Gemini Controller Implementation
-- [ ] Create GeminiController class
-- [ ] Test Gemini CLI startup behavior and timing
-- [ ] Implement Gemini-specific prompt patterns
-- [ ] Adapt wait_for_ready() for Gemini's output patterns
-- [ ] Create separate tmux session management for Gemini
+### Task 4.2: Gemini Controller Implementation ✅
+- [x] Create GeminiController class (inherits from TmuxController)
+- [x] Test Gemini CLI startup behavior and timing (~3s vs Claude's ~8s)
+- [x] Implement Gemini-specific prompt patterns (✦ marker, box format)
+- [x] Adapt wait_for_ready() for Gemini's output patterns (config-driven ready_indicators)
+- [x] Create separate tmux session management for Gemini (gemini-poc session)
 
-### Task 4.3: Gemini Testing & Validation
-- [ ] Create worktree for Gemini testing (similar to Claude worktree)
-- [ ] Test Gemini session start/stop lifecycle
-- [ ] Test command injection and response capture
-- [ ] Verify wait_for_ready() works with Gemini
-- [ ] Manual observation testing with tmux attach -r
+### Task 4.3: Gemini Testing & Validation ✅
+- [x] Create worktree for Gemini testing (not needed - works in main directory)
+- [x] Test Gemini session start/stop lifecycle (test_gemini_controller.py)
+- [x] Test command injection and response capture (working perfectly)
+- [x] Verify wait_for_ready() works with Gemini (confirmed)
+- [x] Manual observation testing with tmux attach -r (user verified)
 
-### Task 4.4: Dual AI Operation
-- [ ] Test running Claude and Gemini sessions simultaneously
-- [ ] Verify separate tmux sessions don't interfere
-- [ ] Test switching between AI sessions
-- [ ] Validate output parsing works for both AIs
-- [ ] Create demo showing both AIs operating in parallel
+### Task 4.4: Dual AI Operation ✅
+- [x] Test running Claude and Gemini sessions simultaneously (test_dual_ai.py)
+- [x] Verify separate tmux sessions don't interfere (both working independently)
+- [x] Test switching between AI sessions (user observed both via tmux attach)
+- [x] Validate output parsing works for both AIs (test_gemini_output_parser.py)
+- [x] Create demo showing both AIs operating in parallel (test_dual_ai_observable.py)
 
 ### Task 4.5: Multi-AI Orchestration Foundation
 - [ ] Design orchestrator pattern for AI-to-AI communication
@@ -164,7 +167,17 @@
 - **Startup Time**: ~8 seconds (3s for trust, 3s for initialization)
 - **Response Indicators**: Output stabilization detection (wait_for_ready)
 - **Output Format**: Text with unicode box drawing, ANSI codes present
+- **Response Marker**: `●` (filled circle)
 - **Critical**: Text and Enter must be separate tmux send-keys commands
+
+### Gemini CLI Behavior ✅
+- **Prompt Pattern**: `>` inside box format `│ > Question │`
+- **Startup Time**: ~3 seconds (no trust confirmation needed)
+- **Response Indicators**: Output stabilization works same as Claude
+- **Output Format**: Boxed questions (╭╰│), cleaner UI
+- **Response Marker**: `✦` (sparkle/star symbol)
+- **Tool Support**: Has tool execution capability with `✓` marker
+- **Differences from Claude**: Faster startup, different UI, supports tools
 
 ### Timing Baselines (measured) ✅
 - Session startup: ~8 seconds
