@@ -1,5 +1,6 @@
-# Claude Code WSL Interaction POC Configuration
+# Multi-AI CLI Interaction POC Configuration
 # Values based on empirical testing and observation
+# Supports: Claude Code and Gemini CLI
 
 claude:
   # Startup timing
@@ -22,10 +23,45 @@ claude:
   # Path to Claude Code executable
   executable: "claude"  # Assumes it's in PATH
 
+  # Response marker
+  response_marker: "●"  # Bullet point for Claude responses
+
+gemini:
+  # Startup timing
+  startup_timeout: 5   # Total seconds to wait for Gemini to start (measured: ~3s)
+  init_wait: 3         # Wait after initialization
+
+  # Response timing
+  response_timeout: 30      # Max seconds to wait for command response
+  tool_timeout: 15          # Additional time for tool execution
+  ready_check_interval: 0.5  # Seconds between output stability checks
+  ready_stable_checks: 3     # Consecutive stable checks required
+
+  # Command patterns and indicators
+  prompt_pattern: ">"                    # Input prompt
+  ready_indicators:                      # Patterns indicating ready state
+    - "Type your message or @path/to/file"  # Input prompt
+    - "context left"                        # Status bar
+  loading_indicators:                    # Shows when processing
+    - "⠦"
+    - "⠼"
+    - "Enhancing..."
+    - "Counting electrons..."
+
+  # Response marker
+  response_marker: "✦"  # Sparkle for Gemini responses
+
+  # Tool support
+  supports_tools: true   # Gemini can use external tools
+  tool_marker: "✓"       # Checkmark for successful tool execution
+
+  # Path to Gemini executable
+  executable: "gemini"  # Assumes it's in PATH
+
 tmux:
   # Session configuration
-  session_prefix: "claude-poc"  # Prefix for session names
-  default_session: "claude-poc" # Default session name
+  claude_session: "claude-poc"   # Default Claude session name
+  gemini_session: "gemini-poc"   # Default Gemini session name
 
   # Output capture settings
   capture_lines: 100     # Default lines to capture from pane
