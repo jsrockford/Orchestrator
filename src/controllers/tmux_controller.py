@@ -7,7 +7,20 @@ This module provides programmatic control over AI CLI tools
 
 import subprocess
 import time
+import shutil
 from typing import Optional, List, Dict, Any
+
+from ..utils.exceptions import (
+    SessionAlreadyExists,
+    SessionDead,
+    SessionUnresponsive,
+    SessionStartupTimeout,
+    CommandTimeout,
+    ExecutableNotFound,
+    TmuxNotFound,
+    TmuxError
+)
+from ..utils.logger import get_logger
 
 
 class TmuxController:
@@ -45,6 +58,10 @@ class TmuxController:
             ["pwd"], text=True
         ).strip()
 
+        # Set up logging
+        self.logger = get_logger(f"{__name__}.{session_name}")
+        self.logger.info(f"Initializing TmuxController for {executable} in session {session_name}")
+
         # AI-specific configuration with defaults
         self.config = ai_config or {}
         self.startup_timeout = self.config.get('startup_timeout', 10)
@@ -53,18 +70,56 @@ class TmuxController:
         self.ready_stable_checks = self.config.get('ready_stable_checks', 3)
         self.ready_indicators = self.config.get('ready_indicators', [])
 
+        # Verify environment on initialization
+        self._verify_environment()
+
+    def _verify_environment(self):
+        """
+        Verify that required executables are available.
+
+        Raises:
+            TmuxNotFound: If tmux is not installed
+            ExecutableNotFound: If AI executable is not in PATH
+        """
+        # Check tmux
+        if not shutil.which('tmux'):
+            self.logger.error("tmux not found in PATH")
+            raise TmuxNotFound("tmux is not installed or not in PATH")
+
+        # Check AI executable
+        if not shutil.which(self.executable):
+            self.logger.error(f"Executable '{self.executable}' not found in PATH")
+            raise ExecutableNotFound(self.executable)
+
+        self.logger.debug("Environment verification passed")
+
     def _run_tmux_command(self, args: List[str]) -> subprocess.CompletedProcess:
         """
-        Run a tmux command.
+        Run a tmux command with error handling.
 
         Args:
             args: Command arguments to pass to tmux
 
         Returns:
             CompletedProcess result
+
+        Raises:
+            TmuxError: If tmux command fails unexpectedly
         """
         cmd = ["tmux"] + args
-        return subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            # Log tmux errors (but don't raise for expected failures like has-session)
+            if result.returncode != 0 and result.stderr:
+                self.logger.debug(f"tmux command returned {result.returncode}: {' '.join(args)}")
+                self.logger.debug(f"stderr: {result.stderr.strip()}")
+
+            return result
+        except Exception as e:
+            self.logger.error(f"Failed to run tmux command: {' '.join(args)}")
+            self.logger.error(f"Error: {e}")
+            raise TmuxError(f"Failed to execute tmux command: {e}", command=cmd)
 
     def session_exists(self) -> bool:
         """
@@ -84,13 +139,20 @@ class TmuxController:
             auto_confirm_trust: Automatically confirm trust prompt (for Claude/Gemini)
 
         Returns:
-            True if session started successfully, False otherwise
+            True if session started successfully
+
+        Raises:
+            SessionAlreadyExists: If session with this name already exists
+            SessionStartupTimeout: If session fails to become ready in time
         """
+        self.logger.info(f"Starting session '{self.session_name}'")
+
         if self.session_exists():
-            print(f"Session '{self.session_name}' already exists")
-            return False
+            self.logger.error(f"Session '{self.session_name}' already exists")
+            raise SessionAlreadyExists(f"Session '{self.session_name}' already exists")
 
         # Create detached tmux session with AI executable
+        self.logger.debug(f"Creating tmux session with executable: {self.executable}")
         result = self._run_tmux_command([
             "new-session",
             "-d",  # Detached
@@ -100,15 +162,21 @@ class TmuxController:
         ])
 
         if result.returncode != 0:
-            print(f"Failed to start session: {result.stderr}")
-            return False
+            self.logger.error(f"Failed to create tmux session: {result.stderr}")
+            raise TmuxError(
+                f"Failed to start session: {result.stderr}",
+                command=["new-session"],
+                return_code=result.returncode
+            )
 
         # Wait for AI to start (use configured timeout)
         init_wait = self.config.get('init_wait', 3)
+        self.logger.debug(f"Waiting {init_wait}s for AI to initialize")
         time.sleep(init_wait)
 
         # Auto-confirm trust prompt if requested
         if auto_confirm_trust:
+            self.logger.debug("Auto-confirming trust prompt")
             # Press Enter to confirm "Yes, proceed" (works for Claude/Gemini)
             self._run_tmux_command([
                 "send-keys", "-t", self.session_name, "Enter"
@@ -116,11 +184,17 @@ class TmuxController:
             # Wait for AI to fully initialize
             time.sleep(init_wait)
 
+        # Verify session is actually ready
+        if not self.session_exists():
+            self.logger.error("Session creation appeared to succeed but session doesn't exist")
+            raise SessionStartupTimeout("Session failed to start properly")
+
+        self.logger.info(f"Session '{self.session_name}' started successfully")
         return True
 
     def send_command(self, command: str, submit: bool = True) -> bool:
         """
-        Send a command to Claude Code.
+        Send a command to AI CLI.
 
         CRITICAL: Text and Enter must be sent separately to avoid multi-line input.
 
@@ -129,11 +203,16 @@ class TmuxController:
             submit: If True, send Enter to submit the command
 
         Returns:
-            True if command sent successfully, False otherwise
+            True if command sent successfully
+
+        Raises:
+            SessionDead: If session no longer exists
         """
+        self.logger.info(f"Sending command: {command[:50]}{'...' if len(command) > 50 else ''}")
+
         if not self.session_exists():
-            print(f"Session '{self.session_name}' does not exist")
-            return False
+            self.logger.error(f"Cannot send command - session '{self.session_name}' does not exist")
+            raise SessionDead(f"Session '{self.session_name}' does not exist")
 
         # Send the command text
         result = self._run_tmux_command([
@@ -141,8 +220,12 @@ class TmuxController:
         ])
 
         if result.returncode != 0:
-            print(f"Failed to send command: {result.stderr}")
-            return False
+            self.logger.error(f"Failed to send command text: {result.stderr}")
+            raise TmuxError(
+                f"Failed to send command: {result.stderr}",
+                command=["send-keys"],
+                return_code=result.returncode
+            )
 
         # Send Enter separately to submit (not as part of send-keys command)
         if submit:
@@ -152,9 +235,14 @@ class TmuxController:
             ])
 
             if result.returncode != 0:
-                print(f"Failed to submit command: {result.stderr}")
-                return False
+                self.logger.error(f"Failed to submit command: {result.stderr}")
+                raise TmuxError(
+                    f"Failed to submit command: {result.stderr}",
+                    command=["send-keys", "Enter"],
+                    return_code=result.returncode
+                )
 
+        self.logger.debug("Command sent successfully")
         return True
 
     def capture_output(self, lines: int = 100, start_line: Optional[int] = None) -> str:

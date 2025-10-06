@@ -78,11 +78,29 @@
 - [x] Verified compatibility with both AI CLIs (test_gemini_output_parser.py)
 
 ### Task 2.3: Error Handling
+**Strategy**: Simple, predictable error handling with single retry and comprehensive logging
+
+**Error Handling Philosophy**:
+- **Retry Once**: Failed operations retry once, then fail to caller
+- **Session Recovery**: Dead session gets one auto-restart attempt, then exception
+- **Global Timeouts**: Use config defaults (simple for now, can extend later)
+- **Comprehensive Logging**: Log all failures with details for troubleshooting
+- **Partial Success**: Treat as failure (incomplete data = unreliable)
+
+**Implementation Tasks**:
+- [ ] Add custom exception classes (SessionDead, SessionUnresponsive, CommandTimeout, ExecutableNotFound)
+- [ ] Implement retry-once logic for command execution
+- [ ] Add session health verification before commands
+- [ ] Implement auto-restart for dead sessions (one attempt)
+- [ ] Add comprehensive logging throughout error paths
 - [ ] Handle "session already exists" scenario
-- [ ] Handle Claude Code not found
+- [ ] Handle executable not found (claude/gemini)
 - [ ] Handle tmux not installed
-- [ ] Handle command timeout
-- [ ] Add retry logic for failed commands
+- [ ] Handle command timeout with partial output
+- [ ] Handle startup timeout (AI never becomes ready)
+- [ ] Handle session died mid-operation
+- [ ] Add timeout hierarchy (startup: 15s, simple: 30s, complex: 60s, tools: 120s)
+- [ ] Test all error scenarios with unit tests
 
 ### Task 2.4: Advanced Test Suite
 - [ ] Test multi-turn conversations (context preservation)
