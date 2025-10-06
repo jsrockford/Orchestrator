@@ -37,13 +37,16 @@
 - [x] Document findings: startup time (~8 seconds), response patterns, edge cases
 - [x] Live observation testing with tmux attach -r
 
-### Task 1.5: Configuration Setup
-- [ ] Create `config.yaml` with discovered values:
+### Task 1.5: Configuration Setup ✅
+- [x] Create `config.yaml` with discovered values:
   - Actual startup timeout needed (8 seconds)
   - Realistic response timeout (30 seconds)
   - Tmux session settings
   - Buffer capture size (100 lines)
-- [ ] Implement config loader in utils
+  - Test commands for validation
+- [x] Implement config loader in utils (ConfigLoader with dot notation)
+- [x] Add PyYAML dependency
+- [x] Create test_config.py for validation
 
 ### Task 1.6: Basic Test Suite (Post-Discovery) ✅
 - [x] Write test for session start/stop lifecycle (test_controller_auto.py)
@@ -59,13 +62,17 @@
 - [x] Add configurable delays between captures (check_interval parameter)
 - [x] Test with various command types (quick vs slow responses) - all working
 
-### Task 2.2: Output Parser
-- [ ] Create `OutputParser` class
-- [ ] Implement methods to:
-  - Strip ANSI codes/formatting
-  - Remove duplicate captures
-  - Extract actual response content
-  - Detect error states
+### Task 2.2: Output Parser ✅
+- [x] Create `OutputParser` class
+- [x] Implement methods to:
+  - [x] Strip ANSI codes/formatting
+  - [x] Remove UI elements (headers, separators, status)
+  - [x] Extract Q&A pairs from conversation
+  - [x] Get last question/response
+  - [x] Detect error states
+  - [x] Format conversation in readable Q&A format
+- [x] Create test_output_parser.py with real Claude output
+- [x] All parsing functions validated and working
 
 ### Task 2.3: Error Handling
 - [ ] Handle "session already exists" scenario
@@ -93,21 +100,58 @@
 - [ ] Verify command history is maintained
 - [ ] Test edge cases (attach during command processing)
 
-## Phase 4: Documentation & Results
+## Phase 4: Gemini CLI Integration
 
-### Task 4.1: Results Documentation
+### Task 4.1: Architecture Refactoring
+- [ ] Create GeminiDev git branch for safe development
+- [ ] Refactor TmuxController to be AI-agnostic
+- [ ] Create base class structure for multi-AI support
+- [ ] Update config.yaml with Gemini-specific settings
+- [ ] Ensure Claude Code functionality remains intact
+
+### Task 4.2: Gemini Controller Implementation
+- [ ] Create GeminiController class
+- [ ] Test Gemini CLI startup behavior and timing
+- [ ] Implement Gemini-specific prompt patterns
+- [ ] Adapt wait_for_ready() for Gemini's output patterns
+- [ ] Create separate tmux session management for Gemini
+
+### Task 4.3: Gemini Testing & Validation
+- [ ] Create worktree for Gemini testing (similar to Claude worktree)
+- [ ] Test Gemini session start/stop lifecycle
+- [ ] Test command injection and response capture
+- [ ] Verify wait_for_ready() works with Gemini
+- [ ] Manual observation testing with tmux attach -r
+
+### Task 4.4: Dual AI Operation
+- [ ] Test running Claude and Gemini sessions simultaneously
+- [ ] Verify separate tmux sessions don't interfere
+- [ ] Test switching between AI sessions
+- [ ] Validate output parsing works for both AIs
+- [ ] Create demo showing both AIs operating in parallel
+
+### Task 4.5: Multi-AI Orchestration Foundation
+- [ ] Design orchestrator pattern for AI-to-AI communication
+- [ ] Implement message passing between Claude and Gemini
+- [ ] Test collaborative workflows
+- [ ] Add user intervention capability during AI interactions
+- [ ] Document orchestration patterns and use cases
+
+## Phase 5: Documentation & Results
+
+### Task 5.1: Results Documentation
 - [ ] Document success rates for each test
 - [ ] Record actual performance metrics (latency, reliability)
 - [ ] Create comparison table vs spec requirements
 - [ ] Document discovered Claude Code behaviors
 
-### Task 4.2: Usage Examples
+### Task 5.2: Usage Examples
 - [ ] Create example script: simple command
 - [ ] Create example script: file context workflow
 - [ ] Create example script: manual switching
 - [ ] Add inline comments explaining key points
 
-### Task 4.3: Troubleshooting Guide
+### Task 5.3: Troubleshooting Guide
 - [ ] Document common issues encountered
 - [ ] Provide solutions/workarounds
 - [ ] List known limitations
