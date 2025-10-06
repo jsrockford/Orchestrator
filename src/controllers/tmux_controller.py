@@ -1,30 +1,57 @@
 """
-Tmux Controller for Claude Code Interaction
+Tmux Controller for AI CLI Interaction
 
-This module provides programmatic control over a Claude Code instance
-running in a tmux session.
+This module provides programmatic control over AI CLI tools
+(Claude Code, Gemini CLI, etc.) running in tmux sessions.
 """
 
 import subprocess
 import time
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 
 class TmuxController:
-    """Controls Claude Code running in a tmux session."""
+    """
+    Controls AI CLI tools running in tmux sessions.
 
-    def __init__(self, session_name: str = "claude-poc", working_dir: Optional[str] = None):
+    AI-agnostic controller that works with any interactive CLI tool.
+    AI-specific behaviors are configured via parameters.
+    """
+
+    def __init__(
+        self,
+        session_name: str,
+        executable: str,
+        working_dir: Optional[str] = None,
+        ai_config: Optional[Dict[str, Any]] = None
+    ):
         """
         Initialize TmuxController.
 
         Args:
             session_name: Name of the tmux session
-            working_dir: Working directory for Claude Code (defaults to current dir)
+            executable: Command to run (e.g., "claude", "gemini")
+            working_dir: Working directory (defaults to current dir)
+            ai_config: AI-specific configuration dictionary with:
+                - startup_timeout: Seconds to wait for startup
+                - response_timeout: Max seconds for responses
+                - ready_check_interval: Seconds between ready checks
+                - ready_stable_checks: Consecutive stable checks needed
+                - ready_indicators: List of patterns indicating ready state
         """
         self.session_name = session_name
+        self.executable = executable
         self.working_dir = working_dir or subprocess.check_output(
             ["pwd"], text=True
         ).strip()
+
+        # AI-specific configuration with defaults
+        self.config = ai_config or {}
+        self.startup_timeout = self.config.get('startup_timeout', 10)
+        self.response_timeout = self.config.get('response_timeout', 30)
+        self.ready_check_interval = self.config.get('ready_check_interval', 0.5)
+        self.ready_stable_checks = self.config.get('ready_stable_checks', 3)
+        self.ready_indicators = self.config.get('ready_indicators', [])
 
     def _run_tmux_command(self, args: List[str]) -> subprocess.CompletedProcess:
         """
@@ -51,10 +78,10 @@ class TmuxController:
 
     def start_session(self, auto_confirm_trust: bool = True) -> bool:
         """
-        Start Claude Code in a new tmux session.
+        Start AI CLI in a new tmux session.
 
         Args:
-            auto_confirm_trust: Automatically confirm trust prompt
+            auto_confirm_trust: Automatically confirm trust prompt (for Claude/Gemini)
 
         Returns:
             True if session started successfully, False otherwise
@@ -63,30 +90,31 @@ class TmuxController:
             print(f"Session '{self.session_name}' already exists")
             return False
 
-        # Create detached tmux session with Claude Code
+        # Create detached tmux session with AI executable
         result = self._run_tmux_command([
             "new-session",
             "-d",  # Detached
             "-s", self.session_name,  # Session name
             "-c", self.working_dir,  # Working directory
-            "claude"  # Command to run
+            self.executable  # Command to run (claude, gemini, etc.)
         ])
 
         if result.returncode != 0:
             print(f"Failed to start session: {result.stderr}")
             return False
 
-        # Wait for Claude Code to start
-        time.sleep(3)
+        # Wait for AI to start (use configured timeout)
+        init_wait = self.config.get('init_wait', 3)
+        time.sleep(init_wait)
 
         # Auto-confirm trust prompt if requested
         if auto_confirm_trust:
-            # Press Enter to confirm "Yes, proceed" (already selected by default)
+            # Press Enter to confirm "Yes, proceed" (works for Claude/Gemini)
             self._run_tmux_command([
                 "send-keys", "-t", self.session_name, "Enter"
             ])
-            # Wait for Claude to fully initialize
-            time.sleep(3)
+            # Wait for AI to fully initialize
+            time.sleep(init_wait)
 
         return True
 
@@ -166,16 +194,16 @@ class TmuxController:
         ])
         return result.stdout
 
-    def wait_for_ready(self, timeout: int = 30, check_interval: float = 0.5) -> bool:
+    def wait_for_ready(self, timeout: Optional[int] = None, check_interval: Optional[float] = None) -> bool:
         """
-        Wait until Claude Code is ready for next input.
+        Wait until AI is ready for next input.
 
         Strategy: Capture output repeatedly and wait until it stabilizes
-        (no changes between captures), indicating Claude has finished responding.
+        (no changes between captures), indicating AI has finished responding.
 
         Args:
-            timeout: Maximum seconds to wait
-            check_interval: Seconds between checks
+            timeout: Maximum seconds to wait (uses config if not specified)
+            check_interval: Seconds between checks (uses config if not specified)
 
         Returns:
             True if ready detected, False if timeout
@@ -183,10 +211,14 @@ class TmuxController:
         if not self.session_exists():
             return False
 
+        # Use configured values if not overridden
+        timeout = timeout or self.response_timeout
+        check_interval = check_interval or self.ready_check_interval
+        required_stable_checks = self.ready_stable_checks
+
         start_time = time.time()
         previous_output = ""
         stable_count = 0
-        required_stable_checks = 3  # Need 3 consecutive stable checks
 
         while (time.time() - start_time) < timeout:
             current_output = self.capture_output()
@@ -195,8 +227,13 @@ class TmuxController:
             if current_output == previous_output:
                 stable_count += 1
                 if stable_count >= required_stable_checks:
-                    # Also check that we're showing the prompt (ready state)
-                    if "────────" in current_output or "? for shortcuts" in current_output:
+                    # Check for AI-specific ready indicators
+                    if self.ready_indicators:
+                        # Check if any ready indicator is present
+                        if any(indicator in current_output for indicator in self.ready_indicators):
+                            return True
+                    else:
+                        # No specific indicators configured, just use stabilization
                         return True
             else:
                 stable_count = 0  # Reset if output changed
