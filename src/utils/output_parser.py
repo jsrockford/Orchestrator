@@ -64,8 +64,12 @@ class OutputParser:
             if not line.strip():
                 continue
 
-            # Skip header lines
-            if any(char in line for char in ['▐▛███▜▌', '▝▜█████▛▘', '▘▘ ▝▝']):
+            # Skip header lines (Claude and Gemini)
+            if any(char in line for char in ['▐▛███▜▌', '▝▜█████▛▘', '▘▘ ▝▝', '███']):
+                continue
+
+            # Skip Gemini-specific elements
+            if any(text in line for text in ['Tips for getting started', 'Using:', 'context left', 'no sandbox']):
                 continue
 
             # Skip separator lines
@@ -86,7 +90,9 @@ class OutputParser:
 
     def extract_responses(self, text: str) -> List[Dict[str, str]]:
         """
-        Extract question/response pairs from Claude Code output.
+        Extract question/response pairs from AI CLI output.
+
+        Supports both Claude Code (●) and Gemini CLI (✦) response markers.
 
         Args:
             text: Raw or cleaned output
@@ -105,8 +111,21 @@ class OutputParser:
         for line in lines:
             stripped = line.strip()
 
-            # Detect question (starts with >)
-            if stripped.startswith('>') and len(stripped) > 2:
+            # Skip box drawing characters
+            if stripped.startswith('╭') or stripped.startswith('╰'):
+                # Just skip box boundaries - don't save pairs here
+                # Pairs will be saved when we encounter the next question
+                continue
+
+            # Detect boxed question (Gemini format): │  > Question  │
+            if stripped.startswith('│') and '>' in stripped:
+                # Extract question from box first
+                question_text = stripped.replace('│', '').replace('>', '').strip()
+
+                # Skip prompt line or empty questions
+                if not question_text or len(question_text) <= 2 or 'Type your message' in question_text:
+                    continue
+
                 # Save previous pair if exists
                 if current_question and current_response:
                     pairs.append({
@@ -115,15 +134,30 @@ class OutputParser:
                     })
 
                 # Start new question
-                current_question = stripped[1:].strip()  # Remove '>'
+                current_question = question_text
                 current_response = []
                 in_response = False
                 continue
 
-            # Detect response start (bullet point ●)
-            if stripped.startswith('●'):
+            # Detect plain question (Claude format): > Question
+            if stripped.startswith('>') and len(stripped) > 2 and not '│' in line:
+                # Save previous pair if exists
+                if current_question and current_response:
+                    pairs.append({
+                        'question': current_question,
+                        'response': '\n'.join(current_response).strip()
+                    })
+
+                # Start new question
+                current_question = stripped[1:].strip()
+                current_response = []
+                in_response = False
+                continue
+
+            # Detect response start (● for Claude or ✦ for Gemini)
+            if stripped.startswith('●') or stripped.startswith('✦'):
                 in_response = True
-                # Add response text (without bullet)
+                # Add response text (without marker)
                 response_text = stripped[1:].strip()
                 if response_text:
                     current_response.append(response_text)
