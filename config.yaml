@@ -1,0 +1,85 @@
+# Claude Code WSL Interaction POC Configuration
+# Values based on empirical testing and observation
+
+claude:
+  # Startup timing
+  startup_timeout: 10  # Total seconds to wait for Claude to start (measured: ~8s)
+  trust_wait: 3        # Wait after confirming trust prompt
+  init_wait: 3         # Wait after initialization
+
+  # Response timing
+  response_timeout: 30      # Max seconds to wait for command response
+  ready_check_interval: 0.5  # Seconds between output stability checks
+  ready_stable_checks: 3     # Consecutive stable checks required
+
+  # Command patterns and indicators
+  prompt_pattern: ">"                    # Input prompt (not reliable for ready detection)
+  ready_indicators:                      # Patterns indicating ready state
+    - "────────────────────────"         # Separator line
+    - "? for shortcuts"                  # Status line
+  thinking_indicator: "Lollygagging…"    # Shows when processing
+
+  # Path to Claude Code executable
+  executable: "claude"  # Assumes it's in PATH
+
+tmux:
+  # Session configuration
+  session_prefix: "claude-poc"  # Prefix for session names
+  default_session: "claude-poc" # Default session name
+
+  # Output capture settings
+  capture_lines: 100     # Default lines to capture from pane
+  capture_delay: 0.1     # Seconds to wait before capturing output
+
+  # Command injection settings
+  text_enter_delay: 0.1  # Delay between text and Enter key (seconds)
+
+  # Session management
+  kill_timeout: 2        # Seconds to wait after killing session
+
+logging:
+  # Logging configuration
+  level: "INFO"          # DEBUG, INFO, WARNING, ERROR
+  file: "logs/poc.log"   # Log file path
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  max_bytes: 10485760    # 10MB
+  backup_count: 3        # Number of backup files to keep
+
+worktree:
+  # Git worktree configuration for multi-instance testing
+  main_path: "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest"
+  tmux_path: "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+
+test_commands:
+  # Sample commands for testing
+  simple:
+    - "What is 2 + 2?"
+    - "What is Python?"
+    - "List 3 programming languages"
+
+  context:
+    - "Read file: spec.md"
+    - "Summarize the main goals"
+    - "What is the project about?"
+
+  file_operations:
+    - "List files in src/"
+    - "Read src/controllers/tmux_controller.py"
+    - "Explain the wait_for_ready method"
+
+performance:
+  # Performance measurement settings
+  measure_latency: true
+  log_timings: true
+
+  # Expected performance (for validation)
+  expected_command_latency_ms: 100
+  expected_capture_latency_ms: 500
+  expected_startup_time_s: 10
+
+experimental:
+  # Experimental features (not yet implemented)
+  auto_retry_on_failure: false
+  max_retries: 3
+  streaming_capture: false
+  parallel_sessions: false
