@@ -8,8 +8,14 @@ This module provides programmatic control over AI CLI tools
 import subprocess
 import time
 import shutil
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Mapping, Sequence
 
+from .session_backend import (
+    SessionBackend,
+    SessionSpec,
+    SessionBackendError,
+    SessionNotFoundError
+)
 from ..utils.exceptions import (
     SessionAlreadyExists,
     SessionDead,
@@ -26,7 +32,7 @@ from ..utils.health_check import HealthChecker
 from ..utils.auto_restart import AutoRestarter, RestartPolicy
 
 
-class TmuxController:
+class TmuxController(SessionBackend):
     """
     Controls AI CLI tools running in tmux sessions.
 
@@ -55,11 +61,23 @@ class TmuxController:
                 - ready_stable_checks: Consecutive stable checks needed
                 - ready_indicators: List of patterns indicating ready state
         """
-        self.session_name = session_name
-        self.executable = executable
-        self.working_dir = working_dir or subprocess.check_output(
+        # Resolve working directory
+        resolved_working_dir = working_dir or subprocess.check_output(
             ["pwd"], text=True
         ).strip()
+
+        # Create SessionSpec and initialize parent
+        spec = SessionSpec(
+            name=session_name,
+            executable=executable,
+            working_dir=resolved_working_dir
+        )
+        super().__init__(spec)
+
+        # Maintain backward compatibility with direct attribute access
+        self.session_name = spec.name
+        self.executable = spec.executable
+        self.working_dir = spec.working_dir
 
         # Set up logging
         self.logger = get_logger(f"{__name__}.{session_name}")
@@ -157,6 +175,225 @@ class TmuxController:
         """
         result = self._run_tmux_command(["has-session", "-t", self.session_name])
         return result.returncode == 0
+
+    # ========================================================================
+    # SessionBackend Interface Implementation
+    # ========================================================================
+
+    def start(self) -> None:
+        """
+        Launch the CLI process according to the session specification.
+
+        This is the SessionBackend interface method. Calls start_session() internally.
+
+        Raises:
+            SessionBackendError: If the session fails to start.
+        """
+        try:
+            self.start_session(auto_confirm_trust=True)
+        except (SessionAlreadyExists, SessionStartupTimeout, TmuxError) as e:
+            raise SessionBackendError(f"Failed to start session: {e}") from e
+
+    def send_text(self, text: str) -> None:
+        """
+        Inject literal text into the session input buffer without submitting.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the backend cannot deliver the text.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            result = self._run_tmux_command([
+                "send-keys", "-t", self.session_name, text
+            ])
+            if result.returncode != 0:
+                raise SessionBackendError(f"Failed to send text: {result.stderr}")
+        except TmuxError as e:
+            raise SessionBackendError(f"Failed to send text: {e}") from e
+
+    def send_enter(self) -> None:
+        """
+        Submit the current line (send Enter key).
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the backend cannot deliver the keystroke.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            time.sleep(0.1)  # Brief pause before Enter
+            result = self._run_tmux_command([
+                "send-keys", "-t", self.session_name, "Enter"
+            ])
+            if result.returncode != 0:
+                raise SessionBackendError(f"Failed to send Enter: {result.stderr}")
+        except TmuxError as e:
+            raise SessionBackendError(f"Failed to send Enter: {e}") from e
+
+    def send_ctrl_c(self) -> None:
+        """
+        Interrupt the current operation (Ctrl+C equivalent).
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the backend cannot deliver the signal.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            result = self._run_tmux_command([
+                "send-keys", "-t", self.session_name, "C-c"
+            ])
+            if result.returncode != 0:
+                raise SessionBackendError(f"Failed to send Ctrl+C: {result.stderr}")
+        except TmuxError as e:
+            raise SessionBackendError(f"Failed to send Ctrl+C: {e}") from e
+
+    def capture_output(
+        self,
+        *,
+        start_line: Optional[int] = None,
+        lines: Optional[int] = None,
+    ) -> str:
+        """
+        Capture text from the session's visible buffer.
+
+        Args:
+            start_line: Starting line offset relative to the bottom.
+            lines: Number of lines to include (not used in tmux implementation).
+
+        Returns:
+            Captured output as a single string.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the backend cannot capture output.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            args = ["capture-pane", "-t", self.session_name, "-p"]
+            if start_line is not None:
+                args.extend(["-S", str(start_line)])
+            result = self._run_tmux_command(args)
+            return result.stdout
+        except TmuxError as e:
+            raise SessionBackendError(f"Failed to capture output: {e}") from e
+
+    def capture_scrollback(self) -> str:
+        """
+        Capture the full scrollback buffer for post-mortem analysis.
+
+        Returns:
+            The complete scrollback as a single string.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the backend cannot capture output.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            result = self._run_tmux_command([
+                "capture-pane", "-t", self.session_name, "-p", "-S", "-"
+            ])
+            return result.stdout
+        except TmuxError as e:
+            raise SessionBackendError(f"Failed to capture scrollback: {e}") from e
+
+    def list_clients(self) -> Sequence[str]:
+        """
+        Enumerate active client connections (for manual takeover detection).
+
+        Returns:
+            A sequence of client identifiers.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the backend cannot list clients.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            result = self._run_tmux_command([
+                "list-clients", "-t", self.session_name
+            ])
+            if result.returncode == 0 and result.stdout.strip():
+                # Parse client list (format: "/dev/pts/X: client-name [...]")
+                return [line.split(':')[0] for line in result.stdout.strip().split('\n')]
+            return []
+        except TmuxError as e:
+            raise SessionBackendError(f"Failed to list clients: {e}") from e
+
+    def attach(self, read_only: bool = False) -> None:
+        """
+        Attach the current terminal to the session for manual observation.
+
+        Args:
+            read_only: If True, attach in read-only mode.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If attachment fails.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            args = ["attach-session", "-t", self.session_name]
+            if read_only:
+                args.append("-r")
+            # This will block and take over the terminal
+            subprocess.run(["tmux"] + args, check=True)
+        except subprocess.CalledProcessError as e:
+            raise SessionBackendError(f"Failed to attach: {e}") from e
+
+    def kill(self) -> None:
+        """
+        Terminate the underlying session.
+
+        Raises:
+            SessionNotFoundError: If no session exists to terminate.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        try:
+            result = self._run_tmux_command([
+                "kill-session", "-t", self.session_name
+            ])
+            if result.returncode != 0:
+                raise SessionBackendError(f"Failed to kill session: {result.stderr}")
+        except TmuxError as e:
+            raise SessionBackendError(f"Failed to kill session: {e}") from e
+
+    def get_status(self) -> Mapping[str, object]:
+        """
+        Return backend-specific status information for debugging.
+
+        Overrides base implementation to include health and restart stats.
+        """
+        return {
+            "session": self.spec.name,
+            "exists": self.session_exists(),
+            "working_dir": self.spec.working_dir,
+            "executable": self.spec.executable,
+            "health": self.get_health_stats(),
+            "restart": self.get_restart_stats()
+        }
+
+    # ========================================================================
+    # Legacy Methods (maintain backward compatibility)
+    # ========================================================================
 
     def start_session(self, auto_confirm_trust: bool = True) -> bool:
         """
@@ -287,43 +524,6 @@ class TmuxController:
         self.logger.debug("Command sent successfully")
         return True
 
-    def capture_output(self, lines: int = 100, start_line: Optional[int] = None) -> str:
-        """
-        Capture output from the tmux pane.
-
-        Args:
-            lines: Number of lines to capture (default: 100)
-            start_line: Starting line for capture (None = current visible pane)
-
-        Returns:
-            Captured output as string
-        """
-        if not self.session_exists():
-            return ""
-
-        args = ["capture-pane", "-t", self.session_name, "-p"]
-
-        if start_line is not None:
-            args.extend(["-S", str(start_line)])
-
-        result = self._run_tmux_command(args)
-        return result.stdout
-
-    def capture_scrollback(self) -> str:
-        """
-        Capture entire scrollback buffer.
-
-        Returns:
-            Full scrollback buffer as string
-        """
-        if not self.session_exists():
-            return ""
-
-        result = self._run_tmux_command([
-            "capture-pane", "-t", self.session_name, "-p", "-S", "-"
-        ])
-        return result.stdout
-
     def wait_for_startup(self, timeout: Optional[int] = None) -> bool:
         """
         Wait until AI has fully started and is ready for first input.
@@ -441,24 +641,24 @@ class TmuxController:
 
     def kill_session(self) -> bool:
         """
-        Terminate the tmux session.
+        Terminate the tmux session (legacy method for backward compatibility).
+
+        Delegates to kill() interface method.
 
         Returns:
             True if session killed successfully, False otherwise
         """
-        if not self.session_exists():
-            print(f"Session '{self.session_name}' does not exist")
+        try:
+            self.kill()
+            return True
+        except (SessionNotFoundError, SessionBackendError):
             return False
-
-        result = self._run_tmux_command([
-            "kill-session", "-t", self.session_name
-        ])
-
-        return result.returncode == 0
 
     def attach_for_manual(self, read_only: bool = False) -> None:
         """
-        Attach to the session for manual interaction.
+        Attach to the session for manual interaction (legacy method).
+
+        Delegates to attach() interface method.
 
         Note: This method will block until the user detaches.
         Use read_only=True to prevent accidental input.
@@ -466,32 +666,10 @@ class TmuxController:
         Args:
             read_only: If True, attach in read-only mode
         """
-        if not self.session_exists():
-            print(f"Session '{self.session_name}' does not exist")
-            return
-
-        args = ["attach-session", "-t", self.session_name]
-        if read_only:
-            args.append("-r")
-
-        # This will block and take over the terminal
-        subprocess.run(["tmux"] + args)
-
-    def send_ctrl_c(self) -> bool:
-        """
-        Send Ctrl+C to cancel current operation.
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
-        if not self.session_exists():
-            return False
-
-        result = self._run_tmux_command([
-            "send-keys", "-t", self.session_name, "C-c"
-        ])
-
-        return result.returncode == 0
+        try:
+            self.attach(read_only=read_only)
+        except (SessionNotFoundError, SessionBackendError) as e:
+            print(f"Failed to attach: {e}")
 
     def perform_health_check(self, check_type: str = "session_exists") -> dict:
         """
@@ -613,18 +791,3 @@ class TmuxController:
             Dictionary with restart metrics
         """
         return self.auto_restarter.get_stats()
-
-    def get_status(self) -> dict:
-        """
-        Get session status information including health.
-
-        Returns:
-            Dictionary with session status
-        """
-        return {
-            "session_name": self.session_name,
-            "working_dir": self.working_dir,
-            "exists": self.session_exists(),
-            "health": self.get_health_stats(),
-            "restart": self.get_restart_stats()
-        }
