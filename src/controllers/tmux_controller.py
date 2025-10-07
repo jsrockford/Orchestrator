@@ -8,7 +8,8 @@ This module provides programmatic control over AI CLI tools
 import subprocess
 import time
 import shutil
-from typing import Optional, List, Dict, Any, Mapping, Sequence
+from collections import deque
+from typing import Optional, List, Dict, Any, Mapping, Sequence, Deque, Tuple
 
 from .session_backend import (
     SessionBackend,
@@ -117,6 +118,12 @@ class TmuxController(SessionBackend):
             max_backoff=self.config.get('restart_max_backoff', 60.0)
         )
 
+        # Automation/manual takeover state
+        self._automation_paused: bool = False
+        self._automation_pause_reason: Optional[str] = None
+        self._manual_clients: Sequence[str] = []
+        self._pending_commands: Deque[Tuple[str, bool]] = deque()
+
     def _verify_environment(self):
         """
         Verify that required executables are available.
@@ -175,6 +182,162 @@ class TmuxController(SessionBackend):
         """
         result = self._run_tmux_command(["has-session", "-t", self.session_name])
         return result.returncode == 0
+
+    # ========================================================================
+    # Automation / Manual Takeover Helpers
+    # ========================================================================
+
+    @property
+    def automation_paused(self) -> bool:
+        """Return True when automation is currently paused."""
+        return self._automation_paused
+
+    @property
+    def automation_pause_reason(self) -> Optional[str]:
+        """Reason describing why automation is paused (if any)."""
+        return self._automation_pause_reason
+
+    @property
+    def manual_clients(self) -> Sequence[str]:
+        """Return the most recently observed manual clients."""
+        return self._manual_clients
+
+    @property
+    def pending_command_count(self) -> int:
+        """Return the number of queued commands awaiting automation resume."""
+        return len(self._pending_commands)
+
+    def get_pending_commands(self) -> List[Tuple[str, bool]]:
+        """Return a snapshot of queued commands."""
+        return list(self._pending_commands)
+
+    def pause_automation(self, reason: str = "manual") -> None:
+        """Pause automation explicitly (commands will be queued)."""
+        self._set_automation_paused(True, reason=reason, flush_pending=False)
+
+    def resume_automation(self, flush_pending: bool = True) -> None:
+        """
+        Resume automation (optionally flushing any queued commands).
+
+        Args:
+            flush_pending: If True, execute queued commands after resuming.
+        """
+        self._set_automation_paused(False, flush_pending=flush_pending)
+
+    def _set_automation_paused(
+        self,
+        paused: bool,
+        *,
+        reason: Optional[str] = None,
+        flush_pending: bool = True
+    ) -> None:
+        """
+        Internal helper for toggling automation state.
+        """
+        if paused:
+            if not self._automation_paused:
+                self.logger.info(f"Pausing automation (reason: {reason})")
+            self._automation_paused = True
+            self._automation_pause_reason = reason
+        else:
+            if self._automation_paused:
+                self.logger.info("Resuming automation")
+            self._automation_paused = False
+            self._automation_pause_reason = None
+            if flush_pending:
+                self._drain_pending_commands()
+
+    def _update_manual_control_state(self) -> None:
+        """
+        Inspect tmux clients and pause/resume automation as appropriate.
+        """
+        try:
+            clients = self.list_clients()
+        except SessionNotFoundError:
+            self._manual_clients = []
+            return
+        except SessionBackendError as exc:
+            self.logger.debug(f"Failed to list clients for manual control state: {exc}")
+            return
+
+        previous_clients = list(self._manual_clients)
+        self._manual_clients = clients
+        if clients:
+            self._set_automation_paused(True, reason="manual-attach", flush_pending=False)
+        elif (
+            previous_clients
+            and self._automation_paused
+            and self._automation_pause_reason == "manual-attach"
+        ):
+            self._set_automation_paused(False, flush_pending=True)
+
+    def _enqueue_command(self, command: str, submit: bool) -> None:
+        """Queue a command to be replayed once automation resumes."""
+        self._pending_commands.append((command, submit))
+        self.logger.info(
+            "Queued command due to automation pause "
+            f"(pending={len(self._pending_commands)})"
+        )
+
+    def _drain_pending_commands(self) -> None:
+        """
+        Dispatch queued commands now that automation has resumed.
+        """
+        if not self._pending_commands:
+            return
+
+        self.logger.info(f"Draining {len(self._pending_commands)} queued command(s)")
+        while self._pending_commands and not self._automation_paused:
+            command, submit = self._pending_commands.popleft()
+            try:
+                self._send_command_internal(command, submit)
+            except Exception as exc:  # noqa: BLE001 - log and requeue
+                self.logger.error(
+                    "Failed to flush queued command; leaving in queue",
+                    exc_info=exc
+                )
+                self._pending_commands.appendleft((command, submit))
+                break
+
+    def _send_command_internal(self, command: str, submit: bool) -> bool:
+        """
+        Core implementation shared by send_command() and the queue flusher.
+
+        Returns:
+            True if the command was dispatched successfully.
+        """
+        if not self.session_exists():
+            self.logger.error(f"Cannot send command - session '{self.session_name}' does not exist")
+            raise SessionDead(f"Session '{self.session_name}' does not exist")
+
+        result = self._run_tmux_command([
+            "send-keys", "-t", self.session_name, command
+        ])
+
+        if result.returncode != 0:
+            self.logger.error(f"Failed to send command text: {result.stderr}")
+            raise TmuxError(
+                f"Failed to send command: {result.stderr}",
+                command=["send-keys"],
+                return_code=result.returncode
+            )
+
+        if submit:
+            time.sleep(0.1)  # Brief pause between text and Enter
+            result = self._run_tmux_command([
+                "send-keys", "-t", self.session_name, "Enter"
+            ])
+
+            if result.returncode != 0:
+                self.logger.error(f"Failed to submit command: {result.stderr}")
+                raise TmuxError(
+                    f"Failed to submit command: {result.stderr}",
+                    command=["send-keys", "Enter"],
+                    return_code=result.returncode
+                )
+
+        self.logger.debug("Command sent successfully")
+        return True
 
     # ========================================================================
     # SessionBackend Interface Implementation
@@ -334,8 +497,7 @@ class TmuxController(SessionBackend):
                 "list-clients", "-t", self.session_name
             ])
             if result.returncode == 0 and result.stdout.strip():
-                # Parse client list (format: "/dev/pts/X: client-name [...]")
-                return [line.split(':')[0] for line in result.stdout.strip().split('\n')]
+                return [line.strip() for line in result.stdout.strip().split('\n')]
             return []
         except TmuxError as e:
             raise SessionBackendError(f"Failed to list clients: {e}") from e
@@ -358,10 +520,15 @@ class TmuxController(SessionBackend):
             args = ["attach-session", "-t", self.session_name]
             if read_only:
                 args.append("-r")
+            # Preemptively pause automation before handing control to a human
+            self.pause_automation(reason="manual-attach")
             # This will block and take over the terminal
             subprocess.run(["tmux"] + args, check=True)
         except subprocess.CalledProcessError as e:
             raise SessionBackendError(f"Failed to attach: {e}") from e
+        finally:
+            # Re-evaluate client list on detach to resume automation as needed
+            self._update_manual_control_state()
 
     def kill(self) -> None:
         """
@@ -393,6 +560,12 @@ class TmuxController(SessionBackend):
             "exists": self.session_exists(),
             "working_dir": self.spec.working_dir,
             "executable": self.spec.executable,
+            "automation": {
+                "paused": self._automation_paused,
+                "reason": self._automation_pause_reason,
+                "pending_commands": self.pending_command_count,
+                "manual_clients": list(self._manual_clients),
+            },
             "health": self.get_health_stats(),
             "restart": self.get_restart_stats()
         }
@@ -487,7 +660,8 @@ class TmuxController(SessionBackend):
             submit: If True, send Enter to submit the command
 
         Returns:
-            True if command sent successfully
+            True if command sent successfully, False if it was queued due to
+            automation being paused.
 
         Raises:
             SessionDead: If session no longer exists (not retried)
@@ -495,40 +669,22 @@ class TmuxController(SessionBackend):
         """
         self.logger.info(f"Sending command: {command[:50]}{'...' if len(command) > 50 else ''}")
 
-        if not self.session_exists():
-            self.logger.error(f"Cannot send command - session '{self.session_name}' does not exist")
-            raise SessionDead(f"Session '{self.session_name}' does not exist")
-
-        # Send the command text
-        result = self._run_tmux_command([
-            "send-keys", "-t", self.session_name, command
-        ])
-
-        if result.returncode != 0:
-            self.logger.error(f"Failed to send command text: {result.stderr}")
-            raise TmuxError(
-                f"Failed to send command: {result.stderr}",
-                command=["send-keys"],
-                return_code=result.returncode
+        self._update_manual_control_state()
+        if self._automation_paused:
+            pause_reason = self._automation_pause_reason or "unknown"
+            self.logger.warning(
+                "Automation currently paused (reason: %s); queueing command",
+                pause_reason
             )
+            self._enqueue_command(command, submit)
+            return False
 
-        # Send Enter separately to submit (not as part of send-keys command)
-        if submit:
-            time.sleep(0.1)  # Brief pause between text and Enter
-            result = self._run_tmux_command([
-                "send-keys", "-t", self.session_name, "Enter"
-            ])
-
-            if result.returncode != 0:
-                self.logger.error(f"Failed to submit command: {result.stderr}")
-                raise TmuxError(
-                    f"Failed to submit command: {result.stderr}",
-                    command=["send-keys", "Enter"],
-                    return_code=result.returncode
-                )
-
-        self.logger.debug("Command sent successfully")
-        return True
+        try:
+            return self._send_command_internal(command, submit)
+        except SessionDead:
+            raise
+        except TmuxError:
+            raise
 
     def wait_for_startup(self, timeout: Optional[int] = None) -> bool:
         """
