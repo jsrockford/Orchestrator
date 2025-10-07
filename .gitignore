@@ -71,3 +71,14 @@ temp/
 # *.png
 # *.jpg
 # *.jpeg
+# repomix-output.txt
+repomix-output.txt
+
+# exclude these untracked files
+CodexConcerns.md
+@CodexReminder.md
+AI_Dev_Team_Orchestration_System.md
+CCompact.md
+*.png
+REMINDER.md
+observations.md
