@@ -22,6 +22,7 @@ from ..utils.exceptions import (
 )
 from ..utils.logger import get_logger
 from ..utils.retry import retry_with_backoff, STANDARD_RETRY
+from ..utils.health_check import HealthChecker
 
 
 class TmuxController:
@@ -73,6 +74,13 @@ class TmuxController:
 
         # Verify environment on initialization
         self._verify_environment()
+
+        # Initialize health checker
+        self.health_checker = HealthChecker(
+            check_interval=self.config.get('health_check_interval', 30.0),
+            response_timeout=self.config.get('health_check_timeout', 5.0),
+            max_failed_checks=self.config.get('max_failed_health_checks', 3)
+        )
 
     def _verify_environment(self):
         """
@@ -389,9 +397,70 @@ class TmuxController:
 
         return result.returncode == 0
 
+    def perform_health_check(self, check_type: str = "session_exists") -> dict:
+        """
+        Perform health check on the session.
+
+        Args:
+            check_type: Type of health check to perform:
+                - "session_exists": Basic liveness check
+                - "output_responsive": Check if session produces output
+                - "command_echo": Full responsiveness test with test command
+
+        Returns:
+            Dictionary with health check results
+
+        Raises:
+            ValueError: If check_type is invalid
+        """
+        if check_type == "session_exists":
+            result = self.health_checker.check_session_exists(self.session_exists)
+        elif check_type == "output_responsive":
+            result = self.health_checker.check_output_responsive(
+                lambda: self.capture_output(lines=50),
+                min_output_length=10
+            )
+        elif check_type == "command_echo":
+            result = self.health_checker.check_command_echo(
+                send_command_func=lambda cmd: self.send_command(cmd, submit=True),
+                wait_func=self.wait_for_ready,
+                capture_func=self.capture_output,
+                test_command="# health_check"
+            )
+        else:
+            raise ValueError(f"Invalid check_type: {check_type}")
+
+        return {
+            "healthy": result.healthy,
+            "timestamp": result.timestamp.isoformat(),
+            "check_type": result.check_type,
+            "details": result.details,
+            "error_message": result.error_message,
+            "consecutive_failures": self.health_checker.consecutive_failures,
+            "is_healthy": self.health_checker.is_healthy()
+        }
+
+    def get_health_stats(self) -> dict:
+        """
+        Get health check statistics.
+
+        Returns:
+            Dictionary with health metrics
+        """
+        return self.health_checker.get_stats()
+
+    def is_healthy(self) -> bool:
+        """
+        Check if session is currently considered healthy.
+
+        Returns:
+            True if session is healthy, False otherwise
+        """
+        return self.health_checker.is_healthy()
+
     def get_status(self) -> dict:
         """
-        Get session status information.
+        Get session status information including health.
 
         Returns:
             Dictionary with session status
@@ -400,4 +469,5 @@ class TmuxController:
             "session_name": self.session_name,
             "working_dir": self.working_dir,
             "exists": self.session_exists(),
+            "health": self.get_health_stats()
         }
