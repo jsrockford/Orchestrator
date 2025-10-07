@@ -21,6 +21,7 @@ from ..utils.exceptions import (
     TmuxError
 )
 from ..utils.logger import get_logger
+from ..utils.retry import retry_with_backoff, STANDARD_RETRY
 
 
 class TmuxController:
@@ -93,9 +94,10 @@ class TmuxController:
 
         self.logger.debug("Environment verification passed")
 
+    @retry_with_backoff(max_attempts=2, initial_delay=0.5, exceptions=(TmuxError,))
     def _run_tmux_command(self, args: List[str]) -> subprocess.CompletedProcess:
         """
-        Run a tmux command with error handling.
+        Run a tmux command with error handling and automatic retry.
 
         Args:
             args: Command arguments to pass to tmux
@@ -104,7 +106,7 @@ class TmuxController:
             CompletedProcess result
 
         Raises:
-            TmuxError: If tmux command fails unexpectedly
+            TmuxError: If tmux command fails unexpectedly after retries
         """
         cmd = ["tmux"] + args
         try:
@@ -192,9 +194,10 @@ class TmuxController:
         self.logger.info(f"Session '{self.session_name}' started successfully")
         return True
 
+    @retry_with_backoff(max_attempts=3, initial_delay=1.0, exceptions=(TmuxError,))
     def send_command(self, command: str, submit: bool = True) -> bool:
         """
-        Send a command to AI CLI.
+        Send a command to AI CLI with automatic retry on transient failures.
 
         CRITICAL: Text and Enter must be sent separately to avoid multi-line input.
 
@@ -206,7 +209,8 @@ class TmuxController:
             True if command sent successfully
 
         Raises:
-            SessionDead: If session no longer exists
+            SessionDead: If session no longer exists (not retried)
+            TmuxError: If command fails after retries
         """
         self.logger.info(f"Sending command: {command[:50]}{'...' if len(command) > 50 else ''}")
 
