@@ -125,9 +125,10 @@ class SessionBackend(ABC):
         Capture text from the session's visible buffer.
 
         Args:
-            start_line: Starting line offset relative to the bottom of the
-                buffer (0 = last line, negative values = look further up) when
-                supported by the backend.
+            start_line: Starting line offset. Backend-specific semantics:
+                - Tmux: 0 = top of buffer, negative = relative to top
+                - Other backends may define differently
+                If omitted, captures the visible pane.
             lines: Number of lines to include. If omitted, implementations
                 should default to the backend's standard capture window.
 

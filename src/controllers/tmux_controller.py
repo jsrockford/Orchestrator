@@ -265,8 +265,10 @@ class TmuxController(SessionBackend):
         Capture text from the session's visible buffer.
 
         Args:
-            start_line: Starting line offset relative to the bottom.
-            lines: Number of lines to include (not used in tmux implementation).
+            start_line: Starting line offset (tmux semantics: 0 = top of buffer,
+                negative values = offset from top). If omitted, captures visible pane.
+            lines: Number of lines to include (not used in tmux implementation,
+                controlled by tmux's default capture window).
 
         Returns:
             Captured output as a single string.
@@ -274,6 +276,10 @@ class TmuxController(SessionBackend):
         Raises:
             SessionNotFoundError: If the session does not exist.
             SessionBackendError: If the backend cannot capture output.
+
+        Note:
+            Tmux's -S flag uses top-relative indexing where 0 is the first line
+            in the scrollback. Use negative values to offset from the top.
         """
         if not self.session_exists():
             raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
