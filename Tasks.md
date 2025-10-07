@@ -126,11 +126,28 @@
 - Integrated into tmux_controller with backward compatibility
 - Ready for production use with configurable behavior via config.yaml
 
-### Task 2.4: Advanced Test Suite
-- [ ] Test multi-turn conversations (context preservation)
-- [ ] Test file operation commands
-- [ ] Test rapid sequential commands
-- [ ] Test error scenarios
+### Task 2.4: Advanced Test Suite ⏳ IN PROGRESS
+**Implementation Files**: `test_advanced_suite.py`, `test_startup_detection.py`
+
+**Completed**:
+- [x] Test 1: Multi-turn conversations with Claude (context preservation) - Working
+- [x] Test 2: Multi-turn conversations with Gemini (context preservation) - Working
+- [x] Test 3: File operations with Claude - Working
+- [x] Startup detection system with `wait_for_startup()` method
+- [x] Loading indicator checking for race condition prevention
+- [x] Stabilization delays (2s Gemini, 1s Claude)
+- [x] Comprehensive timing documentation (TIMING_GUIDE.md)
+
+**Remaining**:
+- [ ] Test 4: File operations with Gemini
+- [ ] Test 5: Rapid sequential commands (both AIs)
+- [ ] Test 6: Error scenarios with recovery (both AIs)
+
+**Key Fixes Applied**:
+- Fixed command truncation ("only 'I' was input") via observation-based startup detection
+- Increased startup timeouts to 20s for real-world variability
+- Changed Gemini test prompts to avoid triggering file edit permissions
+- Implemented output stabilization for response completion detection
 
 ## Phase 3: Manual/Auto Switching
 
