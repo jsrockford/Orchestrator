@@ -196,9 +196,9 @@ class TmuxController:
                 return_code=result.returncode
             )
 
-        # Wait for AI to start (use configured timeout)
+        # Wait for AI to start (brief initial wait for process to spawn)
         init_wait = self.config.get('init_wait', 3)
-        self.logger.debug(f"Waiting {init_wait}s for AI to initialize")
+        self.logger.debug(f"Waiting {init_wait}s for AI process to spawn")
         time.sleep(init_wait)
 
         # Auto-confirm trust prompt if requested
@@ -208,15 +208,21 @@ class TmuxController:
             self._run_tmux_command([
                 "send-keys", "-t", self.session_name, "Enter"
             ])
-            # Wait for AI to fully initialize
-            time.sleep(init_wait)
+            # Brief wait for Enter to be processed
+            time.sleep(1)
+
+        # Wait for AI to be fully ready (detect ready indicators)
+        self.logger.debug("Waiting for AI to be fully ready...")
+        if not self.wait_for_startup(timeout=self.startup_timeout):
+            self.logger.error("AI failed to show ready indicators within timeout")
+            raise SessionStartupTimeout(f"Session failed to be ready within {self.startup_timeout}s")
 
         # Verify session is actually ready
         if not self.session_exists():
             self.logger.error("Session creation appeared to succeed but session doesn't exist")
             raise SessionStartupTimeout("Session failed to start properly")
 
-        self.logger.info(f"Session '{self.session_name}' started successfully")
+        self.logger.info(f"Session '{self.session_name}' started successfully and ready")
         return True
 
     @retry_with_backoff(max_attempts=3, initial_delay=1.0, exceptions=(TmuxError,))
@@ -310,6 +316,46 @@ class TmuxController:
             "capture-pane", "-t", self.session_name, "-p", "-S", "-"
         ])
         return result.stdout
+
+    def wait_for_startup(self, timeout: Optional[int] = None) -> bool:
+        """
+        Wait until AI has fully started and is ready for first input.
+
+        Looks for startup ready indicators (e.g., prompt text, "Type your message").
+        This is different from wait_for_ready() which waits for response completion.
+
+        Args:
+            timeout: Maximum seconds to wait (uses startup_timeout from config if not specified)
+
+        Returns:
+            True if startup indicators detected, False if timeout
+        """
+        if not self.session_exists():
+            return False
+
+        timeout = timeout or self.startup_timeout
+        check_interval = 0.5
+        start_time = time.time()
+
+        self.logger.debug(f"Waiting for startup ready indicators: {self.ready_indicators}")
+
+        while (time.time() - start_time) < timeout:
+            output = self.capture_output()
+
+            # Check for AI-specific ready indicators
+            if self.ready_indicators:
+                if any(indicator in output for indicator in self.ready_indicators):
+                    self.logger.debug("Startup ready indicator found")
+                    return True
+            else:
+                # Fallback: if no indicators configured, just check for any output
+                if len(output.strip()) > 50:  # Arbitrary threshold for "has started"
+                    return True
+
+            time.sleep(check_interval)
+
+        self.logger.warning(f"Startup timeout after {timeout}s")
+        return False
 
     def wait_for_ready(self, timeout: Optional[int] = None, check_interval: Optional[float] = None) -> bool:
         """
