@@ -1,10 +1,16 @@
 # Multi-AI CLI Interaction POC Configuration
 # Values based on empirical testing and observation
 # Supports: Claude Code and Gemini CLI
+#
+# IMPORTANT: Startup timeouts should be generous to handle real-world variability:
+# - Network latency for credential loading
+# - System resource availability
+# - First-time initialization vs. cached startup
+# - Better to wait longer than fail prematurely
 
 claude:
   # Startup timing
-  startup_timeout: 10  # Total seconds to wait for Claude to start (measured: ~8s)
+  startup_timeout: 20  # Total seconds to wait for Claude to start (allows for variability)
   trust_wait: 3        # Wait after confirming trust prompt
   init_wait: 3         # Wait after initialization
 
@@ -28,7 +34,7 @@ claude:
 
 gemini:
   # Startup timing
-  startup_timeout: 5   # Total seconds to wait for Gemini to start (measured: ~3s)
+  startup_timeout: 20  # Total seconds to wait for Gemini to start (allows for variability, credential loading, etc.)
   init_wait: 3         # Wait after initialization
 
   # Response timing
@@ -75,7 +81,7 @@ tmux:
 
 logging:
   # Logging configuration
-  level: "INFO"          # DEBUG, INFO, WARNING, ERROR
+  level: "DEBUG"          # DEBUG, INFO, WARNING, ERROR
   file: "logs/poc.log"   # Log file path
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   max_bytes: 10485760    # 10MB

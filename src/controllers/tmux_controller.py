@@ -217,6 +217,13 @@ class TmuxController:
             self.logger.error("AI failed to show ready indicators within timeout")
             raise SessionStartupTimeout(f"Session failed to be ready within {self.startup_timeout}s")
 
+        # Stabilization delay after detecting ready indicator
+        # Ensures input buffer is fully initialized and ready for first command
+        # Critical for Gemini which can show prompt before buffer is ready
+        stabilization_delay = 2.0 if self.executable == "gemini" else 1.0
+        self.logger.debug(f"Ready indicator found, allowing input buffer to stabilize ({stabilization_delay}s)...")
+        time.sleep(stabilization_delay)
+
         # Verify session is actually ready
         if not self.session_exists():
             self.logger.error("Session creation appeared to succeed but session doesn't exist")
@@ -321,14 +328,14 @@ class TmuxController:
         """
         Wait until AI has fully started and is ready for first input.
 
-        Looks for startup ready indicators (e.g., prompt text, "Type your message").
+        Looks for startup ready indicators AND ensures no loading indicators present.
         This is different from wait_for_ready() which waits for response completion.
 
         Args:
             timeout: Maximum seconds to wait (uses startup_timeout from config if not specified)
 
         Returns:
-            True if startup indicators detected, False if timeout
+            True if startup indicators detected and no loading indicators, False if timeout
         """
         if not self.session_exists():
             return False
@@ -337,16 +344,42 @@ class TmuxController:
         check_interval = 0.5
         start_time = time.time()
 
+        # Get loading indicators from config (if available)
+        loading_indicators = self.config.get('loading_indicators', [])
+
         self.logger.debug(f"Waiting for startup ready indicators: {self.ready_indicators}")
+        if loading_indicators:
+            self.logger.debug(f"Will check for absence of loading indicators: {loading_indicators}")
 
         while (time.time() - start_time) < timeout:
             output = self.capture_output()
 
             # Check for AI-specific ready indicators
             if self.ready_indicators:
-                if any(indicator in output for indicator in self.ready_indicators):
-                    self.logger.debug("Startup ready indicator found")
+                self.logger.debug(f"Checking for indicators in {len(output)} chars of output")
+
+                # First check if ready indicator is present
+                ready_indicator_found = False
+                for indicator in self.ready_indicators:
+                    if indicator in output:
+                        ready_indicator_found = True
+                        self.logger.debug(f"Startup ready indicator found: '{indicator}'")
+                        break
+
+                if ready_indicator_found:
+                    # Now check that no loading indicators are present
+                    if loading_indicators:
+                        has_loading = any(loading_ind in output for loading_ind in loading_indicators)
+                        if has_loading:
+                            self.logger.debug("Ready indicator found but loading indicator still present, waiting...")
+                            time.sleep(check_interval)
+                            continue
+
+                    # Ready indicator present and no loading indicators
+                    self.logger.debug("Startup complete: ready indicator found, no loading indicators")
                     return True
+                else:
+                    self.logger.debug(f"Indicators not found. Looking for: {self.ready_indicators}")
             else:
                 # Fallback: if no indicators configured, just check for any output
                 if len(output.strip()) > 50:  # Arbitrary threshold for "has started"

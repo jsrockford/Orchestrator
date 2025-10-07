@@ -140,9 +140,9 @@ def test_multi_turn_gemini():
 
         pause_for_observation("Gemini session started", "gemini-test")
 
-        # Turn 1: Ask about a topic
-        print("\nTurn 1: Asking Gemini to remember a color...")
-        controller.send_command("I'm going to tell you a color. Remember it: purple. Just acknowledge you'll remember it.")
+        # Turn 1: Ask about a topic (avoid triggering file edits)
+        print("\nTurn 1: Asking Gemini to remember a number...")
+        controller.send_command("Please remember this number: 777. Just say OK.")
         controller.wait_for_ready(timeout=30)
 
         output1 = controller.capture_output(lines=50)
@@ -152,23 +152,23 @@ def test_multi_turn_gemini():
 
         # Turn 2: Reference previous context
         print("\nTurn 2: Testing context preservation...")
-        controller.send_command("What color did I just tell you to remember?")
+        controller.send_command("What number did I ask you to remember?")
         controller.wait_for_ready(timeout=30)
 
         output2 = controller.capture_output(lines=50)
         print(f"Response received ({len(output2)} chars)")
 
         # Check if Gemini remembers
-        if "purple" in output2.lower():
-            print("✓ Context preserved - Gemini remembered the color!")
+        if "777" in output2:
+            print("✓ Context preserved - Gemini remembered the number!")
         else:
             print("✗ Context lost - Gemini didn't remember")
 
         pause_for_observation("After Turn 2 (context test)", "gemini-test")
 
-        # Turn 3: Creative follow-up
-        print("\nTurn 3: Creative follow-up...")
-        controller.send_command("Name one thing that is commonly that color.")
+        # Turn 3: Math follow-up
+        print("\nTurn 3: Math follow-up...")
+        controller.send_command("What is that number divided by 7?")
         controller.wait_for_ready(timeout=30)
 
         output3 = controller.capture_output(lines=50)
