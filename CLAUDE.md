@@ -99,3 +99,12 @@ Critical parameters:
 3. What is the maximum reliable command length?
 4. How does rapid command queuing affect response quality?
 5. Can we detect streaming response completion reliably?
+
+## Task Completion Protocol
+**IMPORTANT**: When completing tasks or phases of work:
+1. Update Tasks.md to mark items as complete
+2. Check off subtasks within each phase
+3. Add completion notes with any relevant details
+4. Commit documentation updates along with code changes
+
+This ensures project status is always accurately reflected and makes it easy to resume work in future sessions.
