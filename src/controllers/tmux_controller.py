@@ -23,6 +23,7 @@ from ..utils.exceptions import (
 from ..utils.logger import get_logger
 from ..utils.retry import retry_with_backoff, STANDARD_RETRY
 from ..utils.health_check import HealthChecker
+from ..utils.auto_restart import AutoRestarter, RestartPolicy
 
 
 class TmuxController:
@@ -80,6 +81,22 @@ class TmuxController:
             check_interval=self.config.get('health_check_interval', 30.0),
             response_timeout=self.config.get('health_check_timeout', 5.0),
             max_failed_checks=self.config.get('max_failed_health_checks', 3)
+        )
+
+        # Initialize auto-restarter
+        restart_policy_str = self.config.get('restart_policy', 'on_failure')
+        try:
+            restart_policy = RestartPolicy(restart_policy_str)
+        except ValueError:
+            self.logger.warning(f"Invalid restart_policy '{restart_policy_str}', using ON_FAILURE")
+            restart_policy = RestartPolicy.ON_FAILURE
+
+        self.auto_restarter = AutoRestarter(
+            policy=restart_policy,
+            max_restart_attempts=self.config.get('max_restart_attempts', 3),
+            restart_window=self.config.get('restart_window', 300.0),
+            initial_backoff=self.config.get('restart_initial_backoff', 5.0),
+            max_backoff=self.config.get('restart_max_backoff', 60.0)
         )
 
     def _verify_environment(self):
@@ -458,6 +475,66 @@ class TmuxController:
         """
         return self.health_checker.is_healthy()
 
+    def restart_session(self, reason: str = "manual", auto_confirm_trust: bool = True) -> bool:
+        """
+        Restart the session (kill and start fresh).
+
+        Args:
+            reason: Reason for restart (for logging)
+            auto_confirm_trust: Auto-confirm trust prompt on restart
+
+        Returns:
+            True if restart succeeded, False otherwise
+        """
+        self.logger.info(f"Restarting session (reason: {reason})")
+
+        # Kill existing session if it exists
+        if self.session_exists():
+            self.logger.debug("Killing existing session")
+            self.kill_session()
+            time.sleep(1)  # Brief pause to ensure cleanup
+
+        # Start new session
+        try:
+            self.start_session(auto_confirm_trust=auto_confirm_trust)
+            self.logger.info("Session restarted successfully")
+
+            # Reset health checker after successful restart
+            self.health_checker.reset()
+
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to restart session: {e}")
+            return False
+
+    def auto_restart_if_needed(self, reason: str = "unknown") -> bool:
+        """
+        Automatically restart session if policy allows and conditions are met.
+
+        Args:
+            reason: Reason for potential restart
+
+        Returns:
+            True if restart was attempted and succeeded, False otherwise
+        """
+        def restart_func():
+            return self.restart_session(reason=reason)
+
+        return self.auto_restarter.attempt_restart(
+            restart_func=restart_func,
+            reason=reason,
+            wait_before_restart=True
+        )
+
+    def get_restart_stats(self) -> dict:
+        """
+        Get auto-restart statistics.
+
+        Returns:
+            Dictionary with restart metrics
+        """
+        return self.auto_restarter.get_stats()
+
     def get_status(self) -> dict:
         """
         Get session status information including health.
@@ -469,5 +546,6 @@ class TmuxController:
             "session_name": self.session_name,
             "working_dir": self.working_dir,
             "exists": self.session_exists(),
-            "health": self.get_health_stats()
+            "health": self.get_health_stats(),
+            "restart": self.get_restart_stats()
         }
