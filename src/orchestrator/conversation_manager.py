@@ -31,6 +31,7 @@ class ConversationManager:
         participants: Sequence[str],
         *,
         context_manager: Any | None = None,
+        message_router: Any | None = None,
         max_history: int = 200,
     ) -> None:
         if not participants:
@@ -40,9 +41,19 @@ class ConversationManager:
         self.orchestrator = orchestrator
         self.participants: List[str] = list(participants)
         self.context_manager = context_manager
+        self.message_router = message_router
         self._max_history = max(1, int(max_history))
         self._turn_counter: int = 0
         self.history: Deque[Dict[str, Any]] = deque(maxlen=self._max_history)
+
+        if self.message_router is not None:
+            for name in self.participants:
+                register = getattr(self.message_router, "register_participant", None)
+                if callable(register):
+                    try:
+                        register(name)
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.debug("Message router registration failed for '%s': %s", name, exc)
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -99,6 +110,7 @@ class ConversationManager:
                     metadata["conflict_reason"] = reason
 
             self._record_with_context_manager(turn_record)
+            self._route_message(turn_record, topic, dispatched=not is_queued)
 
             # Give the orchestrator a chance to drain any newly runnable work.
             try:
@@ -146,15 +158,24 @@ class ConversationManager:
             return None
 
         if not context:
-            # Resume from the participant after the last global speaker, if possible.
+            # Resume from the participant after the last global speaker, unless the last turn was queued.
             if self.history:
-                last_speaker = self.history[-1]["speaker"]
+                last_turn = self.history[-1]
+                last_speaker = last_turn.get("speaker")
                 if last_speaker in active_participants:
+                    last_metadata = last_turn.get("metadata") or {}
+                    if last_metadata.get("queued"):
+                        return last_speaker
                     idx = active_participants.index(last_speaker)
                     return active_participants[(idx + 1) % len(active_participants)]
             return active_participants[0]
 
-        last_speaker = context[-1].get("speaker")
+        last_turn = context[-1]
+        last_speaker = last_turn.get("speaker")
+        last_metadata = last_turn.get("metadata") or {}
+        if last_metadata.get("queued") and isinstance(last_speaker, str):
+            return last_speaker if last_speaker in active_participants else active_participants[0]
+
         if last_speaker not in active_participants:
             return active_participants[0]
 
@@ -232,10 +253,26 @@ class ConversationManager:
                     self.logger.warning("Context builder failed for '%s': %s", speaker, exc)
 
         turn_number = len(conversation)
-        return (
+        prompt = (
             f"[Turn {turn_number}] {speaker}, share your perspective on '{topic}'. "
             "Highlight progress, concerns, or next actions."
         )
+
+        if self.message_router is not None:
+            self._ensure_router_registration(speaker)
+            formatter = getattr(self.message_router, "prepare_prompt", None)
+            if callable(formatter):
+                try:
+                    prompt = formatter(
+                        recipient=speaker,
+                        topic=topic,
+                        base_prompt=prompt,
+                        include_history=True,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.debug("Message router prompt preparation failed: %s", exc)
+
+        return prompt
 
     def _read_last_output(self, controller_name: str) -> Optional[str]:
         controller = getattr(self.orchestrator, "controllers", {}).get(controller_name)
@@ -267,6 +304,42 @@ class ConversationManager:
                 except Exception as exc:  # noqa: BLE001
                     self.logger.debug("Context manager hook '%s' failed: %s", attr, exc)
                 return
+
+    def _route_message(self, turn: Dict[str, Any], topic: str, *, dispatched: bool) -> None:
+        if self.message_router is None or not dispatched:
+            return
+
+        deliver = getattr(self.message_router, "deliver", None)
+        if not callable(deliver):
+            return
+
+        sender = turn.get("speaker")
+        if not isinstance(sender, str):
+            return
+
+        response = turn.get("response") or ""
+        metadata = turn.get("metadata")
+        try:
+            deliver(
+                sender=sender,
+                message=response,
+                topic=topic,
+                turn=turn.get("turn", 0),
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        except Exception:  # noqa: BLE001
+            self.logger.debug("Message routing failed for sender '%s'", sender, exc_info=True)
+
+    def _ensure_router_registration(self, participant: str) -> None:
+        if self.message_router is None:
+            return
+
+        register = getattr(self.message_router, "register_participant", None)
+        if callable(register):
+            try:
+                register(participant)
+            except Exception:  # noqa: BLE001
+                self.logger.debug("Message router register failed for '%s'", participant, exc_info=True)
 
     def _notify_context_manager(self, event: str, turn: Dict[str, Any], *, reason: Optional[str] = None) -> None:
         if self.context_manager is None:

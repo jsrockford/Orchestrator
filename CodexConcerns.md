@@ -878,3 +878,5 @@ Excellent duck-typed approach - tries multiple method names, uses first found.
 -------
 
 --------
+Codex: MessageRouter now feeds partner updates into each prompt, the conversation manager only routes when dispatch succeeds, and TmuxController exposes get_last_output so real transcripts can flow; tests cover routed dialogue plus queue-induced pauses, so we're ready to point the orchestrator at live Claude/Gemini sessions next.-------
+Codex: Orchestrator now exposes start_discussion() to spin up a conversation manager + router bundle, ConversationManager retries the same speaker after a queued turn, and TmuxController snapshots tmux output so routing uses real transcripts; new tests cover resume logic and the orchestrator-level discussion helper.-------

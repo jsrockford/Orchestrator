@@ -123,6 +123,7 @@ class TmuxController(SessionBackend):
         self._automation_pause_reason: Optional[str] = None
         self._manual_clients: Sequence[str] = []
         self._pending_commands: Deque[Tuple[str, bool]] = deque()
+        self._last_output_lines: List[str] = []
 
     def _verify_environment(self):
         """
@@ -310,6 +311,8 @@ class TmuxController(SessionBackend):
             self.logger.error(f"Cannot send command - session '{self.session_name}' does not exist")
             raise SessionDead(f"Session '{self.session_name}' does not exist")
 
+        self._snapshot_output_state()
+
         result = self._run_tmux_command([
             "send-keys", "-t", self.session_name, command
         ])
@@ -338,6 +341,18 @@ class TmuxController(SessionBackend):
 
         self.logger.debug("Command sent successfully")
         return True
+
+    def _snapshot_output_state(self) -> None:
+        """
+        Cache the current pane contents so subsequent output deltas only include new text.
+        """
+        try:
+            raw_output = self.capture_output()
+        except SessionBackendError:
+            self._last_output_lines = []
+            return
+
+        self._last_output_lines = raw_output.splitlines()
 
     # ========================================================================
     # SessionBackend Interface Implementation
@@ -751,6 +766,49 @@ class TmuxController(SessionBackend):
 
         self.logger.warning(f"Startup timeout after {timeout}s")
         return False
+
+    def get_last_output(self, *, tail_lines: int = 50) -> str:
+        """
+        Return newly captured output since the previous snapshot.
+
+        Args:
+            tail_lines: Maximum number of trailing lines to return if no delta
+                can be computed (fallback for buffer resets).
+        """
+        if not self.session_exists():
+            return ""
+
+        try:
+            raw_output = self.capture_output()
+        except SessionBackendError:
+            return ""
+
+        if not raw_output:
+            return ""
+
+        current_lines = raw_output.splitlines()
+        delta: List[str]
+
+        if self._last_output_lines and len(current_lines) >= len(self._last_output_lines):
+            prefix_length = self._common_prefix_length(self._last_output_lines, current_lines)
+            delta = current_lines[prefix_length:]
+        else:
+            delta = current_lines[-tail_lines:]
+
+        self._last_output_lines = current_lines
+        return "\n".join(delta).strip()
+
+    def reset_output_cache(self) -> None:
+        """Forget cached output so the next capture returns the latest pane contents."""
+        self._last_output_lines = []
+
+    @staticmethod
+    def _common_prefix_length(first: Sequence[str], second: Sequence[str]) -> int:
+        limit = min(len(first), len(second))
+        for idx in range(limit):
+            if first[idx] != second[idx]:
+                return idx
+        return limit
 
     def wait_for_ready(self, timeout: Optional[int] = None, check_interval: Optional[float] = None) -> bool:
         """

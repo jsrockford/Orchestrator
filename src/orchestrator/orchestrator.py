@@ -11,7 +11,7 @@ top of a stable contract.
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..utils.logger import get_logger
 
@@ -232,6 +232,64 @@ class DevelopmentTeamOrchestrator:
         Returns the same payload as process_all_pending().
         """
         return self.process_all_pending()
+
+    # ------------------------------------------------------------------ #
+    # Higher-level helpers
+    # ------------------------------------------------------------------ #
+
+    def start_discussion(
+        self,
+        topic: str,
+        *,
+        participants: Optional[Sequence[str]] = None,
+        max_turns: int = 10,
+        context_manager: Any | None = None,
+        message_router: Any | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Run a facilitated discussion between registered controllers.
+
+        Args:
+            topic: Subject for the conversation.
+            participants: Optional ordered list of controller names to include.
+                Defaults to all registered controllers.
+            max_turns: Maximum number of turns before stopping.
+            context_manager: Optional context manager instance. If omitted a new
+                ContextManager is created.
+            message_router: Optional message router instance. A default router
+                is created when not provided.
+
+        Returns:
+            Dict containing:
+                - conversation: List of turn dictionaries.
+                - manager: ConversationManager used for the exchange.
+                - context_manager: Context manager instance (created or provided).
+                - message_router: Message router instance (created or provided).
+        """
+        from .conversation_manager import ConversationManager  # local import to avoid cycles
+        from .context_manager import ContextManager
+        from .message_router import MessageRouter
+
+        participant_list = list(participants or self.controllers.keys())
+        if not participant_list:
+            raise ValueError("start_discussion requires at least one participant")
+
+        ctx_manager = context_manager or ContextManager()
+        msg_router = message_router or MessageRouter(participant_list, context_manager=ctx_manager)
+
+        manager = ConversationManager(
+            self,
+            participant_list,
+            context_manager=ctx_manager,
+            message_router=msg_router,
+        )
+        conversation = manager.facilitate_discussion(topic, max_turns=max_turns)
+        return {
+            "conversation": conversation,
+            "manager": manager,
+            "context_manager": ctx_manager,
+            "message_router": msg_router,
+        }
 
     # ------------------------------------------------------------------ #
     # Internal helpers
