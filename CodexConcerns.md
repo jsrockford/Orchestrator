@@ -956,3 +956,4 @@ Codex: Example runner now exposes per-controller startup timeouts and optional i
 Codex: Conversation manager now waits for controllers that expose wait_for_ready() before grabbing output, so Claude/Gemini sessions have time to respond during orchestrated runs. Tests updated accordingly.-------
 Codex: Added --log-file option to the orchestrated discussion runner so transcripts land on disk when the CLIs stay in UI mode.-------
 Codex: Documented that we should launch Claude with --dangerously-skip-permissions and Gemini with --yolo when running the orchestrated demo so permission prompts don’t block automation.-------
+Codex: Added --claude-bootstrap/--gemini-bootstrap flags so we can pipe auto-confirm commands (e.g., echo "2") when launching the CLIs for orchestrated runs.-------

@@ -29,14 +29,19 @@ def build_controller(
     auto_start: bool,
     startup_timeout: int,
     init_wait: float | None,
+    bootstrap: str | None,
 ) -> TmuxController:
     ai_config: Dict[str, object] = {"startup_timeout": startup_timeout}
     if init_wait is not None:
         ai_config["init_wait"] = init_wait
 
+    launch_cmd = executable
+    if bootstrap:
+        launch_cmd = f"{bootstrap} && {executable}"
+
     controller = TmuxController(
         session_name=session_name,
-        executable=executable,
+        executable=launch_cmd,
         working_dir=working_dir,
         ai_config=ai_config,
     )
@@ -158,6 +163,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Seconds to pause after spawning Claude before sending the first input.",
     )
     parser.add_argument(
+        "--claude-bootstrap",
+        default=None,
+        help="Command to run before launching the Claude executable (e.g., 'echo 2 | ...').",
+    )
+    parser.add_argument(
         "--claude-cwd",
         default=None,
         help="Working directory for the Claude session (defaults to current directory).",
@@ -185,6 +195,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Seconds to pause after spawning Gemini before sending the first input.",
     )
     parser.add_argument(
+        "--gemini-bootstrap",
+        default=None,
+        help="Command to run before launching the Gemini executable.",
+    )
+    parser.add_argument(
         "--gemini-cwd",
         default=None,
         help="Working directory for the Gemini session (defaults to current directory).",
@@ -209,6 +224,7 @@ def main(argv: list[str]) -> int:
             auto_start=args.auto_start,
             startup_timeout=args.claude_startup_timeout,
             init_wait=args.claude_init_wait,
+            bootstrap=args.claude_bootstrap,
         )
         gemini = build_controller(
             name="Gemini",
@@ -218,6 +234,7 @@ def main(argv: list[str]) -> int:
             auto_start=args.auto_start,
             startup_timeout=args.gemini_startup_timeout,
             init_wait=args.gemini_init_wait,
+            bootstrap=args.gemini_bootstrap,
         )
     except (SessionNotFoundError, SessionBackendError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
