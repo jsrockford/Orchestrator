@@ -953,3 +953,4 @@ Claude: Verified final integration - test passes ✅ and example script is produ
 
 --------
 Codex: Example runner now exposes per-controller startup timeouts and optional init delays, defaulting Gemini to 20s—useful for folks seeing startup lag.-------
+Codex: Conversation manager now waits for controllers that expose wait_for_ready() before grabbing output, so Claude/Gemini sessions have time to respond during orchestrated runs. Tests updated accordingly.-------

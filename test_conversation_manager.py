@@ -55,6 +55,9 @@ class FakeConversationalController:
     def get_last_output(self) -> str | None:
         return self._last_output
 
+    def wait_for_ready(self, timeout: float | None = None, check_interval: float | None = None) -> bool:
+        return True
+
     def set_paused(self, paused: bool, *, reason: str | None = None, manual_clients: List[str] | None = None) -> None:
         self._paused = paused
         self._pause_reason = reason

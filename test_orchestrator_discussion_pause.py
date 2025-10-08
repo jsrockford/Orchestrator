@@ -60,6 +60,9 @@ class PauseAwareController:
         self._pause_reason = reason
         self._manual_clients = manual_clients or []
 
+    def wait_for_ready(self, timeout: float | None = None, check_interval: float | None = None) -> bool:
+        return True
+
 
 def test_discussion_pause_and_resume_flow() -> None:
     claude_controller = PauseAwareController(

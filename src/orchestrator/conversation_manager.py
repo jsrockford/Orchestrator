@@ -279,6 +279,17 @@ class ConversationManager:
         if controller is None:
             return None
 
+        waiter = getattr(controller, "wait_for_ready", None)
+        if callable(waiter):
+            try:
+                waiter()
+            except Exception:  # noqa: BLE001
+                self.logger.debug(
+                    "Controller '%s' wait_for_ready failed",
+                    controller_name,
+                    exc_info=True,
+                )
+
         reader = getattr(controller, "get_last_output", None)
         if callable(reader):
             try:
