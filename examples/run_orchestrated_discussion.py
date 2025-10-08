@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import sys
 import textwrap
+from pathlib import Path
 from typing import Dict
 
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
@@ -188,6 +189,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Working directory for the Gemini session (defaults to current directory).",
     )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Optional path to write the conversation transcript and summary.",
+    )
     return parser.parse_args(argv)
 
 
@@ -236,6 +242,21 @@ def main(argv: list[str]) -> int:
     print("\n=== Shared Context Summary ===")
     summary = context_manager.summarize_conversation(context_manager.history)
     print(summary or "(no summary available)")
+
+    if args.log_file:
+        log_path = Path(args.log_file)
+        if log_path.suffix:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            log_path.mkdir(parents=True, exist_ok=True)
+            log_path = log_path / "discussion.log"
+
+        log_lines = ["=== Conversation Transcript ==="]
+        log_lines.extend(format_turn(turn) + "\n-" for turn in conversation)
+        log_lines.append("\n=== Shared Context Summary ===")
+        log_lines.append(summary or "(no summary available)")
+        log_path.write_text("\n".join(log_lines), encoding="utf-8")
+        print(f"\n[log] Conversation written to {log_path}")
 
     return 0
 

@@ -27,6 +27,7 @@ Important flags:
 - `--claude-init-wait` / `--gemini-init-wait`: Extra delay after spawning before the first input (useful for slower startups)
 - `--claude-cwd` / `--gemini-cwd`: Working directories for the sessions
 - `--max-turns`: Maximum number of turns the discussion should run (default: 6)
+- `--log-file`: Write the transcript and context summary to the provided file (or directory)
 
 ## Manual Workflow
 
