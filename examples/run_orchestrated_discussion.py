@@ -15,11 +15,7 @@ import sys
 import textwrap
 from typing import Dict
 
-from src.controllers.tmux_controller import (
-    SessionBackendError,
-    SessionNotFoundError,
-    TmuxController,
-)
+from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
 
 
@@ -30,11 +26,18 @@ def build_controller(
     executable: str,
     working_dir: str | None,
     auto_start: bool,
+    startup_timeout: int,
+    init_wait: float | None,
 ) -> TmuxController:
+    ai_config: Dict[str, object] = {"startup_timeout": startup_timeout}
+    if init_wait is not None:
+        ai_config["init_wait"] = init_wait
+
     controller = TmuxController(
         session_name=session_name,
         executable=executable,
         working_dir=working_dir,
+        ai_config=ai_config,
     )
 
     controller.reset_output_cache()
@@ -142,6 +145,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Executable used to start Claude (default: claude).",
     )
     parser.add_argument(
+        "--claude-startup-timeout",
+        type=int,
+        default=10,
+        help="Seconds to wait for Claude session readiness when auto-starting (default: 10).",
+    )
+    parser.add_argument(
+        "--claude-init-wait",
+        type=float,
+        default=None,
+        help="Seconds to pause after spawning Claude before sending the first input.",
+    )
+    parser.add_argument(
         "--claude-cwd",
         default=None,
         help="Working directory for the Claude session (defaults to current directory).",
@@ -155,6 +170,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--gemini-executable",
         default="gemini",
         help="Executable used to start Gemini (default: gemini).",
+    )
+    parser.add_argument(
+        "--gemini-startup-timeout",
+        type=int,
+        default=20,
+        help="Seconds to wait for Gemini session readiness when auto-starting (default: 20).",
+    )
+    parser.add_argument(
+        "--gemini-init-wait",
+        type=float,
+        default=None,
+        help="Seconds to pause after spawning Gemini before sending the first input.",
     )
     parser.add_argument(
         "--gemini-cwd",
@@ -174,6 +201,8 @@ def main(argv: list[str]) -> int:
             executable=args.claude_executable,
             working_dir=args.claude_cwd,
             auto_start=args.auto_start,
+            startup_timeout=args.claude_startup_timeout,
+            init_wait=args.claude_init_wait,
         )
         gemini = build_controller(
             name="Gemini",
@@ -181,6 +210,8 @@ def main(argv: list[str]) -> int:
             executable=args.gemini_executable,
             working_dir=args.gemini_cwd,
             auto_start=args.auto_start,
+            startup_timeout=args.gemini_startup_timeout,
+            init_wait=args.gemini_init_wait,
         )
     except (SessionNotFoundError, SessionBackendError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
