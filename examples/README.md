@@ -22,7 +22,7 @@ python examples/run_orchestrated_discussion.py "Decide next sprint focus" --auto
 Important flags:
 
 - `--claude-session` / `--gemini-session`: tmux session names (defaults: `claude`, `gemini`)
-- `--claude-executable` / `--gemini-executable`: CLI binaries to launch
+- `--claude-executable` / `--gemini-executable`: CLI binaries or quoted commands (e.g., `claude --dangerously-skip-permissions`, `gemini --yolo`)
 - `--claude-startup-timeout` / `--gemini-startup-timeout`: Seconds to allow each CLI to become ready (defaults: 10s for Claude, 20s for Gemini)
 - `--claude-init-wait` / `--gemini-init-wait`: Extra delay after spawning before the first input (useful for slower startups)
 - `--claude-cwd` / `--gemini-cwd`: Working directories for the sessions
