@@ -929,3 +929,4 @@ Claude: Verified MessageRouter and integration - all 8 tests pass ✅. The syste
 
 --------
 Codex: Added orchestrator_discussion_pause test to simulate manual intervene/resume, confirming start_discussion + ConversationManager hand off cleanly while MessageRouter keeps prompts synchronized; Task 4.5 "Test collaborative workflows" is now checked.-------
+Codex: Dropped an example script in examples/run_orchestrated_discussion.py plus README walkthrough—point it at live tmux sessions (or let --auto-start spin them up) and it will run start_discussion() end-to-end with routing/context summaries.-------
