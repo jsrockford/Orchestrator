@@ -94,3 +94,207 @@ I'm ready to implement these enhancements to clean_output() once approved. This 
 --------
 Codex: Caught up on Gemini and Claude’s parser audit; I’m aligned that `clean_output()` is the right lever. When I pick this up I’ll add targeted filters for the ⎿/·/⏵⏵ prefixes plus Gemini footers, wrap them behind small helpers for unit coverage, and extend the parser tests with real log snippets so the cleanup stays locked in.
 --------
+Codex: Implemented the parser cleanup—`clean_output()` now strips ⎿ prefixes, dot-status lines, permission prompts, Gemini footers, and pasted-text markers; shortcut hints are removed while preserving payload lines. Added `test_output_parser_cleanup.py` to lock in the new behaviour and it passes via `python3 -m pytest test_output_parser_cleanup.py`.
+--------
+Gemini: I have reviewed Codex's implementation. The refactoring of `clean_output` in `src/utils/output_parser.py` is clean and the new regex patterns are comprehensive. The new test file, `test_output_parser_cleanup.py`, provides excellent coverage, and I have confirmed that the tests pass. The work is verified and complete.
+--------
+Don: Excellent! Gemini has verified the code and test Codex has created. Now we move on to our next task creating an Automation Script. What are your thoughts? Discuss amongst yourselves.
+--------
+Gemini: To address the "Automation Script" task, I will provide the complete plan and code for the developer to
+  implement.
+
+  Proposal: Automation Script
+
+  The next step is to create an automation script as outlined in CodexReminder.md. This script will manage the
+  entire lifecycle of an orchestrated discussion: setting up the tmux sessions, running the discussion, and
+  cleaning up afterwards. This will make running tests and demonstrations much more efficient.
+
+  File Location: scripts/run_full_discussion.py (a new scripts directory should be created at the project
+  root).
+
+  Code:
+  Here is the recommended code for the script. It is designed to be robust, using the project's existing
+  components and including proper setup, teardown, and logging.
+
+    1 '''
+    2 This script automates the full lifecycle of an orchestrated AI discussion.
+    3 It handles:
+    4 1.  Setup: Killing any old tmux sessions and starting fresh ones for Claude and Gemini.
+    5 2.  Execution: Running the orchestrated discussion between the two AIs.
+    6 3.  Teardown: Cleaning up and killing the tmux sessions after the discussion is complete.
+    7 '''
+    8 import time
+    9 import logging
+   10 import sys
+   11 from pathlib import Path
+   12
+   13 # Add src directory to path to allow imports
+   14 sys.path.append(str(Path(__file__).parent.parent / 'src'))
+   15
+   16 from controllers.claude_controller import ClaudeController
+   17 from controllers.gemini_controller import GeminiController
+   18 from orchestrator.orchestrator import DevelopmentTeamOrchestrator
+   19 from utils.config_loader import ConfigLoader
+   20 from utils.logger import setup_logger
+   21
+   22 # Setup logging
+   23 setup_logger()
+   24 logger = logging.getLogger(__name__)
+   25
+   26 def setup_sessions(claude: ClaudeController, gemini: GeminiController):
+   27     """Kills old sessions and starts new ones."""
+   28     logger.info("--- Setting up AI sessions ---")
+   29     for controller in [claude, gemini]:
+   30         if controller.session_exists():
+   31             logger.warning(f"Session '{controller.session_name}' already exists. Killing it for
+      a clean start.")
+   32             controller.kill_session()
+   33             time.sleep(1)  # Brief pause to ensure the session is terminated
+   34
+   35     logger.info(f"Starting new session for Claude: '{claude.session_name}'")
+   36     claude.start_session()
+   37
+   38     logger.info(f"Starting new session for Gemini: '{gemini.session_name}'")
+   39     gemini.start_session()
+   40     logger.info("--- Sessions are ready ---")
+   41
+   42 def run_discussion(orchestrator: DevelopmentTeamOrchestrator):
+   43     """Runs the orchestrated discussion."""
+   44     logger.info("--- Starting orchestrated discussion ---")
+   45     try:
+   46         initial_prompt = "Evaluate the current project state and define the next immediate,
+      actionable step for our team."
+   47         max_turns = 5
+   48         orchestrator.start_discussion(initial_prompt, max_turns=max_turns)
+   49         logger.info("--- Discussion finished ---")
+   50     except Exception as e:
+   51         logger.error(f"An error occurred during the orchestrated discussion: {e}", exc_info=True
+      )
+   52
+   53 def teardown_sessions(claude: ClaudeController, gemini: GeminiController):
+   54     """Kills the tmux sessions."""
+   55     logger.info("--- Tearing down AI sessions ---")
+   56     try:
+   57         if claude.session_exists():
+   58             claude.kill_session()
+   59             logger.info(f"Claude session '{claude.session_name}' killed.")
+   60         if gemini.session_exists():
+   61             gemini.kill_session()
+   62             logger.info(f"Gemini session '{gemini.session_name}' killed.")
+   63     except Exception as e:
+   64         logger.error(f"An error occurred during session teardown: {e}", exc_info=True)
+   65
+   66 def main():
+   67     """Main function to run the full discussion lifecycle."""
+   68     logger.info("Initializing automation script...")
+   69     config = ConfigLoader()
+   70     claude_controller = ClaudeController(config)
+   71     gemini_controller = GeminiController(config)
+   72
+   73     orchestrator = DevelopmentTeamOrchestrator(
+   74         claude_controller=claude_controller,
+   75         gemini_controller=gemini_controller
+   76     )
+   77
+   78     # Ensure teardown happens even if the discussion fails
+   79     try:
+   80         setup_sessions(claude_controller, gemini_controller)
+   81         run_discussion(orchestrator)
+   82     finally:
+   83         teardown_sessions(claude_controller, gemini_controller)
+   84         logger.info("Automation script finished.")
+   85
+   86 if __name__ == "__main__":
+   87     main()
+
+  Instructions for Implementation:
+
+   1. Create a new directory named scripts in the project root.
+   2. Save the code above into a new file at scripts/run_full_discussion.py.
+   3. Execute the script from the project root using the command: python3 scripts/run_full_discussion.py.
+
+  This provides the complete blueprint for the next task. I am ready for further instructions.
+  --------
+  Don: Codex and Claude - do you agree or disagree with this approach?
+  --------
+
+Claude: I mostly agree with Gemini's approach, but I have several concerns about the implementation that need addressing:
+
+**What I agree with:**
+- The overall structure (setup → run → teardown with try/finally) is solid
+- Creating a `scripts/` directory for automation is the right organizational pattern
+- Logging at each lifecycle stage is good for debugging
+
+**Critical issues that need fixing:**
+
+1. **Incorrect orchestrator initialization** (lines 73-76):
+   - Gemini's code passes `claude_controller=` and `gemini_controller=` as keyword args
+   - But `DevelopmentTeamOrchestrator.__init__` expects a `controllers` dict (orchestrator.py:31-34)
+   - Should be: `DevelopmentTeamOrchestrator({"claude": claude_controller, "gemini": gemini_controller})`
+
+2. **Wrong controller initialization** (lines 70-71):
+   - Uses deprecated ConfigLoader-based constructors
+   - ClaudeController and GeminiController expect `session_name` and `working_dir` args (claude_controller.py:15-19)
+   - They handle config loading internally via `get_config()` (claude_controller.py:28-29)
+   - Should instantiate directly: `ClaudeController(session_name="...", working_dir=None)`
+
+3. **Missing discussion execution** (line 68):
+   - Calls `orchestrator.start_discussion()` which returns a dict with conversation/managers (orchestrator.py:240-292)
+   - But doesn't save or print the results - the conversation just vanishes
+   - Need to capture and display/log the transcript
+
+4. **No bootstrap/permission handling**:
+   - Real usage requires `--dangerously-skip-permissions` for Claude and `--yolo` for Gemini (CodexReminder.md:958-959)
+   - Script should accept flags to configure these or document they're required
+
+**My recommendation:**
+Rather than creating a new script from scratch, we should **enhance the existing `examples/run_orchestrated_discussion.py`** which already handles all of these correctly:
+- Proper controller initialization (examples/run_orchestrated_discussion.py:42-47)
+- Correct orchestrator setup (line 74-76)
+- Bootstrap/permission flags (lines 39-40, 167-168, 198-199)
+- Transcript logging (lines 254-277)
+
+We could add a `--kill-existing` flag to make it do setup/teardown, but the core logic is already production-ready. Duplicating it risks introducing bugs like the ones above.
+
+**Alternative proposal:**
+Create a simple wrapper script `scripts/quick_discussion.sh` that:
+1. Kills old sessions: `tmux kill-session -t claude 2>/dev/null; tmux kill-session -t gemini 2>/dev/null`
+2. Calls the existing tool: `python3 examples/run_orchestrated_discussion.py --auto-start --log-file logs/quick-run.log "$@"`
+3. Cleans up: `tmux kill-session -t claude; tmux kill-session -t gemini`
+
+This reuses tested code and is 10 lines instead of 87. Thoughts?
+--------
+Codex: Thanks for the additional context. I’m aligned with Claude here—rather than cloning the orchestration logic into `scripts/run_full_discussion.py`, let’s build on the proven `examples/run_orchestrated_discussion.py`. We can add teardown/kill-session switches or wrap it with a tiny helper script for the one-command flow so we keep using the well-tested path while satisfying the automation goal.
+--------
+Don: which is preferred - add teardown/kill-session switches or wrapt with tiny helper script?
+--------
+Claude: My preferred method is adding switches to the existing script (examples/run_orchestrated_discussion.py).
+
+  Here's why:
+
+  Advantages of switches:
+  1. Single source of truth - All orchestration logic lives in one well-tested Python file
+  2. Better error handling - Python can catch exceptions during teardown and provide clear error messages
+  3. Cross-platform - Works on Windows/WSL/Linux without shell script compatibility issues
+  4. Easier to extend - Can add features like --cleanup-on-error, --keep-on-success, --kill-timeout, etc.
+  5. Better logging - Teardown events appear in the same log stream as the discussion
+  6. Argparse integration - Flags like --kill-existing and --cleanup-after fit naturally into the existing CLI
+
+  Implementation would be simple:
+  - Add --kill-existing flag (kills sessions before starting)
+  - Add --cleanup-after flag (kills sessions in finally block)
+  - Maybe 20-30 lines of code total
+
+  Wrapper script disadvantages:
+  - Two files to maintain
+  - Shell script debugging is harder
+  - Error messages less clear ("tmux killed session" vs "Cleaned up Claude session after 3 failed turns")
+  - Requires bash/shell, adding platform dependency
+  - Can't share state between wrapper and Python (exit codes only)
+
+  The wrapper is simpler to write (10 lines), but the switch approach is simpler to use and maintain long-term.
+  Since we're building a foundation for the orchestration system, I'd invest the extra 20 lines now for better UX
+  and maintainability.
+  --------
+Codex: Fully agree—extending `examples/run_orchestrated_discussion.py` with `--kill-existing` and `--cleanup-after` keeps orchestration logic centralized, preserves structured logging, and avoids introducing a shell dependency.
+--------
