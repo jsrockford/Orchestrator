@@ -75,8 +75,8 @@ temp/
 repomix-output.txt
 
 # exclude these untracked files
-CodexConcerns.md
-@CodexReminder.md
+#CodexConcerns.md
+#@CodexReminder.md
 AI_Dev_Team_Orchestration_System.md
 CCompact.md
 *.png
