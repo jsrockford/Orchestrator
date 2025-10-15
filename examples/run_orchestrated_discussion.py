@@ -13,8 +13,9 @@ from __future__ import annotations
 import argparse
 import sys
 import textwrap
+import shlex
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
@@ -30,23 +31,39 @@ def build_controller(
     startup_timeout: int,
     init_wait: float | None,
     bootstrap: str | None,
+    kill_existing: bool,
 ) -> TmuxController:
     ai_config: Dict[str, object] = {"startup_timeout": startup_timeout}
     if init_wait is not None:
         ai_config["init_wait"] = init_wait
 
-    launch_cmd = executable
+    exe_parts = shlex.split(executable)
+    if not exe_parts:
+        raise ValueError(f"No executable provided for {name}")
+
+    launch_executable = exe_parts[0]
+    launch_args = exe_parts[1:]
+
     if bootstrap:
-        launch_cmd = f"{bootstrap} && {executable}"
+        shell_command = f"{bootstrap} && {executable}"
+        launch_executable = "bash"
+        launch_args = ["-lc", shell_command]
 
     controller = TmuxController(
         session_name=session_name,
-        executable=launch_cmd,
+        executable=launch_executable,
         working_dir=working_dir,
         ai_config=ai_config,
+        executable_args=launch_args,
     )
 
     controller.reset_output_cache()
+
+    if kill_existing and controller.session_exists():
+        if not controller.kill_session():
+            raise SessionBackendError(
+                f"Failed to kill existing tmux session '{session_name}' for {name}."
+            )
 
     if controller.session_exists():
         controller.resume_automation(flush_pending=True)
@@ -147,8 +164,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--claude-executable",
-        default="claude",
-        help="Executable used to start Claude (default: claude).",
+        default="claude --dangerously-skip-permissions",
+        help="Executable used to start Claude (default: 'claude --dangerously-skip-permissions').",
     )
     parser.add_argument(
         "--claude-startup-timeout",
@@ -179,8 +196,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini",
-        help="Executable used to start Gemini (default: gemini).",
+        default="gemini --yolo --screen-reader",
+        help="Executable used to start Gemini (default: 'gemini --yolo --screen-reader').",
     )
     parser.add_argument(
         "--gemini-startup-timeout",
@@ -209,11 +226,41 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Optional path to write the conversation transcript and summary.",
     )
+    parser.add_argument(
+        "--kill-existing",
+        action="store_true",
+        help="Kill existing Claude/Gemini tmux sessions before starting.",
+    )
+    parser.add_argument(
+        "--cleanup-after",
+        action="store_true",
+        help="Kill Claude/Gemini tmux sessions after the discussion completes.",
+    )
     return parser.parse_args(argv)
+
+
+def cleanup_controller(controller: Optional[TmuxController], label: str) -> None:
+    if controller is None:
+        return
+
+    try:
+        if controller.session_exists():
+            if controller.kill_session():
+                print(f"[cleanup] Killed {label} session '{controller.session_name}'.")
+            else:
+                print(
+                    f"[cleanup] Unable to kill {label} session '{controller.session_name}'.",
+                    file=sys.stderr,
+                )
+    except (SessionNotFoundError, SessionBackendError) as exc:
+        print(f"[cleanup] Error while killing {label} session: {exc}", file=sys.stderr)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+
+    claude: Optional[TmuxController] = None
+    gemini: Optional[TmuxController] = None
 
     try:
         claude = build_controller(
@@ -225,6 +272,7 @@ def main(argv: list[str]) -> int:
             startup_timeout=args.claude_startup_timeout,
             init_wait=args.claude_init_wait,
             bootstrap=args.claude_bootstrap,
+            kill_existing=args.kill_existing,
         )
         gemini = build_controller(
             name="Gemini",
@@ -235,18 +283,24 @@ def main(argv: list[str]) -> int:
             startup_timeout=args.gemini_startup_timeout,
             init_wait=args.gemini_init_wait,
             bootstrap=args.gemini_bootstrap,
+            kill_existing=args.kill_existing,
         )
     except (SessionNotFoundError, SessionBackendError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
 
-    result = run_discussion(
-        claude=claude,
-        gemini=gemini,
-        topic=args.topic,
-        max_turns=args.max_turns,
-        history_size=args.history_size,
-    )
+    try:
+        result = run_discussion(
+            claude=claude,
+            gemini=gemini,
+            topic=args.topic,
+            max_turns=args.max_turns,
+            history_size=args.history_size,
+        )
+    finally:
+        if args.cleanup_after:
+            cleanup_controller(claude, "Claude")
+            cleanup_controller(gemini, "Gemini")
 
     conversation = result["conversation"]
     context_manager: ContextManager = result["context_manager"]

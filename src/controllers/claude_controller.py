@@ -37,11 +37,14 @@ class ClaudeController(TmuxController):
         executable = claude_config.get('executable', 'claude')
 
         # Initialize parent with Claude configuration
+        executable_args = claude_config.get('executable_args', [])
+
         super().__init__(
             session_name=session_name,
             executable=executable,
             working_dir=working_dir,
-            ai_config=claude_config
+            ai_config=claude_config,
+            executable_args=executable_args
         )
 
         # Store Claude-specific markers

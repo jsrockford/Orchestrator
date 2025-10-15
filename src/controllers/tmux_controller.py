@@ -46,7 +46,8 @@ class TmuxController(SessionBackend):
         session_name: str,
         executable: str,
         working_dir: Optional[str] = None,
-        ai_config: Optional[Dict[str, Any]] = None
+        ai_config: Optional[Dict[str, Any]] = None,
+        executable_args: Optional[Sequence[str]] = None,
     ):
         """
         Initialize TmuxController.
@@ -68,10 +69,13 @@ class TmuxController(SessionBackend):
         ).strip()
 
         # Create SessionSpec and initialize parent
+        exec_args = tuple(executable_args or ())
+
         spec = SessionSpec(
             name=session_name,
             executable=executable,
-            working_dir=resolved_working_dir
+            working_dir=resolved_working_dir,
+            args=exec_args
         )
         super().__init__(spec)
 
@@ -79,6 +83,7 @@ class TmuxController(SessionBackend):
         self.session_name = spec.name
         self.executable = spec.executable
         self.working_dir = spec.working_dir
+        self.executable_args: Tuple[str, ...] = exec_args
 
         # Set up logging
         self.logger = get_logger(f"{__name__}.{session_name}")
@@ -616,7 +621,8 @@ class TmuxController(SessionBackend):
             "-d",  # Detached
             "-s", self.session_name,  # Session name
             "-c", self.working_dir,  # Working directory
-            self.executable  # Command to run (claude, gemini, etc.)
+            self.executable,  # Command to run (claude, gemini, etc.)
+            *self.executable_args
         ])
 
         if result.returncode != 0:

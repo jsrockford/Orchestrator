@@ -28,6 +28,8 @@ claude:
 
   # Path to Claude Code executable
   executable: "claude"  # Assumes it's in PATH
+  executable_args:
+    - "--dangerously-skip-permissions"
 
   # Response marker
   response_marker: "●"  # Bullet point for Claude responses
@@ -38,10 +40,10 @@ gemini:
   init_wait: 3         # Wait after initialization
 
   # Response timing
-  response_timeout: 30      # Max seconds to wait for command response
+  response_timeout: 75      # Max seconds to wait for command response
   tool_timeout: 15          # Additional time for tool execution
   ready_check_interval: 0.5  # Seconds between output stability checks
-  ready_stable_checks: 3     # Consecutive stable checks required
+  ready_stable_checks: 6     # Consecutive stable checks required
 
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt
@@ -63,6 +65,9 @@ gemini:
 
   # Path to Gemini executable
   executable: "gemini"  # Assumes it's in PATH
+  executable_args:
+    - "--yolo"
+    - "--screen-reader"
 
 tmux:
   # Session configuration
