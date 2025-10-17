@@ -19,6 +19,7 @@ from typing import Dict, Optional
 
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
+from src.utils.config_loader import get_config
 
 
 def build_controller(
@@ -33,7 +34,10 @@ def build_controller(
     bootstrap: str | None,
     kill_existing: bool,
 ) -> TmuxController:
-    ai_config: Dict[str, object] = {"startup_timeout": startup_timeout}
+    base_config = dict(get_config().get_section(name) or {})
+    ai_config: Dict[str, object] = base_config
+    ai_config["startup_timeout"] = startup_timeout
+    ai_config["pause_on_manual_clients"] = False
     if init_wait is not None:
         ai_config["init_wait"] = init_wait
 
@@ -87,18 +91,25 @@ def run_discussion(
     topic: str,
     max_turns: int,
     history_size: int,
+    start_with: str,
 ) -> Dict[str, object]:
-    orchestrator = DevelopmentTeamOrchestrator(
-        {"claude": claude, "gemini": gemini}
-    )
+    controllers = {"claude": claude, "gemini": gemini}
+    orchestrator = DevelopmentTeamOrchestrator(controllers)
     context_manager = ContextManager(history_size=history_size)
-    router = MessageRouter(["claude", "gemini"], context_manager=context_manager)
+    participants = ["claude", "gemini"]
+    if start_with.lower() == "gemini":
+        participants = ["gemini", "claude"]
+    elif start_with.lower() == "claude":
+        participants = ["claude", "gemini"]
+
+    router = MessageRouter(participants, context_manager=context_manager)
 
     result = orchestrator.start_discussion(
         topic,
         max_turns=max_turns,
         context_manager=context_manager,
         message_router=router,
+        participants=participants,
     )
     return {
         "conversation": result["conversation"],
@@ -153,6 +164,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Number of turns to retain in the shared context (default: 20).",
     )
     parser.add_argument(
+        "--start-with",
+        choices=["claude", "gemini"],
+        default="gemini",
+        help="Which AI should speak first (default: gemini).",
+    )
+    parser.add_argument(
         "--auto-start",
         action="store_true",
         help="Launch tmux sessions automatically if they are not running.",
@@ -196,8 +213,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screen-reader",
-        help="Executable used to start Gemini (default: 'gemini --yolo --screen-reader').",
+        default="gemini --yolo --screenReader",
+        help="Executable used to start Gemini (default: 'gemini --yolo --screenReader').",
     )
     parser.add_argument(
         "--gemini-startup-timeout",
@@ -236,7 +253,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Kill Claude/Gemini tmux sessions after the discussion completes.",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--startup-timeout",
+        type=int,
+        default=None,
+        help="Convenience override for both --claude-startup-timeout and --gemini-startup-timeout.",
+    )
+
+    args = parser.parse_args(argv)
+
+    override = args.startup_timeout
+    if override is not None:
+        if args.claude_startup_timeout == parser.get_default("claude_startup_timeout"):
+            args.claude_startup_timeout = override
+        if args.gemini_startup_timeout == parser.get_default("gemini_startup_timeout"):
+            args.gemini_startup_timeout = override
+
+    return args
 
 
 def cleanup_controller(controller: Optional[TmuxController], label: str) -> None:
@@ -296,6 +329,7 @@ def main(argv: list[str]) -> int:
             topic=args.topic,
             max_turns=args.max_turns,
             history_size=args.history_size,
+            start_with=args.start_with,
         )
     finally:
         if args.cleanup_after:

@@ -23,7 +23,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Virtual Environment
+# Virtual Environment/
 venv/
 env/
 ENV/
@@ -39,9 +39,9 @@ venv.bak/
 .DS_Store
 
 # Logs
-*.log
-logs/
-*.log.*
+#*.log
+#logs/
+#*.log.*
 
 # Test artifacts
 .pytest_cache/

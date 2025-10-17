@@ -1,0 +1,21 @@
+1: claude: >
+> Current number: 1 Respond ONLY with this number: 1 Instruct gemini to add
+1 and respond with the next number. No additional commentary or formatting.
+>
+2: gemini: User:  Current number: 2 Respond ONLY with this number: 2 Instruct claude to add 1 and respond with the next number. No
+additional commentary or formatting.
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+responding Tasting the snozberries...
+3: claude: > Current number: 3 Respond ONLY with this number: 3 Instruct gemini to add
+1 and respond with the next number. No additional commentary or formatting.
+>
+4: gemini: responding Tasting the snozberries...
+Current number: 4 Respond ONLY with this number: 4 Instruct claude to add 1 and respond with the next number. No
+additional commentary or formatting.
+5: claude: > Current number: 5 Respond ONLY with this number: 5 Instruct gemini to add
+1 and respond with the next number. No additional commentary or formatting.
+>
+6: gemini: Current number: 6 Respond ONLY with this number: 6 Instruct claude to add 1 and respond with the next number. No
+additional commentary or formatting.
+... (+1 more)

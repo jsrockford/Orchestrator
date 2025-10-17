@@ -96,6 +96,9 @@ class TmuxController(SessionBackend):
         self.ready_check_interval = self.config.get('ready_check_interval', 0.5)
         self.ready_stable_checks = self.config.get('ready_stable_checks', 3)
         self.ready_indicators = self.config.get('ready_indicators', [])
+        self.submit_key = self.config.get('submit_key', 'Enter')
+        self.text_enter_delay = float(self.config.get('text_enter_delay', 0.1))
+        self._pause_on_manual_clients = bool(self.config.get('pause_on_manual_clients', True))
 
         # Verify environment on initialization
         self._verify_environment()
@@ -230,6 +233,27 @@ class TmuxController(SessionBackend):
         """
         self._set_automation_paused(False, flush_pending=flush_pending)
 
+    def _send_literal_text(self, text: str) -> None:
+        """
+        Send text to tmux character-by-character in manageable chunks.
+
+        Using tmux's literal mode ensures punctuation (e.g., apostrophes) is preserved.
+        """
+        if not text:
+            return
+
+        chunk_size = 100
+        for idx in range(0, len(text), chunk_size):
+            chunk = text[idx : idx + chunk_size]
+            result = self._run_tmux_command([
+                "send-keys", "-t", self.session_name, "-l", "--", chunk
+            ])
+            if result.returncode != 0:
+                raise TmuxError(
+                    f"Failed to send literal chunk: {result.stderr}",
+                    command=["send-keys", "-l"],
+                    return_code=result.returncode,
+                )
     def _set_automation_paused(
         self,
         paused: bool,
@@ -268,6 +292,10 @@ class TmuxController(SessionBackend):
 
         previous_clients = list(self._manual_clients)
         self._manual_clients = clients
+
+        if not self._pause_on_manual_clients:
+            return
+
         if clients:
             self._set_automation_paused(True, reason="manual-attach", flush_pending=False)
         elif (
@@ -318,22 +346,18 @@ class TmuxController(SessionBackend):
 
         self._snapshot_output_state()
 
-        result = self._run_tmux_command([
-            "send-keys", "-t", self.session_name, command
-        ])
+        text_to_send = command.replace("\r\n", "\n")
+        if "\n" in text_to_send:
+            # Avoid premature submission in CLIs that treat literal newlines as Enter
+            self.logger.debug("Normalizing multiline command for tmux send-keys")
+        text_to_send = " ".join(filter(None, text_to_send.splitlines()))
 
-        if result.returncode != 0:
-            self.logger.error(f"Failed to send command text: {result.stderr}")
-            raise TmuxError(
-                f"Failed to send command: {result.stderr}",
-                command=["send-keys"],
-                return_code=result.returncode
-            )
+        self._send_literal_text(text_to_send)
 
         if submit:
-            time.sleep(0.1)  # Brief pause between text and Enter
+            time.sleep(self.text_enter_delay)  # Brief pause between text and Enter
             result = self._run_tmux_command([
-                "send-keys", "-t", self.session_name, "Enter"
+                "send-keys", "-t", self.session_name, self.submit_key
             ])
 
             if result.returncode != 0:
@@ -343,6 +367,16 @@ class TmuxController(SessionBackend):
                     command=["send-keys", "Enter"],
                     return_code=result.returncode
                 )
+
+            if self.submit_key and self.submit_key != "Enter":
+                fallback = self._run_tmux_command([
+                    "send-keys", "-t", self.session_name, "Enter"
+                ])
+                if fallback.returncode != 0:
+                    self.logger.debug(
+                        "Fallback Enter send failed: %s",
+                        fallback.stderr.strip() if fallback.stderr else "unknown",
+                    )
 
         self.logger.debug("Command sent successfully")
         return True
@@ -389,11 +423,9 @@ class TmuxController(SessionBackend):
             raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
 
         try:
-            result = self._run_tmux_command([
-                "send-keys", "-t", self.session_name, text
-            ])
-            if result.returncode != 0:
-                raise SessionBackendError(f"Failed to send text: {result.stderr}")
+            normalized = text.replace("\r\n", "\n")
+            normalized = " ".join(filter(None, normalized.splitlines()))
+            self._send_literal_text(normalized)
         except TmuxError as e:
             raise SessionBackendError(f"Failed to send text: {e}") from e
 
@@ -409,12 +441,21 @@ class TmuxController(SessionBackend):
             raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
 
         try:
-            time.sleep(0.1)  # Brief pause before Enter
+            time.sleep(self.text_enter_delay)  # Brief pause before Enter
             result = self._run_tmux_command([
-                "send-keys", "-t", self.session_name, "Enter"
+                "send-keys", "-t", self.session_name, self.submit_key
             ])
             if result.returncode != 0:
                 raise SessionBackendError(f"Failed to send Enter: {result.stderr}")
+            if self.submit_key and self.submit_key != "Enter":
+                fallback = self._run_tmux_command([
+                    "send-keys", "-t", self.session_name, "Enter"
+                ])
+                if fallback.returncode != 0:
+                    self.logger.debug(
+                        "Fallback Enter send failed in send_enter: %s",
+                        fallback.stderr.strip() if fallback.stderr else "unknown",
+                    )
         except TmuxError as e:
             raise SessionBackendError(f"Failed to send Enter: {e}") from e
 
@@ -540,8 +581,9 @@ class TmuxController(SessionBackend):
             args = ["attach-session", "-t", self.session_name]
             if read_only:
                 args.append("-r")
-            # Preemptively pause automation before handing control to a human
-            self.pause_automation(reason="manual-attach")
+            if self._pause_on_manual_clients:
+                # Preemptively pause automation before handing control to a human
+                self.pause_automation(reason="manual-attach")
             # This will block and take over the terminal
             subprocess.run(["tmux"] + args, check=True)
         except subprocess.CalledProcessError as e:

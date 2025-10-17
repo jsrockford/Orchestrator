@@ -31,20 +31,17 @@ class GeminiController(TmuxController):
 
         # Use configured session name if not specified
         if session_name is None:
-            session_name = tmux_config.get('gemini_session', 'gemini')
+            session_name = tmux_config.get('gemini_session', 'gemini-poc')
 
         # Get executable from config
         executable = gemini_config.get('executable', 'gemini')
 
         # Initialize parent with Gemini configuration
-        executable_args = gemini_config.get('executable_args', [])
-
         super().__init__(
             session_name=session_name,
             executable=executable,
             working_dir=working_dir,
-            ai_config=gemini_config,
-            executable_args=executable_args
+            ai_config=gemini_config
         )
 
         # Store Gemini-specific markers

@@ -135,8 +135,8 @@ Start sessions manually for observation:
 # Terminal 1: Start Claude
 tmux new-session -s claude claude --dangerously-skip-permissions
 
-# Terminal 2: Start Gemini
-tmux new-session -s gemini gemini --yolo
+# Terminal 2: Start Gemini (screen reader mode produces linear text)
+tmux new-session -s gemini gemini --yolo --screenReader
 
 # Terminal 3: Run orchestrated discussion (reuses existing sessions)
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
@@ -150,13 +150,14 @@ Control session behavior, startup timing, and CLI flags:
 ```bash
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
   --auto-start \
+  --startup-timeout 60 \
   --max-turns 10 \
   --history-size 50 \
   --claude-session my-claude \
   --claude-executable "claude --dangerously-skip-permissions" \
   --claude-startup-timeout 15 \
   --gemini-session my-gemini \
-  --gemini-executable "gemini --yolo" \
+  --gemini-executable "gemini --yolo --screenReader" \
   --gemini-startup-timeout 20 \
   --log-file logs/custom-discussion.log \
   "Design a REST API for a task management system"
@@ -185,19 +186,28 @@ Edit `config.yaml` to customize behavior:
 ```yaml
 claude:
   executable: claude
-  startup_timeout: 10        # Seconds to wait for CLI startup
-  response_marker: "●"       # Output marker to detect responses
-  ready_indicators:          # Patterns indicating CLI is ready
+  executable_args:
+    - "--dangerously-skip-permissions"
+  startup_timeout: 10
+  response_marker: "●"
+  ready_indicators:
     - "────────────────────────"
-    - "context left"
+    - "? for shortcuts"
+  submit_key: "Enter"
+  text_enter_delay: 0.1
 
 gemini:
   executable: gemini
+  executable_args:
+    - "--yolo"
+    - "--screenReader"
   startup_timeout: 20
   response_marker: "✦"
   ready_indicators:
-    - "Tips for getting started"
-    - "context left"
+    - "Type your message or @path/to/file"
+    - "Model:"
+  submit_key: "C-m"
+  text_enter_delay: 0.5
 
 tmux:
   claude_session: claude

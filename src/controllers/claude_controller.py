@@ -31,7 +31,7 @@ class ClaudeController(TmuxController):
 
         # Use configured session name if not specified
         if session_name is None:
-            session_name = tmux_config.get('claude_session', 'claude-poc')
+            session_name = tmux_config.get('claude_session', 'claude')
 
         # Get executable from config
         executable = claude_config.get('executable', 'claude')

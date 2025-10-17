@@ -25,6 +25,8 @@ claude:
     - "────────────────────────"         # Separator line
     - "? for shortcuts"                  # Status line
   thinking_indicator: "Lollygagging…"    # Shows when processing
+  submit_key: "Enter"                    # Key tmux should send to submit commands
+  text_enter_delay: 0.1                  # Delay between text and Enter
 
   # Path to Claude Code executable
   executable: "claude"  # Assumes it's in PATH
@@ -33,6 +35,7 @@ claude:
 
   # Response marker
   response_marker: "●"  # Bullet point for Claude responses
+  pause_on_manual_clients: false  # Allow read-only tmux attach without pausing automation
 
 gemini:
   # Startup timing
@@ -48,16 +51,19 @@ gemini:
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt
   ready_indicators:                      # Patterns indicating ready state
-    - "Type your message or @path/to/file"  # Input prompt
-    - "context left"                        # Status bar
+    - "Type your message or @path/to/file"
+    - "Model:"                              # Transcript prefix
   loading_indicators:                    # Shows when processing
     - "⠦"
     - "⠼"
     - "Enhancing..."
     - "Counting electrons..."
+  submit_key: "C-m"                      # Gemini prefers Ctrl-M when running in tmux
+  text_enter_delay: 0.5                  # Give Gemini extra time to ingest pasted text
 
   # Response marker
   response_marker: "✦"  # Sparkle for Gemini responses
+  pause_on_manual_clients: false  # Allow read-only tmux attach without pausing automation
 
   # Tool support
   supports_tools: true   # Gemini can use external tools
@@ -67,12 +73,12 @@ gemini:
   executable: "gemini"  # Assumes it's in PATH
   executable_args:
     - "--yolo"
-    - "--screen-reader"
+    - "--screenReader"
 
 tmux:
   # Session configuration
-  claude_session: "claude-poc"   # Default Claude session name
-  gemini_session: "gemini-poc"   # Default Gemini session name
+  claude_session: "claude"   # Default Claude session name
+  gemini_session: "gemini"   # Default Gemini session name
 
   # Output capture settings
   capture_lines: 100     # Default lines to capture from pane
