@@ -705,3 +705,217 @@ The fresh directory eliminates cached Python bytecode (`.pyc` files) and ensures
 Don: Follow-up question then, why would Gemini truncate text, this seems like a problematic behavior in any situation. I find it hard to believe it would be designed to do this.
 --------
 
+Claude: **You're absolutely right to question this - let me revise my analysis!**
+
+Looking more carefully at the evidence, I need to reconsider. The pattern we're seeing is:
+
+**smoke-test.log Turn 3 (lines 123-126):**
+```
+User:  gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps.
+Confirm you saw this message and stop.
+gemini, respond only with:
+Model:  Hello from gemini — message received.
+```
+
+Wait - I see it now. Line 125 shows `gemini, respond only with:` **which appears AFTER the full User: prompt on lines 123-124**. This isn't Gemini truncating the display - this looks like it might be echoing what was actually in the input buffer when Enter was pressed!
+
+**Let me reanalyze:**
+
+1. **Lines 123-124**: The full User: prompt appears - this is what tmux capture-pane shows AFTER Gemini has already processed it
+2. **Line 125**: `gemini, respond only with:` - This might be what was ACTUALLY in Gemini's input buffer
+3. **Line 126**: `Model: Hello from gemini — message received.` - Gemini responds correctly anyway
+
+**Two possibilities:**
+
+**Possibility 1**: Gemini's input buffer DID receive only partial text, but Gemini has some kind of context/history that allows it to infer the full request and respond correctly anyway.
+
+**Possibility 2**: The tmux capture is showing the input buffer state at a specific moment (after the prompt was submitted but before it cleared), and what we see on line 125 is just leftover text that got wrapped to a new line in the terminal display.
+
+**To answer your question directly:** You're right - it wouldn't make sense for Gemini to intentionally truncate prompts. 
+
+**What I think is ACTUALLY happening:** Looking at the terminal screenshot, the prompt is being displayed across multiple lines due to terminal width wrapping. The `User:  gemini, respond only with: 'Hello from gemini...'` we see is Gemini's screen reader mode showing the prompt, and some of it wraps to additional lines. The capture-pane output is showing us this wrapped text.
+
+**But here's the key evidence that Gemini IS receiving the full prompt:**
+- **Turn 3 response (line 126)**: `Model: Hello from gemini — message received.` ✅ CORRECT
+- **Turn 5 response (line 87)**: `Model: Hello from gemini — message received.` ✅ CORRECT
+
+If Gemini was truly only receiving "gemini, respond only with:" it wouldn't know to say "Hello from gemini — message received." - it would just be confused or ask for clarification.
+
+**So the smoke test IS passing** - Gemini receives and processes the full prompts correctly. The visual confusion comes from how tmux capture-pane displays wrapped terminal lines.
+--------
+
+Claude: **You're absolutely right - I was too quick to declare victory. Let me analyze this more rigorously.**
+
+**The evidence DOES show a real problem:**
+
+Looking at smoke-test.log more carefully:
+
+**Turn 1 (Gemini's first prompt):**
+- Line 23-24: Shows `YOLO mode gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps. Confirm you saw this message and stop.`
+- This appears to be the FULL TEXT ✅
+
+**Turn 3 (Gemini's second prompt):**
+- Lines 123-125: Shows three separate lines:
+  - `User:  gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps.`
+  - `Confirm you saw this message and stop.`
+  - `gemini, respond only with:`
+- Line 126: `Model:  Hello from gemini — message received.` ✅
+
+**Turn 5 (Gemini's third prompt):**
+- Lines 169-170: Shows only TWO lines:
+  - `User:  gemini, respond only with:`
+  - `Model:  Hello from gemini — message received.` ✅
+
+**Your hypothesis about "repeat last command" is plausible**, but I have a different theory:
+
+**My theory: Gemini is seeing the FIRST prompt fully, then maintaining conversation context**
+
+When Gemini receives the truncated prompts in Turn 3 and Turn 5, it might be:
+1. Receiving only partial text ("gemini, respond only with:")
+2. Using its conversation memory to infer "oh, they want me to repeat what I just did"
+3. Responding with the same answer
+
+**But this is DANGEROUS** because it means:
+- We're not actually testing multi-turn orchestration correctly
+- Gemini is relying on context/memory, not receiving the actual prompt
+- In a real multi-AI discussion, this would cause serious problems
+
+**WHY is this happening?**
+
+Looking at the SmokeTestTerminal.txt logs (lines 25-27):
+```
+2025-10-19 16:58:15 - src.controllers.tmux_controller.gemini - INFO - Sleeping 0.100s before sending submit key 'Enter'
+```
+
+**We're STILL using 0.100s delay and 'Enter' key** - the config isn't being loaded!
+
+**Root cause identified (for real this time):**
+
+The fresh directory test worked for Turn 1, but subsequent turns are reverting to the old behavior. This suggests:
+
+1. **Turn 1 succeeds** because Gemini's buffer is clean and there's no race condition
+2. **Turn 3 & 5 fail** because Gemini is still processing the previous response when the next prompt arrives, and the 0.1s delay isn't enough
+
+**The REAL fix we need:**
+
+1. **Confirm the config is being loaded** - verify that run_orchestrated_discussion.py in the fresh directory is using GeminiController (not TmuxController directly)
+2. **Increase the turn delay** between AI responses - wait longer after capturing Gemini's response before sending the next prompt
+3. **Verify wait_for_ready() is being called** after each Gemini response before sending the next prompt
+
+**Critical question for Codex/Don:**
+
+In the fresh directory test, can you check:
+- Does `examples/run_orchestrated_discussion.py` import and use `GeminiController`?
+- Or is it still using `TmuxController` with manually passed config?
+- Are the config delays (0.5s post_text_delay, C-m submit key) being loaded?
+
+The logs showing `Sleeping 0.100s` and `'Enter'` prove the config ISN'T being applied, even in the fresh directory.
+--------
+
+Claude: **FOUND THE PROBLEM! The script is NOT using GeminiController - it's using TmuxController directly!**
+
+**Evidence from examples/run_orchestrated_discussion.py:**
+
+**Line 21:** 
+```python
+from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
+```
+❌ NO import of GeminiController or ClaudeController!
+
+**Lines 64-70 (build_controller function):**
+```python
+controller = TmuxController(
+    session_name=session_name,
+    executable=launch_executable,
+    working_dir=working_dir,
+    ai_config=ai_config,
+    executable_args=launch_args,
+)
+```
+❌ Creates TmuxController directly, NOT GeminiController!
+
+**Lines 338-359 (main function):**
+```python
+claude = build_controller(name="Claude", ...)
+gemini = build_controller(name="Gemini", ...)
+```
+❌ Both use the same build_controller function that creates TmuxController!
+
+**The "safeguard" on lines 45-50:**
+```python
+if name == "gemini":
+    ai_config["submit_key"] = "C-m"
+    ai_config["text_enter_delay"] = 0.5
+    ai_config["post_text_delay"] = 0.5
+```
+
+**BUT** - looking at line 38-39, there's a critical bug:
+```python
+base_config = dict(get_config().get_section(name) or {})
+ai_config: Dict[str, object] = base_config
+```
+
+Line 38 uses `name` (which is "Claude" or "Gemini" with capital letters on lines 339 and 350), but config.yaml has sections named "claude" and "gemini" (lowercase)!
+
+So `get_config().get_section("Claude")` returns `None`, and we get an empty dict `{}`.
+
+Then the safeguard on lines 45-50 checks `if name == "gemini"` (lowercase), but the actual name passed in is "Gemini" (capital G on line 350), so the safeguard NEVER RUNS!
+
+**The bug:**
+- Line 339: `name="Claude"` (capital C)
+- Line 350: `name="Gemini"` (capital G)  
+- Line 38: `get_config().get_section(name)` looks for "Claude" and "Gemini" (capitals)
+- config.yaml has: `claude:` and `gemini:` (lowercase)
+- Result: Empty config, safeguard doesn't trigger
+
+**The fix:**
+
+Change lines 339 and 350 to use lowercase:
+```python
+claude = build_controller(
+    name="claude",  # lowercase!
+    ...
+)
+gemini = build_controller(
+    name="gemini",  # lowercase!
+    ...
+)
+```
+
+OR change line 38 to lowercase the name:
+```python
+base_config = dict(get_config().get_section(name.lower()) or {})
+```
+
+This explains EVERYTHING - the config was never loaded, the safeguard never ran, and we've been using default TmuxController settings (0.1s delay, 'Enter' key) the whole time!
+--------
+Codex: **SMOKE TEST FIXED - Case Sensitivity Bug Resolved! ✅**
+
+Root cause confirmed and fixed. The issue was a simple case-sensitivity mismatch in `examples/run_orchestrated_discussion.py`:
+
+**The Bug:**
+- Line 339: `build_controller(name="Claude", ...)` (capitalized)
+- Line 350: `build_controller(name="Gemini", ...)` (capitalized)
+- Line 38: `get_config().get_section(name)` looked for "Claude" and "Gemini"
+- But config.yaml has sections: `claude:` and `gemini:` (lowercase)
+- Result: Config lookup returned `None`, safeguard on line 45 (`if name == "gemini"`) never triggered
+
+**The Fix:**
+Changed two lines in `build_controller()`:
+- Line 38: `get_config().get_section(name.lower())` - now matches lowercase config sections
+- Line 45: `if name.lower() == "gemini"` - safeguard now triggers correctly
+
+**Verification:**
+After the fix, smoke test runs show:
+- ✅ Config loaded correctly: `submit_key: C-m`, `text_enter_delay: 0.5`, `post_text_delay: 0.5`
+- ✅ Controller logs: `Sleeping 0.500s before sending submit key 'C-m'`
+- ✅ Gemini receives full prompts: `User: gemini, respond only with: 'Hello from gemini — message received.' Do not run tools...`
+- ✅ Gemini responds correctly: `Model: Hello from gemini — message received.`
+- ✅ All 6 turns complete successfully (3 Claude, 3 Gemini)
+
+**Impact:**
+The post_text_delay (0.5s) gives Gemini's input buffer time to settle after literal text chunks arrive, preventing the race condition where Enter was submitted before all text was processed. Both AIs now work reliably in orchestrated multi-turn discussions.
+
+See smoke test results in `scratch/SmokeTestTerminal.txt` (lines 11-18 show correct config loading, lines 110-112, 156-158, 202-204 show successful Gemini responses).
+--------
+

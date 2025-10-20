@@ -35,14 +35,14 @@ def build_controller(
     bootstrap: str | None,
     kill_existing: bool,
 ) -> TmuxController:
-    base_config = dict(get_config().get_section(name) or {})
+    base_config = dict(get_config().get_section(name.lower()) or {})
     ai_config: Dict[str, object] = base_config
     ai_config["startup_timeout"] = startup_timeout
     ai_config["pause_on_manual_clients"] = False
     if init_wait is not None:
         ai_config["init_wait"] = init_wait
 
-    if name == "gemini":
+    if name.lower() == "gemini":
         # Ensure Gemini uses the reliable submit behaviour even if the active
         # config copy is stale in the tmux worktree.
         ai_config["submit_key"] = "C-m"

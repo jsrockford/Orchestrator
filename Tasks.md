@@ -126,8 +126,8 @@
 - Integrated into tmux_controller with backward compatibility
 - Ready for production use with configurable behavior via config.yaml
 
-### Task 2.4: Advanced Test Suite ⏳ IN PROGRESS
-**Implementation Files**: `test_advanced_suite.py`, `test_startup_detection.py`
+### Task 2.4: Advanced Test Suite ✅ COMPLETE
+**Implementation Files**: `test_advanced_suite.py`, `test_startup_detection.py`, `examples/run_orchestrated_discussion.py`
 
 **Completed**:
 - [x] Test 1: Multi-turn conversations with Claude (context preservation) - Working
@@ -137,8 +137,13 @@
 - [x] Loading indicator checking for race condition prevention
 - [x] Stabilization delays (2s Gemini, 1s Claude)
 - [x] Comprehensive timing documentation (TIMING_GUIDE.md)
+- [x] **Smoke Test (Multi-AI Orchestration)** - PASSING ✅
+  - Fixed case-sensitivity bug in `run_orchestrated_discussion.py`
+  - Both Claude and Gemini completing 6-turn discussions successfully
+  - Full prompts delivered with apostrophes and punctuation preserved
+  - Gemini config loading correctly (`C-m` submit, 0.5s delays)
 
-**Remaining**:
+**Remaining** (Deferred to future work):
 - [ ] Test 4: File operations with Gemini
 - [ ] Test 5: Rapid sequential commands (both AIs)
 - [ ] Test 6: Error scenarios with recovery (both AIs)
@@ -148,6 +153,10 @@
 - Increased startup timeouts to 20s for real-world variability
 - Changed Gemini test prompts to avoid triggering file edit permissions
 - Implemented output stabilization for response completion detection
+- **October 20, 2025**: Fixed case-sensitivity in config loading (`name.lower()`) in orchestration script
+  - Root cause: `get_config().get_section(name)` with capitalized names ("Claude"/"Gemini") didn't match lowercase config sections
+  - Solution: Changed to `get_config().get_section(name.lower())` and `if name.lower() == "gemini"`
+  - Result: Config now loads correctly, Gemini receives full prompts, smoke test passes
 
 ## Phase 3: Manual/Auto Switching
 
