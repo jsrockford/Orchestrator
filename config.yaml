@@ -60,6 +60,7 @@ gemini:
     - "Counting electrons..."
   submit_key: "C-m"                      # Gemini prefers Ctrl-M when running in tmux
   text_enter_delay: 0.5                  # Give Gemini extra time to ingest pasted text
+  post_text_delay: 0.5                  # Pause after pasting before submitting
 
   # Response marker
   response_marker: "✦"  # Sparkle for Gemini responses

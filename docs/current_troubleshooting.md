@@ -11,7 +11,8 @@ We stabilised tmux-based orchestration between Claude Code and Gemini CLI by com
 
 - **Reliable Prompt Submission**  
   - `TmuxController` uses literal chunk sends (`send-keys -l -- …`) to preserve punctuation.  
-  - Gemini keeps `submit_key: "C-m"` and a fallback literal `Enter`, with `text_enter_delay = 0.5` s so the buffer settles before submission.
+  - Gemini keeps `submit_key: "C-m"` and a fallback literal `Enter`, with `text_enter_delay = 0.5` s so the buffer settles before submission.  
+  - Added `post_text_delay = 0.5` s so tmux waits briefly after pasting before pressing Enter; controller now logs tmux return codes for both submit attempts.
 
 - **Ready & Response Capture**  
   - Ready indicators include `"Type your message or @path/to/file"` and `"Model:"`, matching screen reader output.  

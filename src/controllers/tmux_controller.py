@@ -98,6 +98,13 @@ class TmuxController(SessionBackend):
         self.ready_indicators = self.config.get('ready_indicators', [])
         self.submit_key = self.config.get('submit_key', 'Enter')
         self.text_enter_delay = float(self.config.get('text_enter_delay', 0.1))
+        self.post_text_delay = float(self.config.get('post_text_delay', 0.0))
+        if self.post_text_delay > 0:
+            self.logger.info(
+                "Configured post_text_delay=%.3fs (text_enter_delay=%.3fs)",
+                self.post_text_delay,
+                self.text_enter_delay,
+            )
         self._pause_on_manual_clients = bool(self.config.get('pause_on_manual_clients', True))
 
         # Verify environment on initialization
@@ -354,11 +361,35 @@ class TmuxController(SessionBackend):
 
         self._send_literal_text(text_to_send)
 
+        if self.post_text_delay > 0:
+            self.logger.info(
+                "Sleeping %.3fs between literal send and submit",
+                self.post_text_delay,
+            )
+            time.sleep(self.post_text_delay)
+
         if submit:
-            time.sleep(self.text_enter_delay)  # Brief pause between text and Enter
+            if self.text_enter_delay > 0:
+                self.logger.info(
+                    "Sleeping %.3fs before sending submit key '%s'",
+                    self.text_enter_delay,
+                    self.submit_key,
+                )
+                time.sleep(self.text_enter_delay)
+            else:
+                self.logger.info("Sending submit key '%s' immediately", self.submit_key)
+
             result = self._run_tmux_command([
                 "send-keys", "-t", self.session_name, self.submit_key
             ])
+            stderr = result.stderr.strip() if result.stderr else ""
+            log_suffix = f" (stderr: {stderr})" if stderr else ""
+            self.logger.info(
+                "Submit key '%s' send-keys returned %s%s",
+                self.submit_key,
+                result.returncode,
+                log_suffix,
+            )
 
             if result.returncode != 0:
                 self.logger.error(f"Failed to submit command: {result.stderr}")
@@ -372,8 +403,17 @@ class TmuxController(SessionBackend):
                 fallback = self._run_tmux_command([
                     "send-keys", "-t", self.session_name, "Enter"
                 ])
+                fallback_stderr = fallback.stderr.strip() if fallback.stderr else ""
+                fallback_suffix = (
+                    f" (stderr: {fallback_stderr})" if fallback_stderr else ""
+                )
+                self.logger.info(
+                    "Fallback Enter send-keys returned %s%s",
+                    fallback.returncode,
+                    fallback_suffix,
+                )
                 if fallback.returncode != 0:
-                    self.logger.debug(
+                    self.logger.warning(
                         "Fallback Enter send failed: %s",
                         fallback.stderr.strip() if fallback.stderr else "unknown",
                     )

@@ -134,6 +134,11 @@ class ContextManager:
             blurb = self._format_recent_history()
             if blurb:
                 lines.append(f"Recent context: {blurb}")
+        else:
+            lines = [
+                f"{ai_name}, respond only with: 'Hello from {ai_name} — message received.'",
+                "Do not run tools or reference previous steps. Confirm you saw this message and stop.",
+            ]
 
         return "\n".join(lines)
 

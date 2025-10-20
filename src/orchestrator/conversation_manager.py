@@ -33,6 +33,7 @@ class ConversationManager:
         context_manager: Any | None = None,
         message_router: Any | None = None,
         max_history: int = 200,
+        include_history: bool = True,
     ) -> None:
         if not participants:
             raise ValueError("ConversationManager requires at least one participant")
@@ -43,6 +44,7 @@ class ConversationManager:
         self.context_manager = context_manager
         self.message_router = message_router
         self._max_history = max(1, int(max_history))
+        self._include_history = bool(include_history)
         self._turn_counter: int = 0
         self.history: Deque[Dict[str, Any]] = deque(maxlen=self._max_history)
 
@@ -248,15 +250,21 @@ class ConversationManager:
             builder = getattr(self.context_manager, "build_prompt", None)
             if callable(builder):
                 try:
-                    return builder(speaker, topic, include_history=True)
+                    return builder(speaker, topic, include_history=self._include_history)
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning("Context builder failed for '%s': %s", speaker, exc)
 
         turn_number = len(conversation)
-        prompt = (
-            f"[Turn {turn_number}] {speaker}, share your perspective on '{topic}'. "
-            "Highlight progress, concerns, or next actions."
-        )
+        if not self._include_history:
+            prompt = (
+                f"[Turn {turn_number}] {speaker}, acknowledge the request '{topic}' "
+                "and briefly confirm you can see it."
+            )
+        else:
+            prompt = (
+                f"[Turn {turn_number}] {speaker}, share your perspective on '{topic}'. "
+                "Highlight progress, concerns, or next actions."
+            )
 
         if self.message_router is not None:
             self._ensure_router_registration(speaker)
@@ -267,7 +275,7 @@ class ConversationManager:
                         recipient=speaker,
                         topic=topic,
                         base_prompt=prompt,
-                        include_history=True,
+                        include_history=self._include_history,
                     )
                 except Exception as exc:  # noqa: BLE001
                     self.logger.debug("Message router prompt preparation failed: %s", exc)

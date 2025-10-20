@@ -1,0 +1,187 @@
+2025-10-19 16:57:16 - src.controllers.tmux_controller.claude - INFO - Initializing TmuxController for claude in session claude
+2025-10-19 16:57:16,139 - src.controllers.tmux_controller.claude - INFO - Initializing TmuxController for claude in session claude
+2025-10-19 16:57:16 - src.controllers.tmux_controller.claude - INFO - Starting session 'claude'
+2025-10-19 16:57:16,150 - src.controllers.tmux_controller.claude - INFO - Starting session 'claude'
+2025-10-19 16:57:21 - src.controllers.tmux_controller.claude - INFO - Session 'claude' started successfully and ready
+2025-10-19 16:57:21,751 - src.controllers.tmux_controller.claude - INFO - Session 'claude' started successfully and ready
+2025-10-19 16:57:23 - src.controllers.tmux_controller.gemini - INFO - Initializing TmuxController for gemini in session gemini
+2025-10-19 16:57:23,822 - src.controllers.tmux_controller.gemini - INFO - Initializing TmuxController for gemini in session gemini
+2025-10-19 16:57:23 - src.controllers.tmux_controller.gemini - INFO - Starting session 'gemini'
+2025-10-19 16:57:23,834 - src.controllers.tmux_controller.gemini - INFO - Starting session 'gemini'
+2025-10-19 16:58:09 - src.controllers.tmux_controller.gemini - INFO - Session 'gemini' started successfully and ready
+2025-10-19 16:58:09,268 - src.controllers.tmux_controller.gemini - INFO - Session 'gemini' started successfully and ready
+2025-10-19 16:58:10 - orchestrator.development_team - INFO - [prompt-debug] claude len=151 preview="claude, respond only with: 'Hello from claude — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:10,820 - orchestrator.development_team - INFO - [prompt-debug] claude len=151 preview="claude, respond only with: 'Hello from claude — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:10 - src.controllers.tmux_controller.claude - INFO - Sending command: claude, respond only with: 'Hello from claude — me...
+2025-10-19 16:58:10,838 - src.controllers.tmux_controller.claude - INFO - Sending command: claude, respond only with: 'Hello from claude — me...
+2025-10-19 16:58:10 - src.controllers.tmux_controller.claude - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:10,876 - src.controllers.tmux_controller.claude - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:10 - src.controllers.tmux_controller.claude - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:10,982 - src.controllers.tmux_controller.claude - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:15 - orchestrator.development_team - INFO - [prompt-debug] gemini len=151 preview="gemini, respond only with: 'Hello from gemini — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:15,104 - orchestrator.development_team - INFO - [prompt-debug] gemini len=151 preview="gemini, respond only with: 'Hello from gemini — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:15 - src.controllers.tmux_controller.gemini - INFO - Sending command: gemini, respond only with: 'Hello from gemini — me...
+2025-10-19 16:58:15,109 - src.controllers.tmux_controller.gemini - INFO - Sending command: gemini, respond only with: 'Hello from gemini — me...
+2025-10-19 16:58:15 - src.controllers.tmux_controller.gemini - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:15,144 - src.controllers.tmux_controller.gemini - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:15 - src.controllers.tmux_controller.gemini - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:15,250 - src.controllers.tmux_controller.gemini - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:17 - orchestrator.development_team - INFO - [prompt-debug] claude len=151 preview="claude, respond only with: 'Hello from claude — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:17,328 - orchestrator.development_team - INFO - [prompt-debug] claude len=151 preview="claude, respond only with: 'Hello from claude — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:17 - src.controllers.tmux_controller.claude - INFO - Sending command: claude, respond only with: 'Hello from claude — me...
+2025-10-19 16:58:17,333 - src.controllers.tmux_controller.claude - INFO - Sending command: claude, respond only with: 'Hello from claude — me...
+2025-10-19 16:58:17 - src.controllers.tmux_controller.claude - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:17,371 - src.controllers.tmux_controller.claude - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:17 - src.controllers.tmux_controller.claude - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:17,476 - src.controllers.tmux_controller.claude - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:21 - orchestrator.development_team - INFO - [prompt-debug] gemini len=151 preview="gemini, respond only with: 'Hello from gemini — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:21,597 - orchestrator.development_team - INFO - [prompt-debug] gemini len=151 preview="gemini, respond only with: 'Hello from gemini — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:21 - src.controllers.tmux_controller.gemini - INFO - Sending command: gemini, respond only with: 'Hello from gemini — me...
+2025-10-19 16:58:21,602 - src.controllers.tmux_controller.gemini - INFO - Sending command: gemini, respond only with: 'Hello from gemini — me...
+2025-10-19 16:58:21 - src.controllers.tmux_controller.gemini - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:21,640 - src.controllers.tmux_controller.gemini - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:21 - src.controllers.tmux_controller.gemini - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:21,746 - src.controllers.tmux_controller.gemini - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:25 - orchestrator.development_team - INFO - [prompt-debug] claude len=151 preview="claude, respond only with: 'Hello from claude — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:25,871 - orchestrator.development_team - INFO - [prompt-debug] claude len=151 preview="claude, respond only with: 'Hello from claude — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:25 - src.controllers.tmux_controller.claude - INFO - Sending command: claude, respond only with: 'Hello from claude — me...
+2025-10-19 16:58:25,876 - src.controllers.tmux_controller.claude - INFO - Sending command: claude, respond only with: 'Hello from claude — me...
+2025-10-19 16:58:25 - src.controllers.tmux_controller.claude - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:25,915 - src.controllers.tmux_controller.claude - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:26 - src.controllers.tmux_controller.claude - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:26,021 - src.controllers.tmux_controller.claude - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:29 - orchestrator.development_team - INFO - [prompt-debug] gemini len=151 preview="gemini, respond only with: 'Hello from gemini — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:29,637 - orchestrator.development_team - INFO - [prompt-debug] gemini len=151 preview="gemini, respond only with: 'Hello from gemini — message received.'\nDo not run tools or reference previous steps. Confirm you saw this message and stop."
+2025-10-19 16:58:29 - src.controllers.tmux_controller.gemini - INFO - Sending command: gemini, respond only with: 'Hello from gemini — me...
+2025-10-19 16:58:29,643 - src.controllers.tmux_controller.gemini - INFO - Sending command: gemini, respond only with: 'Hello from gemini — me...
+2025-10-19 16:58:29 - src.controllers.tmux_controller.gemini - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:29,680 - src.controllers.tmux_controller.gemini - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-19 16:58:29 - src.controllers.tmux_controller.gemini - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-19 16:58:29,786 - src.controllers.tmux_controller.gemini - INFO - Submit key 'Enter' send-keys returned 0
+
+=== Conversation Transcript ===
+0: claude
+  Prompt:
+    claude, respond only with: 'Hello from claude — message received.'
+    Do not run tools or reference previous steps. Confirm you saw this message and stop.
+  Response:
+    > claude, respond only with: 'Hello from claude — message received.' Do not
+    run tools or reference previous steps. Confirm you saw this message and
+    stop.
+
+    ● Hello from claude — message received.
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    > 
+    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+      ⏵⏵ bypass permissions on (shift+tab to cycle)                                           Thinking off (tab to toggle)
+-
+1: gemini
+  Prompt:
+    gemini, respond only with: 'Hello from gemini — message received.'
+    Do not run tools or reference previous steps. Confirm you saw this message and stop.
+  Response:
+    YOLO mode gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or
+    reference previous steps. Confirm you saw this message and stop.
+-
+2: claude
+  Prompt:
+    claude, respond only with: 'Hello from claude — message received.'
+    Do not run tools or reference previous steps. Confirm you saw this message and stop.
+  Response:
+    │                                                │ ─────────────────────────── │
+    │                     ▐▛███▜▌                    │ Recent activity             │
+    │                    ▝▜█████▛▘                   │ No recent activity          │
+    │                      ▘▘ ▝▝                     │                             │
+    │                                                │                             │
+    │            Sonnet 4.5 · Claude Pro             │                             │
+    │   /mnt/f/PROGRAMMING_PROJECTS/Orechestrator2   │                             │
+    ╰──────────────────────────────────────────────────────────────────────────────╯
+
+    > claude, respond only with: 'Hello from claude — message received.' Do not
+    run tools or reference previous steps. Confirm you saw this message and
+    stop.
+
+    ● Hello from claude — message received.
+
+    > claude, respond only with: 'Hello from claude — message received.' Do not
+    run tools or reference previous steps. Confirm you saw this message and
+    stop.
+
+    ● Hello from claude — message received.
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    > 
+    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+      ⏵⏵ bypass permissions on (shift+tab to cycle)                                           Thinking off (tab to toggle)
+-
+3: gemini
+  Prompt:
+    gemini, respond only with: 'Hello from gemini — message received.'
+    Do not run tools or reference previous steps. Confirm you saw this message and stop.
+  Response:
+    User:  gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps.
+    Confirm you saw this message and stop.
+    gemini, respond only with:
+    Model:  Hello from gemini — message received.
+    You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+    entry for "screenReader".
+    /mnt/f/PROGRAMMING_PROJECTS/Orechestrator2 no sandbox (see /docs)  gemini-2.5-pro (99% context left)
+      YOLO mode (ctrl + y to toggle)
+    YOLO mode   Type your message or @path/to/file
+-
+4: claude
+  Prompt:
+    claude, respond only with: 'Hello from claude — message received.'
+    Do not run tools or reference previous steps. Confirm you saw this message and stop.
+  Response:
+    │   /mnt/f/PROGRAMMING_PROJECTS/Orechestrator2   │                             │
+    ╰──────────────────────────────────────────────────────────────────────────────╯
+
+    > claude, respond only with: 'Hello from claude — message received.' Do not
+    run tools or reference previous steps. Confirm you saw this message and
+    stop.
+
+    ● Hello from claude — message received.
+
+    > claude, respond only with: 'Hello from claude — message received.' Do not
+    run tools or reference previous steps. Confirm you saw this message and
+    stop.
+
+    ● Hello from claude — message received.
+
+    > claude, respond only with: 'Hello from claude — message received.' Do not
+    run tools or reference previous steps. Confirm you saw this message and
+    stop.
+
+    ● Hello from claude — message received.
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    > 
+    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+      ⏵⏵ bypass permissions on (shift+tab to cycle)
+-
+5: gemini
+  Prompt:
+    gemini, respond only with: 'Hello from gemini — message received.'
+    Do not run tools or reference previous steps. Confirm you saw this message and stop.
+  Response:
+    User:  gemini, respond only with:
+    Model:  Hello from gemini — message received.
+    You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+    entry for "screenReader".
+    /mnt/f/PROGRAMMING_PROJECTS/Orechestrator2 no sandbox (see /docs)  gemini-2.5-pro (99% context left)
+      YOLO mode (ctrl + y to toggle)
+    YOLO mode   Type your message or @path/to/file
+-
+
+=== Shared Context Summary ===
+gemini: User:  gemini, respond only with:
+Model:  Hello from gemini — message received.
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+/mnt/f/PROGRAMMING_PROJECTS/Orechestrator2 no sandbox (see /docs)  gemini-2.5-pro (99% context left)
+  YOLO mode (ctrl + y to toggle)
+YOLO mode   Type your message ...
+
+[log] Conversation written to logs/smoke-test.log

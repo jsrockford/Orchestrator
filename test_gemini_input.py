@@ -65,7 +65,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--prompt",
-        default="Gemini, please confirm you received this test input.",
+        default=(
+            "gemini, respond only with: 'Hello from gemini — message received.' "
+            "Do not run tools or reference previous steps. Confirm you saw this message and stop."
+        ),
         help="Prompt text to send to Gemini.",
     )
     parser.add_argument(

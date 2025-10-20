@@ -15,6 +15,7 @@ import sys
 import textwrap
 import shlex
 from pathlib import Path
+import logging
 from typing import Dict, Optional
 
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
@@ -40,6 +41,13 @@ def build_controller(
     ai_config["pause_on_manual_clients"] = False
     if init_wait is not None:
         ai_config["init_wait"] = init_wait
+
+    if name == "gemini":
+        # Ensure Gemini uses the reliable submit behaviour even if the active
+        # config copy is stale in the tmux worktree.
+        ai_config["submit_key"] = "C-m"
+        ai_config["text_enter_delay"] = 0.5
+        ai_config["post_text_delay"] = 0.5
 
     exe_parts = shlex.split(executable)
     if not exe_parts:
@@ -92,9 +100,14 @@ def run_discussion(
     max_turns: int,
     history_size: int,
     start_with: str,
+    debug_prompts: bool = False,
+    debug_prompt_chars: int = 200,
+    include_history: bool = True,
 ) -> Dict[str, object]:
     controllers = {"claude": claude, "gemini": gemini}
     orchestrator = DevelopmentTeamOrchestrator(controllers)
+    if debug_prompts:
+        orchestrator.set_prompt_debug(True, preview_chars=debug_prompt_chars)
     context_manager = ContextManager(history_size=history_size)
     participants = ["claude", "gemini"]
     if start_with.lower() == "gemini":
@@ -110,6 +123,7 @@ def run_discussion(
         context_manager=context_manager,
         message_router=router,
         participants=participants,
+        include_history=include_history,
     )
     return {
         "conversation": result["conversation"],
@@ -162,6 +176,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=20,
         help="Number of turns to retain in the shared context (default: 20).",
+    )
+    parser.add_argument(
+        "--simple-prompts",
+        action="store_true",
+        help="Skip conversation history when building prompts (smoke-test mode).",
     )
     parser.add_argument(
         "--start-with",
@@ -259,6 +278,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Convenience override for both --claude-startup-timeout and --gemini-startup-timeout.",
     )
+    parser.add_argument(
+        "--debug-prompts",
+        action="store_true",
+        help="Log prompt diagnostics before each dispatch.",
+    )
+    parser.add_argument(
+        "--debug-prompt-chars",
+        type=int,
+        default=200,
+        help="How many characters of each prompt to include in debug logs (default 200).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -291,6 +321,15 @@ def cleanup_controller(controller: Optional[TmuxController], label: str) -> None
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+
+    if args.debug_prompts:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
+    include_history = not args.simple_prompts
+    effective_history_size = max(1, args.history_size if include_history else 1)
 
     claude: Optional[TmuxController] = None
     gemini: Optional[TmuxController] = None
@@ -328,8 +367,11 @@ def main(argv: list[str]) -> int:
             gemini=gemini,
             topic=args.topic,
             max_turns=args.max_turns,
-            history_size=args.history_size,
+            history_size=effective_history_size,
             start_with=args.start_with,
+            debug_prompts=args.debug_prompts,
+            debug_prompt_chars=args.debug_prompt_chars,
+            include_history=include_history,
         )
     finally:
         if args.cleanup_after:

@@ -1,0 +1,12 @@
+Loaded cached credentials.
+User:  gemini, we
+Model:  Understood. I have received the context. I am ready for your first command.
+User:  gemini, we
+Model:  Yes? I'm ready. Please proceed with your command.
+User:  gemini, we
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+.../mnt/PROGRAMMING_PROJECTS/OrchestratorTest-tmux (OrchestratorTest-tmux*) no sandbox (see /docs)  gemini-2.5-pro (99% context left)
+responding Loading... Do a barrel roll!  (esc to cancel, 3s)
+Using: 1 GEMINI.md file YOLO mode (ctrl + y to toggle)
+YOLO mode   Type your message or @path/to/file

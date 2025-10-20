@@ -39,6 +39,8 @@ class DevelopmentTeamOrchestrator:
         self.logger = get_logger("orchestrator.development_team")
         self.controllers: Dict[str, ControllerType] = {}
         self._pending: Dict[str, Deque[Tuple[str, bool]]] = {}
+        self._debug_prompts: bool = False
+        self._debug_prompt_chars: int = 200
 
         if controllers:
             for name, controller in controllers.items():
@@ -86,6 +88,17 @@ class DevelopmentTeamOrchestrator:
     # Command dispatch / automation awareness
     # ------------------------------------------------------------------ #
 
+    def set_prompt_debug(
+        self,
+        enabled: bool,
+        *,
+        preview_chars: int = 200,
+    ) -> None:
+        """Enable or disable prompt debugging output."""
+        self._debug_prompts = enabled
+        if preview_chars is not None and preview_chars >= 0:
+            self._debug_prompt_chars = int(preview_chars)
+
     def dispatch_command(
         self,
         controller_name: str,
@@ -106,6 +119,16 @@ class DevelopmentTeamOrchestrator:
                 - pending (int): Commands waiting in the orchestrator queue.
                 - controller_pending (int|None): Pending count reported by controller.
         """
+        if self._debug_prompts:
+            preview_len = self._debug_prompt_chars or 0
+            preview = command[:preview_len] if command else ""
+            self.logger.info(
+                "[prompt-debug] %s len=%d preview=%r",
+                controller_name,
+                len(command or ""),
+                preview,
+            )
+
         controller = self._get_controller(controller_name)
         status = self.get_controller_status(controller_name)
         paused, reason, manual_clients, controller_pending = self._extract_automation(status)
@@ -245,6 +268,7 @@ class DevelopmentTeamOrchestrator:
         max_turns: int = 10,
         context_manager: Any | None = None,
         message_router: Any | None = None,
+        include_history: bool = True,
     ) -> Dict[str, Any]:
         """
         Run a facilitated discussion between registered controllers.
@@ -282,6 +306,7 @@ class DevelopmentTeamOrchestrator:
             participant_list,
             context_manager=ctx_manager,
             message_router=msg_router,
+            include_history=include_history,
         )
         conversation = manager.facilitate_discussion(topic, max_turns=max_turns)
         return {
