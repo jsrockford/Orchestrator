@@ -219,20 +219,23 @@ tmux:
 
 ### Unit Tests
 
-Run individual component tests:
+Run individual component tests from the project root:
 
 ```bash
 # Test output parser cleanup
-python3 -m pytest test_output_parser_cleanup.py
+python3 -m pytest tests/test_output_parser_cleanup.py
 
 # Test automation pause/resume
-python3 -m pytest test_automation_pause.py
+python3 -m pytest tests/test_automation_pause.py
 
 # Test conversation management
-python3 -m pytest test_conversation_manager.py
+python3 -m pytest tests/test_conversation_manager.py
 
 # Test orchestrator discussion
-python3 -m pytest test_orchestrator_discussion_pause.py
+python3 -m pytest tests/test_orchestrator_discussion_pause.py
+
+# Run all tests
+python3 -m pytest tests/
 ```
 
 ### Integration Tests
@@ -253,18 +256,20 @@ cat logs/test-run.log
 
 ### Manual Testing
 
-Verify individual controllers:
+Verify individual controllers (run from project root with PYTHONPATH set):
 
 ```bash
 # Test Claude controller
-python3 test_controller_auto.py
+PYTHONPATH=. python3 tests/test_controller_auto.py
 
 # Test Gemini controller
-python3 test_gemini_controller.py
+PYTHONPATH=. python3 tests/test_gemini_controller.py
 
 # Test dual AI operation
-python3 test_dual_ai.py
+PYTHONPATH=. python3 tests/test_dual_ai.py
 ```
+
+**Note:** All tests must be run from the project root directory. The `PYTHONPATH=.` prefix ensures Python can find the `src/` modules.
 
 ## Example Output
 
