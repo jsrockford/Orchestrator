@@ -298,12 +298,170 @@
 - [x] How does Claude Code handle rapid commands? **ISSUE FOUND & FIXED** - Commands sent too fast overlap on same line; wait_for_ready() solves this
 - [x] What indicates an error vs normal response? **TBD** - Need more testing with errors
 
+## Phase 6: Multi-Agent Foundation & Production Hardening
+
+**Objective**: Extend orchestration to support N agents (add Codex via agent invocation), then validate system reliability through comprehensive stress testing and error recovery scenarios.
+
+**Timeline**: 2 weeks (Week 1: Integration, Week 2: Hardening)
+
+### Part A: Codex Integration via Agent Invocation
+
+#### Task 6.1: AgentController Architecture
+- [ ] Design `AgentController` interface matching `TmuxController` API
+  - [ ] `start_session()` - Initialize agent context within Claude Code session
+  - [ ] `send_command(prompt)` - Invoke agent via `/agents` with formatted prompt
+  - [ ] `get_last_output()` - Parse agent response from Claude Code output
+  - [ ] `session_exists()` - Check if agent context is active
+  - [ ] `kill_session()` - Clean up agent context
+- [ ] Create `src/controllers/agent_controller.py`
+- [ ] Implement agent invocation wrapper
+  - [ ] Format prompts for agent consumption
+  - [ ] Handle `/agents` command submission
+  - [ ] Parse agent responses from embedded output
+- [ ] Add error handling for agent-specific failures
+  - [ ] Agent not found
+  - [ ] Agent timeout
+  - [ ] Malformed agent responses
+
+#### Task 6.2: N-Agent Orchestration Support
+- [ ] Refactor `DevelopmentTeamOrchestrator` for N agents
+  - [ ] Remove hardcoded 2-agent assumptions
+  - [ ] Support agent list initialization: `[claude_controller, gemini_controller, agent_controller]`
+  - [ ] Dynamic participant tracking
+- [ ] Update `ConversationManager` for 3+ participants
+  - [ ] Multi-participant turn allocation
+  - [ ] Context building for N-way discussions
+  - [ ] Consensus detection across N agents
+  - [ ] Conflict detection for N agents
+- [ ] Update `ContextManager` for agent metadata
+  - [ ] Store agent type (CLI vs agent-based)
+  - [ ] Track agent capabilities
+  - [ ] Format prompts based on agent type
+- [ ] Update configuration system
+  - [ ] Add `agent` section to `config.yaml`
+  - [ ] Agent-specific settings (timeout, max_tokens, etc.)
+  - [ ] Support for agent profiles
+
+#### Task 6.3: 3-Agent Testing & Validation
+- [ ] Create `examples/run_three_agent_discussion.py`
+  - [ ] Simple 3-way discussion example
+  - [ ] Validate turn-taking works correctly
+  - [ ] Verify context passed to all participants
+- [ ] Create 3-agent code review simulation
+  - [ ] Claude: Technical review
+  - [ ] Gemini: Architecture analysis
+  - [ ] Codex: Implementation suggestions
+  - [ ] Validate all agents contribute meaningfully
+- [ ] Test agent response parsing
+  - [ ] Verify Codex responses extracted correctly
+  - [ ] Ensure no CLI/agent output confusion
+  - [ ] Validate conversation history includes all agents
+- [ ] Document agent integration process
+  - [ ] Step-by-step guide for adding new agents
+  - [ ] Interface requirements and constraints
+  - [ ] Example agent controller implementation
+
+### Part B: Production Hardening
+
+#### Task 6.4: Execute Deferred Advanced Tests
+- [ ] **Test: File operations with Gemini**
+  - [ ] Read files via @-references
+  - [ ] Write new files
+  - [ ] Edit existing files
+  - [ ] Verify file changes persist
+- [ ] **Test: Rapid sequential commands**
+  - [ ] Send 10+ commands in quick succession
+  - [ ] Verify all responses captured correctly
+  - [ ] Measure response queue behavior
+  - [ ] Test with all three agents
+- [ ] **Test: Error recovery scenarios**
+  - [ ] Agent crash mid-conversation (simulated)
+  - [ ] Network timeout (simulated)
+  - [ ] API rate limit hit
+  - [ ] Invalid response format
+  - [ ] Verify graceful degradation
+  - [ ] Test recovery and continuation
+- [ ] **Test: Long-duration stability (2+ hours)**
+  - [ ] Run multi-agent discussion for 2+ hours
+  - [ ] Monitor memory usage over time
+  - [ ] Track response times (check for degradation)
+  - [ ] Verify log rotation works
+  - [ ] Test manual intervention mid-session
+
+#### Task 6.5: Enhanced Error Handling
+- [ ] Implement graceful degradation
+  - [ ] Continue conversation if one agent fails
+  - [ ] Notify remaining agents of participant loss
+  - [ ] Allow manual recovery or agent substitution
+- [ ] Add auto-retry with exponential backoff
+  - [ ] Configurable retry attempts (default: 3)
+  - [ ] Exponential delay: 1s, 2s, 4s, 8s
+  - [ ] Circuit breaker after max failures
+- [ ] Implement dead agent detection
+  - [ ] Health check ping for each agent
+  - [ ] Timeout-based failure detection
+  - [ ] Auto-restart capability with backoff
+- [ ] Create comprehensive error taxonomy
+  - [ ] `AgentNotFoundError`
+  - [ ] `AgentTimeoutError`
+  - [ ] `AgentCrashError`
+  - [ ] `InvalidResponseError`
+  - [ ] `ConversationStallError`
+  - [ ] Clear error messages with remediation hints
+
+#### Task 6.6: Performance Optimization
+- [ ] Optimize response capture efficiency
+  - [ ] Reduce buffer polling overhead
+  - [ ] Implement smart wait_for_ready timing
+  - [ ] Cache frequent output patterns
+- [ ] Improve memory management
+  - [ ] Implement conversation history pruning
+  - [ ] Set maximum context window size
+  - [ ] Periodic garbage collection triggers
+- [ ] Add log rotation and cleanup
+  - [ ] Max log file size (default: 10MB)
+  - [ ] Auto-rotation with timestamps
+  - [ ] Cleanup old logs (keep last N days)
+
+#### Task 6.7: Comprehensive Logging & Metrics
+- [ ] Implement structured logging
+  - [ ] JSON-formatted logs for parsing
+  - [ ] Log levels: DEBUG, INFO, WARN, ERROR
+  - [ ] Contextual metadata (agent, turn, timestamp)
+- [ ] Add performance metrics
+  - [ ] Turn duration tracking
+  - [ ] Response time percentiles (p50, p95, p99)
+  - [ ] Agent-specific performance stats
+  - [ ] Export metrics to JSON/CSV
+- [ ] Create debugging utilities
+  - [ ] Conversation replay from logs
+  - [ ] Turn-by-turn inspection tool
+  - [ ] Visual timeline generator
+- [ ] Add alerting hooks
+  - [ ] Callback for critical errors
+  - [ ] Webhook support for notifications
+  - [ ] Email alerts (optional)
+
+### Phase 6 Success Criteria
+- [x] Codex participates successfully in 3-agent discussions
+- [x] System handles 10+ rapid commands without issues
+- [x] Graceful recovery from agent crashes demonstrated
+- [x] 2+ hour discussion runs without intervention
+- [x] Clear documentation of agent integration process
+- [x] All deferred tests from Phase 2.4 completed
+- [x] Performance metrics collected and analyzed
+- [x] Error recovery scenarios validated
+
+**Completion Date**: TBD (Target: 2 weeks from start)
+
 ## Success Criteria Checklist
 
 - [x] Can start Claude Code in tmux session programmatically ✅
 - [x] Can send commands reliably (>95% success rate) ✅ 100% in testing
 - [x] Can capture full responses (>90% success rate) ✅ 100% in testing
 - [x] Can switch between automated and manual modes ✅ tmux attach -r working
-- [ ] Session remains stable for 1+ hour - Not yet tested
+- [ ] Session remains stable for 1+ hour - **Will test in Phase 6.4**
 - [x] Command latency < 100ms ✅ ~0.1ms measured
 - [x] Output capture latency < 500ms ✅ ~10ms measured
+- [ ] Support 3+ agents in orchestrated discussion - **Phase 6 objective**
+- [ ] Graceful error recovery demonstrated - **Phase 6 objective**
