@@ -20,14 +20,21 @@
     gemini, respond only with: 'Hello from gemini — message received.'
     Do not run tools or reference previous steps. Confirm you saw this message and stop.
   Response:
-    YOLO mode gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or
-    reference previous steps. Confirm you saw this message and stop.
+    User:  gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps.
+    Confirm you saw this message and stop.
+    Model:  Hello from gemini — message received.
+    You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+    entry for "screenReader".
+    /mnt/f/PROGRAMMING_PROJECTS/Orechestrator2 no sandbox (see /docs)  gemini-2.5-pro (99% context left)
+      YOLO mode (ctrl + y to toggle)
+    YOLO mode   Type your message or @path/to/file
 -
 2: claude
   Prompt:
     claude, respond only with: 'Hello from claude — message received.'
     Do not run tools or reference previous steps. Confirm you saw this message and stop.
   Response:
+    │                Welcome back DJ!                │ Run /init to create a CLAU… │
     │                                                │ ─────────────────────────── │
     │                     ▐▛███▜▌                    │ Recent activity             │
     │                    ▝▜█████▛▘                   │ No recent activity          │
@@ -52,7 +59,7 @@
     ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     > 
     ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-      ⏵⏵ bypass permissions on (shift+tab to cycle)                                           Thinking off (tab to toggle)
+      ⏵⏵ bypass permissions on (shift+tab to cycle)
 -
 3: gemini
   Prompt:
@@ -61,7 +68,6 @@
   Response:
     User:  gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps.
     Confirm you saw this message and stop.
-    gemini, respond only with:
     Model:  Hello from gemini — message received.
     You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
     entry for "screenReader".
@@ -74,6 +80,7 @@
     claude, respond only with: 'Hello from claude — message received.'
     Do not run tools or reference previous steps. Confirm you saw this message and stop.
   Response:
+    │            Sonnet 4.5 · Claude Pro             │                             │
     │   /mnt/f/PROGRAMMING_PROJECTS/Orechestrator2   │                             │
     ╰──────────────────────────────────────────────────────────────────────────────╯
 
@@ -105,7 +112,8 @@
     gemini, respond only with: 'Hello from gemini — message received.'
     Do not run tools or reference previous steps. Confirm you saw this message and stop.
   Response:
-    User:  gemini, respond only with:
+    User:  gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps.
+    Confirm you saw this message and stop.
     Model:  Hello from gemini — message received.
     You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
     entry for "screenReader".
@@ -115,10 +123,9 @@
 -
 
 === Shared Context Summary ===
-gemini: User:  gemini, respond only with:
+gemini: User:  gemini, respond only with: 'Hello from gemini — message received.' Do not run tools or reference previous steps.
+Confirm you saw this message and stop.
 Model:  Hello from gemini — message received.
 You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
 entry for "screenReader".
-/mnt/f/PROGRAMMING_PROJECTS/Orechestrator2 no sandbox (see /docs)  gemini-2.5-pro (99% context left)
-  YOLO mode (ctrl + y to toggle)
-YOLO mode   Type your message ...
+/mnt/f/PROGRAMMING_PROJECTS/Orechestrat...

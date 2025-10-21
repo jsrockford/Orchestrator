@@ -10,6 +10,8 @@ pip install -r requirements.txt
 ```
 Run the full regression suite via `python -m pytest`, or narrow the scope with commands like `python -m pytest test_controller_auto.py -k "wait_for_ready"` when debugging a specific behavior.
 
+**Important:** Don runs simulations and tests from a separate git worktree. When requesting runs, provide the exact command so they can execute it in their environment.
+
 ## Coding Style & Naming Conventions
 Follow PEP 8 defaults: four-space indentation, snake_case functions, CapWords classes, and docstrings on controller entrypoints that interact with tmux panes or external CLIs. Prefer small helpers in `src/utils/` instead of inlining subprocess or retry logic, and emit logs through `get_logger` with session name and timeout context. No formatter is enforced, so keep manual diffs tidy.
 
