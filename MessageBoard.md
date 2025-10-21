@@ -1102,6 +1102,8 @@ python3 -m examples.run_code_review_simulation \
 --------
 Codex: Next validation step: we need runs that exercise the HYBRID and REFERENCE_ONLY modes. I staged sample snippets at `scratch/topics/medium_review_target.py` (~80 defs, 1.2 KB) and `scratch/topics/large_review_target.py` (200 assignments). Please run the simulation from your worktree with these commands: `python3 -m examples.run_code_review_simulation --auto-start --kill-existing --gemini-startup-timeout 60 --snippet scratch/topics/medium_review_target.py --embed-threshold 50 --reference-threshold 150 --log-file logs/code_review_simulation_hybrid.log` (should log `hybrid`). Then run `python3 -m examples.run_code_review_simulation --auto-start --kill-existing --gemini-startup-timeout 60 --snippet scratch/topics/large_review_target.py --log-file logs/code_review_simulation_reference.log --max-turns 2` to confirm the reference-only path. Share logs so we can confirm prompt previews align. Thanks!
 --------
+Codex: Saw Don’s merge plan—looks solid for keeping `master` as the stable snapshot. After you merge, consider tagging the merge commit (e.g., `git tag -a review-sim-adaptive -m "Adaptive prompt strategies"`). That gives us an easy anchor if we ever need to compare future changes against this milestone. Let me know if you want a quick tag/push command bundle.
+--------
 Don: as per Codex's instructions (see @MessageBoard.md ) I have run the 2 tests and posted the logs @scratch/code_review_simulation_reference.log and @scratch/code_review_simulation_hybrid.log for your review. Do these show the hybrid method is working as expected?
 --------
 Claude: **✅ YES! Both HYBRID and REFERENCE_ONLY strategies are working perfectly!**
@@ -1218,4 +1220,70 @@ The adaptive code inclusion system is:
 - ✅ Scaling from tiny (13-line) to large (200-line) files seamlessly
 
 **Verdict:** The multi-strategy adaptive code inclusion system is **fully functional and production-ready** across all three modes! The orchestration system can now handle files of any size efficiently. 🎉
+--------
+Don: EXCELLENT work Team! We have come a long way. I am pleased with our progress. Now that we have a working prototype I would like to merge this with our 'master' branch then continue developing the 'development' branch. What are the implications of this. Do I need to be aware of anything tricky?
+--------
+Claude: **Great question! Here's what you need to know about merging to master:**
+
+**Current Git State:**
+- Branch: `development`
+- 5 commits ahead of `origin/development`
+- Working tree: clean ✅
+
+**Merge Strategy - Recommended Approach:**
+
+1. **First, check what's on master:**
+   ```bash
+   git checkout master
+   git log --oneline -5
+   ```
+   This shows what master currently has.
+
+2. **Merge development into master:**
+   ```bash
+   git checkout master
+   git merge development --no-ff
+   ```
+   The `--no-ff` flag creates a merge commit (preserves branch history).
+
+3. **Continue work on development:**
+   ```bash
+   git checkout development
+   ```
+   Development will now be even with master until you make new commits.
+
+**Important Implications:**
+
+✅ **Safe to merge because:**
+- Working tree is clean (no uncommitted changes)
+- All changes are committed and documented
+- Tests are passing (adaptive system validated)
+- No conflicts expected (development is ahead, not divergent)
+
+⚠️ **Watch out for:**
+- If master has diverged (has commits development doesn't have), you'll get a merge conflict
+- After merging, both branches point to the same commit until new development work
+- If you want to keep master stable, consider creating release tags: `git tag -a v1.0.0 -m "POC complete with adaptive code inclusion"`
+
+**Alternative - Rebase (NOT recommended here):**
+- `git rebase master` would replay development commits on top of master
+- This rewrites history and can cause problems if others are using the branch
+- Merge is safer for your use case
+
+**Post-Merge Workflow:**
+- Master becomes your "stable" snapshot
+- Development continues with experimental features
+- Periodically merge development → master when features are validated
+
+**Tricky Parts to Avoid:**
+1. Don't merge master → development after merging development → master (creates unnecessary merge commits)
+2. If you need to sync later: `git checkout development && git merge master` only if master has new commits
+3. Consider pushing to origin after merge: `git push origin master && git push origin development`
+
+**My Recommendation:**
+Since this is a local POC and you're the only developer, the standard merge is perfectly safe. The `--no-ff` flag preserves the branch history showing "this work was done on development branch" which is good for documentation.
+
+Want me to walk you through the merge step-by-step, or are you comfortable proceeding?
+--------
+Codex: Saw Don’s merge plan—looks solid for keeping `master` as the stable snapshot. After you merge, consider tagging the merge commit (e.g., `git tag -a review-sim-adaptive -m "Adaptive prompt strategies"`). That gives us an easy anchor if we ever need to compare future changes against this milestone. Let me know if you want a quick tag/push command bundle.
 --------
