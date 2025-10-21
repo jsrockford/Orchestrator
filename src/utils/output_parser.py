@@ -17,6 +17,30 @@ class OutputParser:
     # Unicode box drawing characters used by Claude Code
     BOX_CHARS = ['─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '═', '║', '╔', '╗', '╚', '╝', '╠', '╣', '╦', '╩', '╬']
 
+    # Additional UI noise patterns
+    TOOL_PREFIX_PATTERN = re.compile(r'^\s*⎿\s*')
+    COLLAPSED_LINE_PATTERN = re.compile(r'^\s*… \+\d+\s+lines(?:\s*\([^)]+\))?$', re.IGNORECASE)
+    SHORTCUT_HINT_PATTERN = re.compile(r'\((?:ctrl|shift|esc)[^)]*\)', re.IGNORECASE)
+    PERMISSION_PROMPT_PATTERN = re.compile(r'^\s*⏵⏵')
+    STATUS_DOT_PATTERN = re.compile(r'^\s*·\s+')
+    STATUS_STAR_PATTERN = re.compile(r'^\s*\*\s+.*esc to interrupt', re.IGNORECASE)
+    GEMINI_BOX_BORDER_PATTERN = re.compile(r'^\s*[╭╰]')
+    GEMINI_EMPTY_PIPE_PATTERN = re.compile(r'^\s*│\s*$')
+    PROMPT_PASTED_PATTERN = re.compile(r'^>\s*\[Pasted text.*\]$', re.IGNORECASE)
+    GEMINI_FOOTER_PATTERN = re.compile(r'.*\b(?:gemini|claude)-[\w\.\-]+\b.*', re.IGNORECASE)
+
+    DROP_IF_CONTAINS = (
+        'YOLO mode',
+        'Type your message',
+        'Tips for getting started',
+        'Using:',
+        'no sandbox',
+        'context left',
+        'screen reader-friendly view',
+        'thinking off',
+        'thinking on',
+    )
+
     # Claude Code UI patterns
     PROMPT_PATTERN = r'^>\s'
     SEPARATOR_PATTERN = r'^─+$'
@@ -60,33 +84,84 @@ class OutputParser:
         cleaned_lines = []
 
         for line in lines:
-            # Skip empty lines
-            if not line.strip():
-                continue
-
-            # Skip header lines (Claude and Gemini)
-            if any(char in line for char in ['▐▛███▜▌', '▝▜█████▛▘', '▘▘ ▝▝', '███']):
-                continue
-
-            # Skip Gemini-specific elements
-            if any(text in line for text in ['Tips for getting started', 'Using:', 'context left', 'no sandbox']):
-                continue
-
-            # Skip separator lines
-            if re.match(self.SEPARATOR_PATTERN, line.strip()):
-                continue
-
-            # Skip status line
-            if re.search(self.STATUS_LINE_PATTERN, line):
-                continue
-
-            # Skip prompt-only lines
-            if re.match(self.PROMPT_PATTERN, line.strip()) and len(line.strip()) <= 2:
-                continue
-
-            cleaned_lines.append(line)
+            normalized = self._normalize_line(line)
+            if normalized is not None:
+                cleaned_lines.append(normalized)
 
         return '\n'.join(cleaned_lines).strip()
+
+    def _normalize_line(self, line: str) -> Optional[str]:
+        """Normalize or drop a single line of CLI output."""
+        line = line.replace('\u00a0', ' ')
+        stripped = line.strip()
+
+        if not stripped:
+            return None
+
+        if stripped == '>':
+            return None
+
+        # Remove Gemini boxed prompt markers while preserving inner text
+        if stripped.startswith('│'):
+            inner = stripped.strip('│').strip()
+            if not inner:
+                return None
+            line = inner
+            stripped = inner
+
+        # Skip header lines (Claude and Gemini art/logos)
+        if any(token in stripped for token in ['▐▛███▜▌', '▝▜█████▛▘', '▘▘ ▝▝', '███']):
+            return None
+
+        # Skip broad separator or border lines
+        if re.match(self.SEPARATOR_PATTERN, stripped):
+            return None
+        if self.GEMINI_BOX_BORDER_PATTERN.match(stripped):
+            return None
+        if self.GEMINI_EMPTY_PIPE_PATTERN.match(stripped):
+            return None
+
+        # Skip prompt-only placeholders and pasted text markers
+        if re.match(self.PROMPT_PATTERN, stripped) and len(stripped) <= 2:
+            return None
+        if self.PROMPT_PASTED_PATTERN.match(stripped):
+            return None
+
+        # Skip known status/permission lines
+        if re.search(self.STATUS_LINE_PATTERN, stripped):
+            return None
+        if self.PERMISSION_PROMPT_PATTERN.match(stripped):
+            return None
+        if self.COLLAPSED_LINE_PATTERN.match(stripped):
+            return None
+        if self.STATUS_DOT_PATTERN.match(stripped):
+            return None
+        if self.STATUS_STAR_PATTERN.match(stripped):
+            return None
+        if 'esc to interrupt' in stripped.lower():
+            return None
+
+        # Drop lines with configured substrings or footer patterns
+        lowered = stripped.lower()
+        if any(token.lower() in lowered for token in self.DROP_IF_CONTAINS):
+            return None
+        if self.GEMINI_FOOTER_PATTERN.match(stripped):
+            return None
+
+        # Remove tool prefix indicators but keep the payload
+        if stripped.startswith('⎿'):
+            stripped = self.TOOL_PREFIX_PATTERN.sub('', stripped).strip()
+            if not stripped:
+                return None
+            line = stripped
+
+        # Remove inline shortcut/tool hints
+        line = self.SHORTCUT_HINT_PATTERN.sub('', line).strip()
+        stripped = line.strip()
+        if not stripped:
+            return None
+
+        return line
 
     def extract_responses(self, text: str) -> List[Dict[str, str]]:
         """

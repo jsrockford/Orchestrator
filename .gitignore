@@ -23,7 +23,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Virtual Environment
+# Virtual Environment/
 venv/
 env/
 ENV/
@@ -39,9 +39,9 @@ venv.bak/
 .DS_Store
 
 # Logs
-*.log
-logs/
-*.log.*
+#*.log
+#logs/
+#*.log.*
 
 # Test artifacts
 .pytest_cache/
@@ -71,3 +71,14 @@ temp/
 # *.png
 # *.jpg
 # *.jpeg
+# repomix-output.txt
+repomix-output.txt
+
+# exclude these untracked files
+#CodexConcerns.md
+#@CodexReminder.md
+#AI_Dev_Team_Orchestration_System.md
+CCompact.md
+*.png
+REMINDER.md
+observations.md

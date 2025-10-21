@@ -1,0 +1,24 @@
+1: claude: 1
+Next speaker (gemini) should reply with 2.
+2: gemini: User:  Current number: 2 Reply using exactly two lines: Line 1: 2 Line 2: Next speaker (claude) should reply with 3. Do
+not open files, run commands, or use tools. No additional commentary or formatting.
+Model:  2
+Next speaker (claude) should reply with 3
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+3: claude: 3
+Next speaker (gemini) should reply with 4.
+4: gemini: User:  Current number: 4 Reply using exactly two lines: Line 1: 4 Line 2: Next speaker (claude) should reply with 5. Do
+not open files, run commands, or use tools. No additional commentary or formatting.
+Model:  4
+Next speaker (claude) should reply with 5
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+5: claude: 5
+Next speaker (gemini) should reply with 6.
+6: gemini: User:  Current number: 6 Reply using exactly two lines: Line 1: 6 Line 2: Next speaker (claude) should reply with 7. Do
+not open files, run commands, or use tools. No additional commentary or formatting.
+Model:  6
+Next speaker (claude) should reply with 7
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".

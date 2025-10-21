@@ -31,17 +31,20 @@ class ClaudeController(TmuxController):
 
         # Use configured session name if not specified
         if session_name is None:
-            session_name = tmux_config.get('claude_session', 'claude-poc')
+            session_name = tmux_config.get('claude_session', 'claude')
 
         # Get executable from config
         executable = claude_config.get('executable', 'claude')
 
         # Initialize parent with Claude configuration
+        executable_args = claude_config.get('executable_args', [])
+
         super().__init__(
             session_name=session_name,
             executable=executable,
             working_dir=working_dir,
-            ai_config=claude_config
+            ai_config=claude_config,
+            executable_args=executable_args
         )
 
         # Store Claude-specific markers

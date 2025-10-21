@@ -54,6 +54,11 @@ class CommandMalformed(CommandError):
     pass
 
 
+class AutomationPaused(CommandError):
+    """Raised when automation is paused (manual takeover, explicit pause, etc.)."""
+    pass
+
+
 # Environment/setup errors
 class EnvironmentError(AIControllerError):
     """Base class for environment setup errors."""
