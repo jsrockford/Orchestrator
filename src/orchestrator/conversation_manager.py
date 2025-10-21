@@ -8,10 +8,12 @@ higher-level workflows can decide when to stop or escalate a dialogue.
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
 from ..utils.logger import get_logger
+from ..utils.output_parser import OutputParser
 
 
 class ConversationManager:
@@ -47,6 +49,10 @@ class ConversationManager:
         self._include_history = bool(include_history)
         self._turn_counter: int = 0
         self.history: Deque[Dict[str, Any]] = deque(maxlen=self._max_history)
+        self._output_parsers: Dict[str, OutputParser] = {}
+        self._conflict_code_pattern = re.compile(r"```.*?```", re.DOTALL)
+        self._conflict_inline_code_pattern = re.compile(r"`[^`]*`")
+        self._conflict_quoted_pattern = re.compile(r"\"[^\"]*\"|'[^']*'")
 
         if self.message_router is not None:
             for name in self.participants:
@@ -218,10 +224,17 @@ class ConversationManager:
         latest = conversation[-1]
         previous = conversation[-2]
 
-        response = (latest.get("response") or "").lower()
-        for keyword in ("disagree", "blocker", "conflict", "cannot", "reject"):
-            if keyword in response:
+        response_normalized = self._normalize_for_conflict_text(latest.get("response") or "")
+        conflict_keywords = ("disagree", "blocker", "conflict", "reject")
+        conflict_phrases = ("cannot agree", "cannot accept", "cannot support", "cannot proceed", "cannot endorse")
+
+        for keyword in conflict_keywords:
+            if keyword in response_normalized:
                 return True, f"Keyword '{keyword}' indicates disagreement"
+
+        for phrase in conflict_phrases:
+            if phrase in response_normalized:
+                return True, f"Phrase '{phrase}' indicates disagreement"
 
         stance_latest = self._extract_stance(latest)
         stance_previous = self._extract_stance(previous)
@@ -301,9 +314,15 @@ class ConversationManager:
         reader = getattr(controller, "get_last_output", None)
         if callable(reader):
             try:
-                return reader()
+                raw_output = reader()
             except Exception:  # noqa: BLE001 - avoid breaking the discussion loop
                 self.logger.debug("Controller '%s' get_last_output failed", controller_name, exc_info=True)
+            else:
+                if not raw_output:
+                    return None
+                parser = self._output_parsers.setdefault(controller_name, OutputParser())
+                cleaned = parser.clean_output(raw_output)
+                return cleaned or None
         return None
 
     def _store_turn(self, turn: Dict[str, Any]) -> None:
@@ -348,6 +367,15 @@ class ConversationManager:
             )
         except Exception:  # noqa: BLE001
             self.logger.debug("Message routing failed for sender '%s'", sender, exc_info=True)
+
+    def _normalize_for_conflict_text(self, text: str) -> str:
+        if not text:
+            return ""
+
+        scrubbed = self._conflict_code_pattern.sub(" ", text)
+        scrubbed = self._conflict_inline_code_pattern.sub(" ", scrubbed)
+        scrubbed = self._conflict_quoted_pattern.sub(" ", scrubbed)
+        return scrubbed.lower()
 
     def _ensure_router_registration(self, participant: str) -> None:
         if self.message_router is None:

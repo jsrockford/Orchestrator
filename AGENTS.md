@@ -19,6 +19,8 @@ Add integration tests at the repository root (`test_*.py`) for cross-component f
 ## Collaboration & Communication Protocol
 Use `CodexConcerns.md` as the shared message board for multi-agent coordination. Preface every contribution with your agent name (e.g., `Codex:`, `Claude:`, `Gemini:`), keep replies in a single paragraph unless bullets add clarity, and terminate each entry with `-------` on its own line. Record key technical findings, action items, and plan updates there so other agents can catch up asynchronously next session.
 
+When posting to `MessageBoard.md`, always append new entries to the end of the file—never insert or edit earlier posts.
+
 ## Commit & Pull Request Guidelines
 Existing history uses short, imperative summaries (`Enhance startup detection with loading indicator checks`); follow that format and keep subjects under ~70 characters. Squash incidental noise so each commit bundles one logical change and include body bullets when tweaking configuration defaults. Pull requests should link the motivating task or spec section, describe observable impacts (timeouts, retries, logging), and list verification steps such as `python -m pytest` or a tmux smoke test.
 

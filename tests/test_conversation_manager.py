@@ -111,6 +111,24 @@ def test_detect_conflict_on_disagreement_keyword() -> None:
     assert "disagree" in reason
 
 
+def test_detect_conflict_ignores_code_block_keywords() -> None:
+    orchestrator = DevelopmentTeamOrchestrator({})
+    manager = ConversationManager(orchestrator, ["claude"])
+
+    conversation = [
+        {"speaker": "claude", "response": "Initial analysis."},
+        {
+            "speaker": "gemini",
+            "response": "```python\nraise ValueError('Input cannot be empty')\n```",
+        },
+    ]
+
+    conflict, reason = manager.detect_conflict(conversation)
+
+    assert conflict is False
+    assert reason == ""
+
+
 def test_conversation_manager_records_history_in_context_manager() -> None:
     claude_controller = FakeConversationalController(
         ["Initial thoughts.", "Consensus reached on plan A."]
@@ -163,6 +181,21 @@ def test_conflict_notification_updates_context_manager() -> None:
     assert conversation[-1]["metadata"]["conflict"] is True
     assert context_manager.conflicts, "Conflict should be tracked"
     assert "disagree" in context_manager.conflicts[0]["reason"]
+
+
+def test_detect_conflict_matches_stronger_phrases() -> None:
+    orchestrator = DevelopmentTeamOrchestrator({})
+    manager = ConversationManager(orchestrator, ["claude"])
+
+    conversation = [
+        {"speaker": "claude", "response": "Proposal summary."},
+        {"speaker": "gemini", "response": "I cannot agree with this direction."},
+    ]
+
+    conflict, reason = manager.detect_conflict(conversation)
+
+    assert conflict is True
+    assert "cannot agree" in reason
 
 
 def test_message_router_adds_partner_updates_to_prompt() -> None:

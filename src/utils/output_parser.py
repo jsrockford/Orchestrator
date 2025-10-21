@@ -36,6 +36,9 @@ class OutputParser:
         'Using:',
         'no sandbox',
         'context left',
+        'screen reader-friendly view',
+        'thinking off',
+        'thinking on',
     )
 
     # Claude Code UI patterns
@@ -89,9 +92,13 @@ class OutputParser:
 
     def _normalize_line(self, line: str) -> Optional[str]:
         """Normalize or drop a single line of CLI output."""
+        line = line.replace('\u00a0', ' ')
         stripped = line.strip()
 
         if not stripped:
+            return None
+
+        if stripped == '>':
             return None
 
         # Remove Gemini boxed prompt markers while preserving inner text

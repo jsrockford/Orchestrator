@@ -16,7 +16,7 @@ import textwrap
 import shlex
 from pathlib import Path
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
@@ -103,19 +103,23 @@ def run_discussion(
     debug_prompts: bool = False,
     debug_prompt_chars: int = 200,
     include_history: bool = True,
+    context_manager: ContextManager | None = None,
+    message_router: MessageRouter | None = None,
+    participants: Optional[Sequence[str]] = None,
 ) -> Dict[str, object]:
     controllers = {"claude": claude, "gemini": gemini}
     orchestrator = DevelopmentTeamOrchestrator(controllers)
     if debug_prompts:
         orchestrator.set_prompt_debug(True, preview_chars=debug_prompt_chars)
-    context_manager = ContextManager(history_size=history_size)
-    participants = ["claude", "gemini"]
+    context_manager = context_manager or ContextManager(history_size=history_size)
+    if participants is None:
+        participants = ["claude", "gemini"]
     if start_with.lower() == "gemini":
         participants = ["gemini", "claude"]
     elif start_with.lower() == "claude":
         participants = ["claude", "gemini"]
 
-    router = MessageRouter(participants, context_manager=context_manager)
+    router = message_router or MessageRouter(participants, context_manager=context_manager)
 
     result = orchestrator.start_discussion(
         topic,
