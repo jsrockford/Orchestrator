@@ -34,6 +34,7 @@ class ConversationManager:
         *,
         context_manager: Any | None = None,
         message_router: Any | None = None,
+        participant_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
         max_history: int = 200,
         include_history: bool = True,
     ) -> None:
@@ -45,6 +46,8 @@ class ConversationManager:
         self.participants: List[str] = list(participants)
         self.context_manager = context_manager
         self.message_router = message_router
+        metadata_source = participant_metadata or {}
+        self.participant_metadata: Dict[str, Dict[str, Any]] = {}
         self._max_history = max(1, int(max_history))
         self._include_history = bool(include_history)
         self._turn_counter: int = 0
@@ -62,6 +65,25 @@ class ConversationManager:
                         register(name)
                     except Exception as exc:  # noqa: BLE001
                         self.logger.debug("Message router registration failed for '%s': %s", name, exc)
+
+        # Prepare metadata for participants and forward to context manager when available.
+        for name in self.participants:
+            merged: Dict[str, Any] = {"name": name, "type": "cli"}
+            candidate = metadata_source.get(name)
+            if isinstance(candidate, dict):
+                merged.update(candidate)
+            merged.setdefault("type", "cli")
+            self.participant_metadata[name] = merged
+
+            if self.context_manager is not None:
+                registrar = getattr(self.context_manager, "register_participant", None)
+                if callable(registrar):
+                    try:
+                        registrar(name, merged)
+                    except TypeError:
+                        registrar(name)
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.debug("Context manager registration failed for '%s': %s", name, exc)
 
     # ------------------------------------------------------------------ #
     # Public API

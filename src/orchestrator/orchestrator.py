@@ -31,35 +31,53 @@ class DevelopmentTeamOrchestrator:
     def __init__(
         self,
         controllers: Optional[Dict[str, ControllerType]] = None,
+        *,
+        metadata: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
         """
         Args:
             controllers: Optional mapping of controller name -> controller object.
+            metadata: Optional mapping of controller name -> participant metadata.
         """
         self.logger = get_logger("orchestrator.development_team")
         self.controllers: Dict[str, ControllerType] = {}
         self._pending: Dict[str, Deque[Tuple[str, bool]]] = {}
         self._debug_prompts: bool = False
         self._debug_prompt_chars: int = 200
+        self.controller_metadata: Dict[str, Dict[str, Any]] = {}
 
         if controllers:
             for name, controller in controllers.items():
-                self.register_controller(name, controller)
+                meta = metadata.get(name) if isinstance(metadata, dict) else None
+                self.register_controller(name, controller, metadata=meta)
 
     # ------------------------------------------------------------------ #
     # Controller registration & status helpers
     # ------------------------------------------------------------------ #
 
-    def register_controller(self, name: str, controller: ControllerType) -> None:
+    def register_controller(
+        self,
+        name: str,
+        controller: ControllerType,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Register (or replace) a controller instance."""
         self.controllers[name] = controller
         self._pending.setdefault(name, deque())
+        if isinstance(metadata, dict):
+            payload = metadata.copy()
+        else:
+            payload = {}
+        payload.setdefault("name", name)
+        self.controller_metadata[name] = payload
         self.logger.debug("Registered controller '%s'", name)
 
     def unregister_controller(self, name: str) -> None:
         """Remove a controller from orchestration (noop if unknown)."""
         self.controllers.pop(name, None)
         self._pending.pop(name, None)
+        self.controller_metadata.pop(name, None)
         self.logger.debug("Unregistered controller '%s'", name)
 
     def get_controller_status(self, name: str) -> Dict[str, Any]:
@@ -298,7 +316,26 @@ class DevelopmentTeamOrchestrator:
         if not participant_list:
             raise ValueError("start_discussion requires at least one participant")
 
-        ctx_manager = context_manager or ContextManager()
+        participant_metadata = {
+            name: self.controller_metadata.get(name, {}).copy()
+            for name in participant_list
+            if name in self.controller_metadata
+        }
+
+        if context_manager is None:
+            ctx_manager = ContextManager(participant_metadata=participant_metadata or None)
+        else:
+            ctx_manager = context_manager
+            registrar = getattr(ctx_manager, "register_participant", None)
+            if callable(registrar):
+                for name, meta in participant_metadata.items():
+                    try:
+                        registrar(name, meta)
+                    except TypeError:
+                        registrar(name)
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.debug("Context manager metadata registration failed for '%s': %s", name, exc)
+
         msg_router = message_router or MessageRouter(participant_list, context_manager=ctx_manager)
 
         manager = ConversationManager(
@@ -306,6 +343,7 @@ class DevelopmentTeamOrchestrator:
             participant_list,
             context_manager=ctx_manager,
             message_router=msg_router,
+            participant_metadata=participant_metadata or None,
             include_history=include_history,
         )
         conversation = manager.facilitate_discussion(topic, max_turns=max_turns)

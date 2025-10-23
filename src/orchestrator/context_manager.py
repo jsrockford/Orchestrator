@@ -9,7 +9,7 @@ summaries without re-implementing bookkeeping logic in every workflow.
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, Deque, Dict, List, Sequence
+from typing import Any, Deque, Dict, List, Optional, Sequence
 
 from ..utils.logger import get_logger
 
@@ -23,7 +23,12 @@ class ContextManager:
     decisions and query consolidated project state snapshots.
     """
 
-    def __init__(self, *, history_size: int = 200) -> None:
+    def __init__(
+        self,
+        *,
+        history_size: int = 200,
+        participant_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> None:
         if history_size < 1:
             raise ValueError("history_size must be positive")
 
@@ -33,6 +38,11 @@ class ContextManager:
         self._conflicts: List[Dict[str, Any]] = []
         self._consensus_events: List[Dict[str, Any]] = []
         self._project_state: Dict[str, Any] = {}
+        self._participants: Dict[str, Dict[str, Any]] = {}
+
+        if participant_metadata:
+            for name, metadata in participant_metadata.items():
+                self.register_participant(name, metadata)
 
     # ------------------------------------------------------------------ #
     # Turn and decision management
@@ -99,6 +109,7 @@ class ContextManager:
                 - conflicts: recorded conflict events
                 - consensus: recorded consensus events
                 - state: current project state payload
+                - participants: participant metadata (if registered)
         """
         return {
             "history": self.history,
@@ -106,6 +117,7 @@ class ContextManager:
             "conflicts": self.conflicts,
             "consensus": self.consensus_events,
             "state": self._project_state.copy(),
+            "participants": self.participants,
         }
 
     def update_project_state(self, **state: Any) -> None:
@@ -125,20 +137,39 @@ class ContextManager:
             task: The current topic or objective.
             include_history: Whether to embed a short context summary.
         """
-        lines = [
-            f"{ai_name}, we're collaborating on: {task}.",
-            "Provide your next contribution focusing on actionable steps.",
-        ]
+        metadata = self._participants.get(ai_name, {})
+        participant_type = metadata.get("type", "cli")
+        role = metadata.get("role") or metadata.get("persona")
+        host = metadata.get("host")
+        guidance = metadata.get("guidance")
+
+        if not include_history:
+            return (
+                f"{ai_name}, respond only with: 'Hello from {ai_name} — message received.'\n"
+                "Do not run tools or reference previous steps. Confirm you saw this message and stop."
+            )
+
+        if participant_type == "agent":
+            host_blurb = f" hosted via {host}" if host else ""
+            performer = role or "implementation"
+            lines = [
+                f"{ai_name}, you're operating as the {performer} agent{host_blurb}.",
+                f"Address the topic: {task}. Focus on concrete actions, code, or fixes.",
+            ]
+        else:
+            qualifier = f" ({role})" if role else ""
+            lines = [
+                f"{ai_name}{qualifier}, we're collaborating on: {task}.",
+                "Provide your next contribution focusing on actionable steps.",
+            ]
+
+        if guidance:
+            lines.append(str(guidance))
 
         if include_history:
             blurb = self._format_recent_history()
             if blurb:
                 lines.append(f"Recent context: {blurb}")
-        else:
-            lines = [
-                f"{ai_name}, respond only with: 'Hello from {ai_name} — message received.'",
-                "Do not run tools or reference previous steps. Confirm you saw this message and stop.",
-            ]
 
         return "\n".join(lines)
 
@@ -198,6 +229,33 @@ class ContextManager:
         metadata = sanitized.get("metadata")
         if isinstance(metadata, dict):
             sanitized["metadata"] = metadata.copy()
+        return sanitized
+
+
+    # ------------------------------------------------------------------ #
+    # Participant metadata helpers
+    # ------------------------------------------------------------------ #
+
+    def register_participant(self, name: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Register or update metadata for a participant."""
+        if not isinstance(name, str) or not name:
+            return
+
+        merged: Dict[str, Any] = {"name": name}
+        if isinstance(metadata, dict):
+            merged.update(metadata)
+        merged.setdefault("type", "cli")
+        self._participants[name] = merged
+
+    def get_participant_metadata(self, name: str) -> Dict[str, Any]:
+        """Return stored metadata for ``name``."""
+        payload = self._participants.get(name, {})
+        return payload.copy() if isinstance(payload, dict) else {}
+
+    @property
+    def participants(self) -> Dict[str, Dict[str, Any]]:
+        """Return a copy of registered participant metadata."""
+        return {name: meta.copy() for name, meta in self._participants.items()}
         return sanitized
 
 

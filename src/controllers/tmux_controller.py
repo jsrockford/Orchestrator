@@ -96,6 +96,8 @@ class TmuxController(SessionBackend):
         self.ready_check_interval = self.config.get('ready_check_interval', 0.5)
         self.ready_stable_checks = self.config.get('ready_stable_checks', 3)
         self.ready_indicators = self.config.get('ready_indicators', [])
+        self.loading_indicators = self.config.get('loading_indicators', [])
+        self.response_complete_markers = self.config.get('response_complete_markers', [])
         self.submit_key = self.config.get('submit_key', 'Enter')
         self.text_enter_delay = float(self.config.get('text_enter_delay', 0.1))
         self.post_text_delay = float(self.config.get('post_text_delay', 0.0))
@@ -809,12 +811,9 @@ class TmuxController(SessionBackend):
         check_interval = 0.5
         start_time = time.time()
 
-        # Get loading indicators from config (if available)
-        loading_indicators = self.config.get('loading_indicators', [])
-
         self.logger.debug(f"Waiting for startup ready indicators: {self.ready_indicators}")
-        if loading_indicators:
-            self.logger.debug(f"Will check for absence of loading indicators: {loading_indicators}")
+        if self.loading_indicators:
+            self.logger.debug(f"Will check for absence of loading indicators: {self.loading_indicators}")
 
         while (time.time() - start_time) < timeout:
             output = self.capture_output()
@@ -833,8 +832,8 @@ class TmuxController(SessionBackend):
 
                 if ready_indicator_found:
                     # Now check that no loading indicators are present
-                    if loading_indicators:
-                        has_loading = any(loading_ind in output for loading_ind in loading_indicators)
+                    if self.loading_indicators:
+                        has_loading = any(loading_ind in output for loading_ind in self.loading_indicators)
                         if has_loading:
                             self.logger.debug("Ready indicator found but loading indicator still present, waiting...")
                             time.sleep(check_interval)
@@ -891,6 +890,40 @@ class TmuxController(SessionBackend):
         self._last_output_lines = []
 
     @staticmethod
+    def _tail_lines(output: str, limit: int = 12) -> List[str]:
+        if not output:
+            return []
+        lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+        return lines[-limit:]
+
+    @staticmethod
+    def _contains_any(haystack: str, needles: Sequence[str]) -> bool:
+        return any(needle and needle in haystack for needle in needles)
+
+    def _is_response_ready(self, tail_lines: Sequence[str]) -> bool:
+        if not tail_lines:
+            return False
+
+        relevant = list(tail_lines[-5:]) if len(tail_lines) > 5 else list(tail_lines)
+        tail_text = "\n".join(relevant)
+
+        markers_present = (
+            not self.response_complete_markers
+            or self._contains_any(tail_text, self.response_complete_markers)
+        )
+        indicators_present = (
+            not self.ready_indicators
+            or self._contains_any(tail_text, self.ready_indicators)
+        )
+
+        if self.response_complete_markers and not markers_present:
+            return False
+        if self.ready_indicators and not indicators_present:
+            return False
+
+        return True
+
+    @staticmethod
     def _common_prefix_length(first: Sequence[str], second: Sequence[str]) -> int:
         limit = min(len(first), len(second))
         for idx in range(limit):
@@ -926,19 +959,23 @@ class TmuxController(SessionBackend):
 
         while (time.time() - start_time) < timeout:
             current_output = self.capture_output()
+            tail_lines = self._tail_lines(current_output)
+
+            if tail_lines and self.loading_indicators:
+                tail_window = tail_lines[-6:] if len(tail_lines) > 6 else tail_lines
+                tail_text = "\n".join(tail_window)
+                if self._contains_any(tail_text, self.loading_indicators):
+                    self.logger.debug("Loading indicator detected in recent output; waiting...")
+                    stable_count = 0
+                    previous_output = current_output
+                    time.sleep(check_interval)
+                    continue
 
             # Check if output has stabilized (no changes)
             if current_output == previous_output:
                 stable_count += 1
-                if stable_count >= required_stable_checks:
-                    # Check for AI-specific ready indicators
-                    if self.ready_indicators:
-                        # Check if any ready indicator is present
-                        if any(indicator in current_output for indicator in self.ready_indicators):
-                            return True
-                    else:
-                        # No specific indicators configured, just use stabilization
-                        return True
+                if stable_count >= required_stable_checks and self._is_response_ready(tail_lines):
+                    return True
             else:
                 stable_count = 0  # Reset if output changed
 

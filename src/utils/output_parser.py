@@ -13,6 +13,7 @@ class OutputParser:
 
     # ANSI escape code pattern
     ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    AGENT_COMMAND_PATTERN = re.compile(r'^(?:>|\$)?\s*/agents\b', re.IGNORECASE)
 
     # Unicode box drawing characters used by Claude Code
     BOX_CHARS = ['─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '═', '║', '╔', '╗', '╚', '╝', '╠', '╣', '╦', '╩', '╬']
@@ -159,6 +160,10 @@ class OutputParser:
         line = self.SHORTCUT_HINT_PATTERN.sub('', line).strip()
         stripped = line.strip()
         if not stripped:
+            return None
+
+        # Skip agent invocation commands (e.g., > /agents codex "prompt")
+        if self.AGENT_COMMAND_PATTERN.match(stripped):
             return None
 
         return line
