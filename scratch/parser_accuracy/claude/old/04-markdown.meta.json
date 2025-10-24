@@ -1,0 +1,16 @@
+{
+  "ai": "claude",
+  "prompt_key": "markdown",
+  "prompt": "Create a markdown table with three rows comparing logging strategies, timeout policies, and retry handling for automation controllers. Add a brief paragraph interpreting the table.",
+  "description": "Markdown table plus narrative paragraph using general operational themes.",
+  "timestamp": "2025-10-24T15:18:55.430368Z",
+  "duration_seconds": 18.340862383018248,
+  "queued": false,
+  "ready": true,
+  "error": null,
+  "raw_lines": 29,
+  "parsed_lines": 17,
+  "raw_path": "scratch/parser_accuracy/claude/04-markdown.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/claude/04-markdown.parsed.txt",
+  "response_pairs": []
+}

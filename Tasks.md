@@ -76,6 +76,18 @@
 - [x] **Updated**: Support both Claude (●) and Gemini (✦) response markers
 - [x] **Updated**: Support Gemini's boxed question format (│ > Question │)
 - [x] Verified compatibility with both AI CLIs (test_gemini_output_parser.py)
+- [x] **Parser Accuracy Validation** ✅ (October 24, 2025)
+  - [x] Created `tests/run_parser_accuracy_test.py` harness for live AI testing
+  - [x] **Claude parsing**: ✅ All tests passing (scrollback capture, UI chrome removal, content preservation)
+  - [x] **Gemini parsing**: ✅ All tests passing (screen reader disabled, pane width 220, flicker bug fixed)
+  - [x] **Codex parsing**: ✅ All tests passing (settle time 2.5s, prompt boundaries, indentation preserved)
+  - [x] Fixed scrollback capture (use `capture_scrollback()` instead of `capture_output()`)
+  - [x] Fixed pane width truncation (global 200x50, Gemini override 220x50)
+  - [x] Fixed Gemini loading indicator flicker (reset settle timer on indicator reappearance)
+  - [x] Fixed prompt boundary detection (strip trailing prompts in parsed output)
+  - [x] Fixed indentation stripping (changed `.strip()` to `.rstrip()` in `_normalize_line()`)
+  - [x] All three AIs: Content complete, timing accurate, code syntactically valid
+  - [x] Production-ready for agent-to-agent code exchange
 
 ### Task 2.3: Error Handling ✅ COMPLETE
 **Strategy**: Comprehensive error handling with retry logic, health checks, and auto-restart
@@ -438,6 +450,26 @@
   - [ ] Configurable retry attempts (default: 3)
   - [ ] Exponential delay: 1s, 2s, 4s, 8s
   - [ ] Circuit breaker after max failures
+- [ ] **Implement response-level error detection and prompt retry** ⭐ NEW
+  - [ ] Detect AI error responses (API errors, rate limits, refusals, malformed output)
+  - [ ] Pattern matching for common error indicators:
+    - [ ] "API Error", "Rate limit", "Unexpected line format"
+    - [ ] Empty/truncated responses
+    - [ ] Loop detection dialogs
+    - [ ] Model switching notifications
+  - [ ] Auto-retry logic for failed responses:
+    - [ ] Re-submit original prompt on error detection
+    - [ ] Configurable max retry attempts (default: 2)
+    - [ ] Exponential backoff between retries
+    - [ ] Fallback to manual intervention after max retries
+  - [ ] Response validation framework:
+    - [ ] Minimum content length checks
+    - [ ] Structure validation (code blocks, tables, etc.)
+    - [ ] Completeness indicators (no mid-sentence truncation)
+  - [ ] Integration with orchestrator:
+    - [ ] Track retry attempts per turn
+    - [ ] Log all retry events for debugging
+    - [ ] Option to skip turn vs. retry vs. fail conversation
 - [ ] Implement dead agent detection
   - [ ] Health check ping for each agent
   - [ ] Timeout-based failure detection
@@ -447,6 +479,8 @@
   - [ ] `AgentTimeoutError`
   - [ ] `AgentCrashError`
   - [ ] `InvalidResponseError`
+  - [ ] `ResponseErrorDetected` ⭐ NEW - AI returned error in response
+  - [ ] `MalformedResponseError` ⭐ NEW - Response structure invalid
   - [ ] `ConversationStallError`
   - [ ] Clear error messages with remediation hints
 

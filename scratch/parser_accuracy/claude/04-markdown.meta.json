@@ -1,0 +1,21 @@
+{
+  "ai": "claude",
+  "prompt_key": "markdown",
+  "prompt": "Create a markdown table with three rows comparing logging strategies, timeout policies, and retry handling for automation controllers. Add a brief paragraph interpreting the table.",
+  "description": "Markdown table plus narrative paragraph using general operational themes.",
+  "timestamp": "2025-10-24T15:44:24.600255Z",
+  "duration_seconds": 19.37537262204569,
+  "queued": false,
+  "ready": true,
+  "error": null,
+  "raw_lines": 51,
+  "parsed_lines": 37,
+  "raw_path": "scratch/parser_accuracy/claude/04-markdown.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/claude/04-markdown.parsed.txt",
+  "response_pairs": [
+    {
+      "question": "Create a markdown table with three rows comparing logging strategies,",
+      "response": "| Aspect | Conservative Approach | Balanced Approach | Aggressive Approach\n|\n|--------|----------------------|-------------------|---------------------\n|\n| **Logging Strategy** | Log every capture attempt, raw buffers, and\ntiming data to separate files per session; retain indefinitely | Log\ncommands sent, parsed responses, and errors to rotating daily logs; keep 7\ndays | Log only failures and warnings; disable debug output in production\n|\n| **Timeout Policies** | Startup: 30s, Command: 120s, Capture poll: 2s\nintervals; fail-fast on first timeout | Startup: 10s, Command: 30s,\nCapture poll: 0.5s intervals; retry once with exponential backoff |\nStartup: 5s, Command: 10s, Capture poll: 0.1s intervals; no retries,\nimmediate failure |\n| **Retry Handling** | Retry all failed operations 5 times with 2x backoff\n(max 60s wait); persist retry state to disk | Retry transient failures\n(I/O, network) 3 times with 1.5x backoff; skip retries for logic errors |\nNo automatic retries; bubble exceptions immediately to caller for manual\nintervention |"
+    }
+  ]
+}

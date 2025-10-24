@@ -64,7 +64,10 @@ class OutputParser:
         """
         return self.ANSI_ESCAPE.sub('', text)
 
-    def clean_output(self, text: str, strip_ui: bool = True) -> str:
+    PROMPT_MARKERS = ('>', '›')
+    RESPONSE_MARKERS = ('●', '✦', '•')
+
+    def clean_output(self, text: str, strip_ui: bool = True, strip_trailing_prompts: bool = False) -> str:
         """
         Clean Claude Code output by removing UI elements.
 
@@ -89,7 +92,10 @@ class OutputParser:
             if normalized is not None:
                 cleaned_lines.append(normalized)
 
-        return '\n'.join(cleaned_lines).strip()
+        if strip_trailing_prompts:
+            cleaned_lines = self._trim_trailing_prompts(cleaned_lines)
+
+        return '\n'.join(cleaned_lines).rstrip('\n')
 
     def _normalize_line(self, line: str) -> Optional[str]:
         """Normalize or drop a single line of CLI output."""
@@ -157,7 +163,7 @@ class OutputParser:
             line = stripped
 
         # Remove inline shortcut/tool hints
-        line = self.SHORTCUT_HINT_PATTERN.sub('', line).strip()
+        line = self.SHORTCUT_HINT_PATTERN.sub('', line).rstrip()
         stripped = line.strip()
         if not stripped:
             return None
@@ -220,7 +226,8 @@ class OutputParser:
                 continue
 
             # Detect plain question (Claude format): > Question
-            if stripped.startswith('>') and len(stripped) > 2 and not '│' in line:
+            prompt_text = self._extract_prompt_text(stripped)
+            if prompt_text and '│' not in line:
                 # Save previous pair if exists
                 if current_question and current_response:
                     pairs.append({
@@ -229,13 +236,13 @@ class OutputParser:
                     })
 
                 # Start new question
-                current_question = stripped[1:].strip()
+                current_question = prompt_text
                 current_response = []
                 in_response = False
                 continue
 
             # Detect response start (● for Claude or ✦ for Gemini)
-            if stripped.startswith('●') or stripped.startswith('✦'):
+            if stripped.startswith(tuple(self.RESPONSE_MARKERS)):
                 in_response = True
                 # Add response text (without marker)
                 response_text = stripped[1:].strip()
@@ -265,6 +272,44 @@ class OutputParser:
             })
 
         return pairs
+
+    def _extract_prompt_text(self, stripped_line: str) -> Optional[str]:
+        """Return prompt text without leading marker."""
+        for marker in self.PROMPT_MARKERS:
+            if stripped_line.startswith(marker):
+                prompt_text = stripped_line[len(marker):].strip()
+                if prompt_text:
+                    return prompt_text
+        return None
+
+    def _trim_trailing_prompts(self, lines: List[str]) -> List[str]:
+        """Remove trailing prompt lines if a response is present."""
+        if not lines:
+            return lines
+
+        if not any(self._line_has_response_marker(line) for line in lines):
+            return lines
+
+        trimmed = list(lines)
+        while trimmed and self._is_prompt_line(trimmed[-1]):
+            trimmed.pop()
+        return trimmed
+
+    def _is_prompt_line(self, line: str) -> bool:
+        """Return True if the line looks like a CLI prompt (>, ›, etc)."""
+        stripped = line.strip()
+        if not stripped:
+            return False
+        return any(
+            stripped.startswith(marker) and stripped[len(marker):].strip()
+            for marker in self.PROMPT_MARKERS
+        )
+
+    def _line_has_response_marker(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+        return stripped[0] in self.RESPONSE_MARKERS and stripped[1:].strip()
 
     def get_last_response(self, text: str) -> Optional[str]:
         """

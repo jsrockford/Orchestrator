@@ -13,6 +13,8 @@ claude:
   startup_timeout: 20  # Total seconds to wait for Claude to start (allows for variability)
   trust_wait: 3        # Wait after confirming trust prompt
   init_wait: 3         # Wait after initialization
+  pane_width: 200      # tmux pane width in columns
+  pane_height: 50      # tmux pane height in rows
 
   # Response timing
   response_timeout: 500     # Max seconds to wait for command response
@@ -49,6 +51,8 @@ gemini:
   # Startup timing
   startup_timeout: 60  # Total seconds to wait for Gemini to start (allows for variability, credential loading, etc.)
   init_wait: 3         # Wait after initialization
+  pane_width: 220      # Gemini often renders wide tables; give extra width
+  pane_height: 50
 
   # Response timing
   response_timeout: 75      # Max seconds to wait for command response
@@ -65,8 +69,15 @@ gemini:
   loading_indicators:                    # Shows when processing
     - "⠦"
     - "⠼"
+    - "⠧"
+    - "⠏"
+    - "⠋"
+    - "⠙"
+    - "⠹"
+    - "⠸"
     - "Enhancing..."
     - "Counting electrons..."
+  loading_indicator_settle_time: 3.0
   response_complete_markers:
     - "› "
     - "Type your message or @path/to/file"
@@ -86,11 +97,12 @@ gemini:
   executable: "gemini"  # Assumes it's in PATH
   executable_args:
     - "--yolo"
-    - "--screenReader"
 
 codex:
   startup_timeout: 20
   init_wait: 1
+  pane_width: 200
+  pane_height: 50
   # Codex can take a while on longer completions; align with Claude's higher ceiling.
   response_timeout: 500
   ready_check_interval: 0.5
@@ -103,8 +115,10 @@ codex:
     - "Write tests for"
   loading_indicators:
     - "esc to interrupt)"
+  loading_indicator_settle_time: 2.5
   response_complete_markers:
     - "Worked for"
+    - "› "
   submit_key: "Enter"
   text_enter_delay: 0.1
   response_marker: "▸"
@@ -117,6 +131,8 @@ tmux:
   claude_session: "claude"   # Default Claude session name
   gemini_session: "gemini"   # Default Gemini session name
   codex_session: "codex"     # Default Codex session name
+  default_pane_width: 200
+  default_pane_height: 50
 
   # Output capture settings
   capture_lines: 500     # Default lines to capture from pane

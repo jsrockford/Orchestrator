@@ -1,0 +1,16 @@
+› Create a markdown table with three rows comparing logging strategies, timeout policies, and retry handling for
+  automation controllers. Add a brief paragraph interpreting the table.
+• | Aspect | Good Practice | Common Pitfall | Diagnostic Tip |
+  | --- | --- | --- | --- |
+  | Logging Strategies | Structured logs with timestamps and per-task correlation IDs to trace automation flows | Ad-
+  hoc print statements that omit context and interleave under concurrency | Verify logs include session IDs and severity
+  levels so issues map back to individual runs |
+  | Timeout Policies | Explicit, configurable timeouts per command plus global run caps, all surfaced in errors |
+  Relying on default OS or library timeouts, leading to hung sessions with no feedback | Review timeout metrics to
+  ensure most commands complete well under their limits |
+  | Retry Handling | Targeted retries on idempotent steps with jittered backoff and clear abort criteria | Blanket
+  retries on every failure, masking permanent errors and causing cascading load | Inspect retry histograms to confirm
+  the system backs off and fails fast when limits hit |
+  Across these dimensions, robust controllers pair intentional instrumentation with defensive policies: structured
+  logging accelerates root-cause analysis, well-tuned timeouts prevent silent hangs, and disciplined retry logic avoids
+  compounding faults while still smoothing out transient hiccups.

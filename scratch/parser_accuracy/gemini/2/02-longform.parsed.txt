@@ -1,0 +1,16 @@
+> Provide a detailed checklist (at least eight bullet points) of best practices for testing command-line automation harnesses that interact with tmux sessions.
+✦ Here is a detailed checklist of best practices for testing command-line automation harnesses that interact with tmux sessions:
+* Test Isolation with Unique Sessions: Each test or test suite should create a new, uniquely named tmux session. This prevents state leakage and interference between tests. Use dedicated setup and
+teardown logic to create a session before a test begins and kill it afterward, ensuring a clean, predictable environment for every run.
+* State-Based Verification over Timeouts: Avoid fixed-duration sleeps (e.g., sleep(5)) to wait for commands to finish. Instead, build assertions that poll and verify the actual state of the tmux
+environment. For example, check tmux list-panes -F '#{pane_current_command}' to see if a process is running or wait for a shell prompt to appear in the pane's captured content.
+* Guaranteed Resource Cleanup: Implement teardown procedures (e.g., using try...finally blocks or pytest fixtures) that unconditionally run after each test. This logic must ensure the created tmux
+session and all its child processes are killed, even if the test assertions fail, preventing orphaned processes that can consume resources and disrupt subsequent test runs.
+* Configuration Independence: Run tests with a known, minimal tmux configuration file using the -f flag (e.g., tmux -f /path/to/test-tmux.conf start-server). Better yet, point it to /dev/null to
+ignore all user configurations. This prevents a user's personal .tmux.conf from introducing unexpected behaviors (like custom key bindings or status bar refresh rates) and makes tests more
+reproducible.
+* Explicit and Unambiguous Targeting: Always use explicit session, window, and pane targets for all commands (e.g., tmux send-keys -t my_session:1.2 ...). Avoid relying on default or "current"
+panes. This ensures commands are delivered precisely where intended, preventing flakes and errors in complex multi-pane layouts.
+* Comprehensive Output and Exit Code Validation: Don't just test that a command runs; validate its effects thoroughly. Capture the pane's content to check for expected stdout or stderr, and, where
+possible, check the exit code of the executed command. This confirms not only that the command was sent but that it behaved as expected.
+* Negative Path and Failure Scenario Testing: Deliberately test for failure conditions. Send commands that are known

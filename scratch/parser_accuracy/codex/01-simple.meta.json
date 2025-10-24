@@ -1,0 +1,21 @@
+{
+  "ai": "codex",
+  "prompt_key": "simple",
+  "prompt": "In two sentences, explain why capturing both raw transcripts and cleaned parser output is useful when verifying an automation pipeline.",
+  "description": "Short, plain-language response grounded in general automation practice.",
+  "timestamp": "2025-10-24T20:28:24.099250Z",
+  "duration_seconds": 8.645354532054625,
+  "queued": false,
+  "ready": true,
+  "error": null,
+  "raw_lines": 15,
+  "parsed_lines": 6,
+  "raw_path": "scratch/parser_accuracy/codex/01-simple.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/codex/01-simple.parsed.txt",
+  "response_pairs": [
+    {
+      "question": "In two sentences, explain why capturing both raw transcripts and cleaned parser output is useful when verifying an",
+      "response": "Capturing the raw transcripts preserves the exact inputs and responses exchanged with the automation system, giving\nyou a ground-truth record to inspect when something goes wrong. Keeping the cleaned parser output alongside it shows\nhow the system interpreted those transcripts, so you can quickly spot parsing errors or downstream logic bugs by\ncomparing the two views."
+    }
+  ]
+}

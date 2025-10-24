@@ -1,0 +1,16 @@
+{
+  "ai": "codex",
+  "prompt_key": "code",
+  "prompt": "Write a Python function `compare_parser_outputs(raw: str, parsed: str) -> dict` that compares two strings and returns counts of lines, characters, and a boolean flag for equality. Include doctest-style usage examples.",
+  "description": "Code-heavy response requiring preserved indentation.",
+  "timestamp": "2025-10-24T19:40:51.738171Z",
+  "duration_seconds": 10.827556279022247,
+  "queued": false,
+  "ready": true,
+  "error": null,
+  "raw_lines": 31,
+  "parsed_lines": 23,
+  "raw_path": "scratch/parser_accuracy/codex/03-code.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/codex/03-code.parsed.txt",
+  "response_pairs": []
+}

@@ -1,0 +1,16 @@
+{
+  "ai": "gemini",
+  "prompt_key": "markdown",
+  "prompt": "Create a markdown table with three rows comparing logging strategies, timeout policies, and retry handling for automation controllers. Add a brief paragraph interpreting the table.",
+  "description": "Markdown table plus narrative paragraph using general operational themes.",
+  "timestamp": "2025-10-24T16:10:18.126539Z",
+  "duration_seconds": 76.49397869897075,
+  "queued": false,
+  "ready": false,
+  "error": "wait_for_ready returned False",
+  "raw_lines": 45,
+  "parsed_lines": 43,
+  "raw_path": "scratch/parser_accuracy/gemini/04-markdown.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/gemini/04-markdown.parsed.txt",
+  "response_pairs": []
+}

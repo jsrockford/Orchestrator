@@ -1,0 +1,45 @@
+User:  Create a markdown table with three rows comparing logging strategies, timeout policies, and retry handling for a.
+Model:
+ 1  def   compare_parser_outputs ( raw:  str , parsed:  str ) ->  dict :
+ 2       """
+ 3      Compares two strings (raw  and  parsed outputs)  and  returns counts of lines,
+ 4      characters,  and  a boolean flag indicating their equality.
+ 5
+ 6      >>> compare_parser_outputs( "hello\\nworld" ,  "hello\\nworld" )
+ 7      { 'raw_lines' :  2 ,  'raw_chars' :  11 ,  'parsed_lines' :  2 ,  'parsed_chars' :  11 ,  'are_equal' :  True }
+ 8
+ 9      >>> compare_parser_outputs( "first\\nsecond" ,  "first\\nthird" )
+10      { 'raw_lines' :  2 ,  'raw_chars' :  12 ,  'parsed_lines' :  2 ,  'parsed_chars' :  11 ,  'are_equal' :  False }
+11
+12      >>> compare_parser_outputs( "single line" ,  "another line" )
+13      { 'raw_lines' :  1 ,  'raw_chars' :  11 ,  'parsed_lines' :  1 ,  'parsed_chars' :  12 ,  'are_equal' :  False }
+14
+15      >>> compare_parser_outputs( "" ,  "" )
+16      { 'raw_lines' :  0 ,  'raw_chars' :  0 ,  'parsed_lines' :  0 ,  'parsed_chars' :  0 ,  'are_equal' :  True }
+17
+18      >>> compare_parser_outputs( "line1\\nline2\\nline3" ,  "line1\\nline2" )
+19      { 'raw_lines' :  3 ,  'raw_chars' :  17 ,  'parsed_lines' :  2 ,  'parsed_chars' :  11 ,  'are_equal' :  False }
+20       """
+21      raw_lines =  len (raw.splitlines())
+22      parsed_lines =  len (parsed.splitlines())
+23      raw_chars =  len (raw)
+24      parsed_chars =  len (parsed)
+25      are_equal = (raw == parsed)
+26
+27       return  {
+28           "raw_lines" : raw_lines,
+29           "raw_chars" : raw_chars,
+30           "parsed_lines" : parsed_lines,
+31           "parsed_chars" : parsed_chars,
+32           "are_equal" : are_equal,
+33      }
+Here is a markdown table comparing logging strategies, timeout policies, and retry handling for automation controllers:
+| Feature            | Basic Strategy                               | Robust Strategy
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+/mnt//Orechestrator2 no sandbox (see /docs) gemini-2.5-pro (99% context left) |  ✖ 1 error (ctrl+o for details)
+Loop detected: A potential loop was detected
+This can happen due to repetitive tool calls or other model behavior. Do you want to keep loop detection enabled or
+disable it for this session?
+(checked) 1. Keep loop detection enabled (esc)
+2. Disable loop detection for this session

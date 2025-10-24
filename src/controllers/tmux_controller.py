@@ -28,6 +28,7 @@ from ..utils.exceptions import (
     TmuxError
 )
 from ..utils.logger import get_logger
+from ..utils.config_loader import get_config
 from ..utils.retry import retry_with_backoff, STANDARD_RETRY
 from ..utils.health_check import HealthChecker
 from ..utils.auto_restart import AutoRestarter, RestartPolicy
@@ -97,6 +98,7 @@ class TmuxController(SessionBackend):
         self.ready_stable_checks = self.config.get('ready_stable_checks', 3)
         self.ready_indicators = self.config.get('ready_indicators', [])
         self.loading_indicators = self.config.get('loading_indicators', [])
+        self.loading_indicator_settle_time = float(self.config.get('loading_indicator_settle_time', 1.0))
         self.response_complete_markers = self.config.get('response_complete_markers', [])
         self.submit_key = self.config.get('submit_key', 'Enter')
         self.text_enter_delay = float(self.config.get('text_enter_delay', 0.1))
@@ -699,16 +701,49 @@ class TmuxController(SessionBackend):
             self.logger.error(f"Session '{self.session_name}' already exists")
             raise SessionAlreadyExists(f"Session '{self.session_name}' already exists")
 
+        tmux_defaults = {}
+        try:
+            tmux_defaults = get_config().get_section("tmux") or {}
+        except Exception:  # pragma: no cover - config loader errors bubble later
+            tmux_defaults = {}
+
+        pane_width = self.config.get('pane_width')
+        if pane_width is None:
+            pane_width = tmux_defaults.get('default_pane_width')
+        pane_height = self.config.get('pane_height')
+        if pane_height is None:
+            pane_height = tmux_defaults.get('default_pane_height')
+
+        def _normalize_dimension(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                numeric = int(value)
+            except (TypeError, ValueError):
+                return None
+            return numeric if numeric > 0 else None
+
+        pane_width_int = _normalize_dimension(pane_width) or 200
+        pane_height_int = _normalize_dimension(pane_height) or 50
+
         # Create detached tmux session with AI executable
-        self.logger.debug(f"Creating tmux session with executable: {self.executable}")
-        result = self._run_tmux_command([
+        self.logger.debug(
+            "Creating tmux session with executable: %s (pane %dx%d)",
+            self.executable,
+            pane_width_int,
+            pane_height_int,
+        )
+        command = [
             "new-session",
             "-d",  # Detached
             "-s", self.session_name,  # Session name
             "-c", self.working_dir,  # Working directory
+            "-x", str(pane_width_int),
+            "-y", str(pane_height_int),
             self.executable,  # Command to run (claude, gemini, etc.)
-            *self.executable_args
-        ])
+            *self.executable_args,
+        ]
+        result = self._run_tmux_command(command)
 
         if result.returncode != 0:
             self.logger.error(f"Failed to create tmux session: {result.stderr}")
@@ -969,6 +1004,7 @@ class TmuxController(SessionBackend):
         half_timeout_warning_emitted = False
         saw_loading_indicator = False
         loading_cleared_time: Optional[float] = None
+        ready_gate_released = True
 
         self._log_wait_debug(
             "wait_for_ready start timeout=%ss interval=%.3fs stable_checks=%d",
@@ -1000,10 +1036,16 @@ class TmuxController(SessionBackend):
                 tail_text = "\n".join(tail_window)
                 loading_present = self._contains_any(tail_text, self.loading_indicators)
                 if loading_present:
+                    if loading_cleared_time is not None:
+                        self._log_wait_debug(
+                            "Loading indicator reappeared after %.2fs; resetting settle timer",
+                            time.time() - loading_cleared_time,
+                        )
                     if not saw_loading_indicator:
                         self.logger.info("wait_for_ready detected processing start for session '%s'", self.session_name)
                     saw_loading_indicator = True
                     loading_cleared_time = None
+                    ready_gate_released = False
                     self._log_wait_debug("Loading indicator detected; waiting for completion")
                     stable_count = 0
                     previous_output = current_output
@@ -1018,7 +1060,8 @@ class TmuxController(SessionBackend):
                         )
                     cleared_elapsed = time.time() - loading_cleared_time
                     # Allow brief settling period after indicator clears
-                    if cleared_elapsed < max(check_interval, 1.0):
+                    settle_required = max(check_interval, self.loading_indicator_settle_time)
+                    if cleared_elapsed < settle_required:
                         self._log_wait_debug(
                             "Loading indicator just cleared (%.2fs); waiting one more interval for output to settle",
                             cleared_elapsed,
@@ -1026,13 +1069,12 @@ class TmuxController(SessionBackend):
                         previous_output = current_output
                         time.sleep(check_interval)
                         continue
-                    if self._is_response_ready(tail_lines) or current_output == previous_output:
-                        self.logger.info(
-                            "wait_for_ready detected processing completion for session '%s' (%.2fs after indicator cleared)",
-                            self.session_name,
-                            cleared_elapsed,
-                        )
-                        return True
+                    ready_gate_released = True
+                    self._log_wait_debug(
+                        "Loading indicator cleared and settle requirement satisfied (%.2fs >= %.2fs)",
+                        cleared_elapsed,
+                        settle_required,
+                    )
 
             # Check if output has stabilized (no changes)
             if current_output == previous_output:
@@ -1044,7 +1086,11 @@ class TmuxController(SessionBackend):
                     required_stable_checks,
                     elapsed,
                 )
-                if stable_count >= required_stable_checks and self._is_response_ready(tail_lines):
+                if (
+                    stable_count >= required_stable_checks
+                    and ready_gate_released
+                    and self._is_response_ready(tail_lines)
+                ):
                     self._log_wait_debug("Ready confirmed after %.2fs", elapsed)
                     if saw_loading_indicator:
                         self.logger.info(

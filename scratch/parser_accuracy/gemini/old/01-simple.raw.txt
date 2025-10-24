@@ -1,0 +1,26 @@
+User:  In two sentences, explain why capturing both raw transcripts and cleaned parser output is useful when verifying .
+Model:  Capturing raw transcripts provides the exact, unaltered output of a component, which is essential for pinpointi.
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+/mnt//Orechestrator2 no sandbox (see /docs) gemini-2.5-pro (99% context left)
+  YOLO mode (ctrl + y to toggle)
+YOLO mode   Type your message or @path/to/file
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

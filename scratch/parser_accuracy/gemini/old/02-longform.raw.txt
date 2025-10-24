@@ -1,0 +1,24 @@
+User:  Provide a detailed checklist (at least eight bullet points) of best practices for testing command-line automatio.
+Model:  Of course. Here is a detailed checklist of best practices for testing command-line automation harnesses that in:
+*  Isolate Test Sessions: Always create a new, uniquely named tmux session for each test or test suite. This prevents s.
+*  Implement Idempotent Setup and Teardown: Use a fixture or try...finally block to manage the test lifecycle. The setu.
+*  Avoid Fixed Delays (`sleep`): Never use fixed-time sleeps to wait for commands to finish. Instead, implement a polli.
+*  Verify Pane Readiness with Probes: Before sending keys or commands, ensure the target pane is ready to accept input..
+*  Capture and Assert on Full Pane Content: When validating results, don't just check the last line. Use tmux capture-p.
+*  Test for Failure and Error Handling: Your test suite must include cases that verify the harness's resilience. Intent.
+*  Use a Minimal, Test-Specific `tmux.conf`: Do not rely on the user's default tmux configuration, which can contain pl.
+*  Explicitly Target All Panes and Windows: Never assume a target. Always use the full -t session:window.pane syntax fo.
+You are currently in screen reader-friendly view. To switch out, open /home/dgray/.gemini/settings.json and remove the
+entry for "screenReader".
+/mnt//Orechestrator2 no sandbox (see /docs) gemini-2.5-pro (99% context left)
+  YOLO mode (ctrl + y to toggle)
+YOLO mode   Type your message or @path/to/file
+
+
+
+
+
+
+
+
+

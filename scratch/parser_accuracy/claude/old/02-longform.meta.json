@@ -1,0 +1,16 @@
+{
+  "ai": "claude",
+  "prompt_key": "longform",
+  "prompt": "Provide a detailed checklist (at least eight bullet points) of best practices for testing command-line automation harnesses that interact with tmux sessions.",
+  "description": "Long structured response with bullet formatting and no repository context.",
+  "timestamp": "2025-10-24T15:18:17.181107Z",
+  "duration_seconds": 18.861170261050574,
+  "queued": false,
+  "ready": true,
+  "error": null,
+  "raw_lines": 29,
+  "parsed_lines": 19,
+  "raw_path": "scratch/parser_accuracy/claude/02-longform.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/claude/02-longform.parsed.txt",
+  "response_pairs": []
+}

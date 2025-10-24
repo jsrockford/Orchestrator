@@ -1,0 +1,17 @@
+> Create a markdown table with three rows comparing logging strategies, timeout policies, and retry
+handling for automation controllers. Add a brief paragraph interpreting the table.
+✦
+┌─────────┬───────────────────┬────────────────────────┬───────────────────────────────────────────────┐
+Feature │ Basic (Fragile)   │ Intermediate (More ... │ Advanced (Resilient)
+├─────────┼───────────────────┼────────────────────────┼───────────────────────────────────────────────┤
+**Logg... │ Simple print()... │ Log to a single fil... │ Structured (JSON) logs per component with ...
+**Time... │ No timeouts or... │ Fixed timeout appli... │ Dynamic timeouts based on command type and...
+**Retr... │ Fail on the fi... │ Fixed number of ret... │ Exponential backoff with jitter, condition...
+└─────────┴───────────────────┴────────────────────────┴───────────────────────────────────────────────┘
+This table illustrates the progression from brittle to resilient automation design. Basic strategies
+are simple to implement but lead to systems that fail silently or hang indefinitely, requiring manual
+intervention. Intermediate approaches improve reliability for predictable tasks but still struggle
+with intermittent or unusual failures. Advanced strategies create a truly robust automation controller
+that is observable, can automatically recover from transient issues like network hiccups or temporary
+high load, and provides the detailed, structured data needed to efficiently diagnose complex failures
+in a production environment.

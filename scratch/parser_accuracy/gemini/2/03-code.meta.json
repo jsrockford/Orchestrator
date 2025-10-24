@@ -1,0 +1,21 @@
+{
+  "ai": "gemini",
+  "prompt_key": "code",
+  "prompt": "Write a Python function `compare_parser_outputs(raw: str, parsed: str) -> dict` that compares two strings and returns counts of lines, characters, and a boolean flag for equality. Include doctest-style usage examples.",
+  "description": "Code-heavy response requiring preserved indentation.",
+  "timestamp": "2025-10-24T19:03:43.102447Z",
+  "duration_seconds": 65.75783339492045,
+  "queued": false,
+  "ready": true,
+  "error": null,
+  "raw_lines": 93,
+  "parsed_lines": 81,
+  "raw_path": "scratch/parser_accuracy/gemini/03-code.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/gemini/03-code.parsed.txt",
+  "response_pairs": [
+    {
+      "question": "34 -      print(json.dumps(output4, sort_keys=True))",
+      "response": "I have created the function and placed it in src/utils/parser_comparator.py. It includes the requested logic and doctests."
+    }
+  ]
+}

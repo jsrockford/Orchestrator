@@ -1,0 +1,25 @@
+{
+  "ai": "claude",
+  "prompt_key": "code",
+  "prompt": "Write a Python function `compare_parser_outputs(raw: str, parsed: str) -> dict` that compares two strings and returns counts of lines, characters, and a boolean flag for equality. Include doctest-style usage examples.",
+  "description": "Code-heavy response requiring preserved indentation.",
+  "timestamp": "2025-10-24T15:44:05.212476Z",
+  "duration_seconds": 22.959611654048786,
+  "queued": false,
+  "ready": true,
+  "error": null,
+  "raw_lines": 115,
+  "parsed_lines": 89,
+  "raw_path": "scratch/parser_accuracy/claude/03-code.raw.txt",
+  "parsed_path": "scratch/parser_accuracy/claude/03-code.parsed.txt",
+  "response_pairs": [
+    {
+      "question": "Write a Python function `compare_parser_outputs(raw: str, parsed: str) ->",
+      "response": "def compare_parser_outputs(raw: str, parsed: str) -> dict:\n\"\"\"\nCompare raw and parsed output strings, returning statistics and\nequality check."
+    },
+    {
+      "question": ">> result['raw_chars'] > result['parsed_chars']",
+      "response": "This function provides comprehensive comparison metrics useful for\nverifying parser behavior. The reduction_percent metric is particularly\nhelpful for detecting when parsers are either stripping too much (>80%) or\nnot cleaning anything (<5%), both of which often indicate bugs in\nautomation pipelines."
+    }
+  ]
+}

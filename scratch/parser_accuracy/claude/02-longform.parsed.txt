@@ -1,0 +1,44 @@
+> Provide a detailed checklist (at least eight bullet points) of best
+practices for testing command-line automation harnesses that interact with
+tmux sessions.
+● Here's a detailed checklist of best practices for testing command-line
+automation harnesses that interact with tmux sessions:
+- Verify session isolation before each test: Check that no stale tmux
+sessions exist with your target name (tmux has-session -t <name>) and kill
+any leftovers in setup/teardown hooks to prevent cross-contamination
+between test runs
+- Test with multiple capture buffer sizes: Verify output parsing works
+correctly with both small buffers (e.g., 50 lines) and large buffers
+(e.g., 1000+ lines) to catch truncation issues and ensure you can handle
+both terse responses and verbose output
+- Implement incremental capture with diffing: Rather than capturing the
+entire pane repeatedly, store previous captures and diff them to detect
+only new output, which helps identify response completion and reduces
+parsing overhead
+- Validate prompt detection under various states: Test your prompt pattern
+against actual captured output in multiple scenarios (idle, mid-command,
+error states, multi-line input) to ensure you can reliably distinguish
+"ready for input" from "still processing"
+- Test timing edge cases systematically: Include tests for immediate
+responses (<100ms), typical responses (1-5s), slow responses (10-30s), and
+timeout scenarios to verify your wait logic doesn't race or hang
+indefinitely
+- Verify command echo handling: Check whether tmux/the target application
+echoes sent commands in the output, and ensure your parser correctly
+strips or accounts for echoed input when extracting actual responses
+- Test manual intervention and reattachment: Automate attaching to the
+session (tmux attach -t <name>), verify the session state is preserved,
+send manual commands, detach, and confirm automated control can resume
+without state corruption
+- Implement health checks and recovery: Test scenarios where the target
+process crashes, hangs, or becomes unresponsive within tmux, and verify
+your harness can detect these conditions and either recover gracefully or
+fail with clear diagnostics
+- Validate escape sequence handling: Capture raw output with ANSI codes
+intact and verify your parser handles color codes, cursor movements, and
+terminal control sequences without breaking boundary detection or
+introducing garbage characters
+- Test concurrent command queuing: Send multiple commands in rapid
+succession (with minimal delays) to verify your harness correctly
+serializes them, maintains response ordering, and doesn't drop commands or
+mix outputs
