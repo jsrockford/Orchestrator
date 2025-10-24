@@ -1,0 +1,69 @@
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - INFO - Initializing TmuxController for codex in session codex
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - DEBUG - Environment verification passed
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - DEBUG - tmux command returned 1: has-session -t codex
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - DEBUG - stderr: no server running on /tmp/tmux-1000/default
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - INFO - Starting session 'codex'
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - DEBUG - tmux command returned 1: has-session -t codex
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - DEBUG - stderr: no server running on /tmp/tmux-1000/default
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - DEBUG - Creating tmux session with executable: codex
+2025-10-23 17:19:37 - src.controllers.tmux_controller.codex - DEBUG - Waiting 1s for AI process to spawn
+2025-10-23 17:19:38 - src.controllers.tmux_controller.codex - DEBUG - Auto-confirming trust prompt
+2025-10-23 17:19:39 - src.controllers.tmux_controller.codex - DEBUG - Waiting for AI to be fully ready...
+2025-10-23 17:19:39 - src.controllers.tmux_controller.codex - DEBUG - Waiting for startup ready indicators: ['OpenAI Codex', '100% context left', 'Write tests for']
+2025-10-23 17:19:39 - src.controllers.tmux_controller.codex - DEBUG - Will check for absence of loading indicators: ['esc to interrupt)']
+2025-10-23 17:19:39 - src.controllers.tmux_controller.codex - DEBUG - Checking for indicators in 759 chars of output
+2025-10-23 17:19:39 - src.controllers.tmux_controller.codex - DEBUG - Startup ready indicator found: 'OpenAI Codex'
+2025-10-23 17:19:39 - src.controllers.tmux_controller.codex - DEBUG - Startup complete: ready indicator found, no loading indicators
+2025-10-23 17:19:39 - src.controllers.tmux_controller.codex - DEBUG - Ready indicator found, allowing input buffer to stabilize (1.0s)...
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - INFO - Session 'codex' started successfully and ready
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - INFO - Sending command: Give a concise summary of the run_single_ai_wait_p...
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - INFO - Sleeping 0.100s before sending submit key 'Enter'
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - INFO - Submit key 'Enter' send-keys returned 0
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - DEBUG - Command sent successfully
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - DEBUG - wait_for_ready start timeout=500.0s interval=0.500s stable_checks=4
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - INFO - wait_for_ready detected processing start for session 'codex'
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:40 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:41 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:41 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:42 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:43 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:43 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:44 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:44 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:45 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:45 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:46 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:46 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:47 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:47 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:48 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:48 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:49 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:49 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:50 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:50 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:51 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:51 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:52 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:52 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:53 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:53 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:54 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:54 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:55 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:55 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:56 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:56 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:57 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:57 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:58 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:58 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:59 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:19:59 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:20:00 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator detected; waiting for completion
+2025-10-23 17:20:00 - src.controllers.tmux_controller.codex - INFO - wait_for_ready detected loading indicator cleared for session 'codex'
+2025-10-23 17:20:00 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator just cleared (0.00s); waiting one more interval for output to settle
+2025-10-23 17:20:01 - src.controllers.tmux_controller.codex - DEBUG - Loading indicator just cleared (0.51s); waiting one more interval for output to settle
+2025-10-23 17:20:01 - src.controllers.tmux_controller.codex - DEBUG - Ready check tail preview='  and response-time settings, then sends a chosen prompt unless run in --dry-run mode. After dispatch it times\n  wait_for_ready() with configurable timeout/interval, reports success or timeout, and optionally streams the tail of\n  captured pane output to help diagnose readiness issues.\n› Write tests for @filename\n  100% context left · ? for shortcuts' markers_found=[] indicators_found=['100% context left', 'Write tests for'] -> False
+2025-10-23 17:20:01 - src.controllers.tmux_controller.codex - INFO - wait_for_ready detected processing completion for session 'codex' (1.02s after indicator cleared)

@@ -101,6 +101,7 @@ class TmuxController(SessionBackend):
         self.submit_key = self.config.get('submit_key', 'Enter')
         self.text_enter_delay = float(self.config.get('text_enter_delay', 0.1))
         self.post_text_delay = float(self.config.get('post_text_delay', 0.0))
+        self.debug_wait_logging = bool(self.config.get('debug_wait_logging', False))
         if self.post_text_delay > 0:
             self.logger.info(
                 "Configured post_text_delay=%.3fs (text_enter_delay=%.3fs)",
@@ -890,7 +891,7 @@ class TmuxController(SessionBackend):
         self._last_output_lines = []
 
     @staticmethod
-    def _tail_lines(output: str, limit: int = 12) -> List[str]:
+    def _tail_lines(output: str, limit: int = 26) -> List[str]:
         if not output:
             return []
         lines = [line.rstrip() for line in output.splitlines() if line.strip()]
@@ -900,6 +901,10 @@ class TmuxController(SessionBackend):
     def _contains_any(haystack: str, needles: Sequence[str]) -> bool:
         return any(needle and needle in haystack for needle in needles)
 
+    def _log_wait_debug(self, message: str, *args) -> None:
+        if self.debug_wait_logging:
+            self.logger.debug(message, *args)
+
     def _is_response_ready(self, tail_lines: Sequence[str]) -> bool:
         if not tail_lines:
             return False
@@ -907,21 +912,26 @@ class TmuxController(SessionBackend):
         relevant = list(tail_lines[-5:]) if len(tail_lines) > 5 else list(tail_lines)
         tail_text = "\n".join(relevant)
 
-        markers_present = (
-            not self.response_complete_markers
-            or self._contains_any(tail_text, self.response_complete_markers)
-        )
-        indicators_present = (
-            not self.ready_indicators
-            or self._contains_any(tail_text, self.ready_indicators)
-        )
+        markers_found = [marker for marker in self.response_complete_markers if marker and marker in tail_text]
+        indicators_found = [indicator for indicator in self.ready_indicators if indicator and indicator in tail_text]
 
-        if self.response_complete_markers and not markers_present:
-            return False
-        if self.ready_indicators and not indicators_present:
-            return False
+        ready = True
+        if self.response_complete_markers and not markers_found:
+            ready = False
+        if self.ready_indicators and not indicators_found:
+            ready = False
 
-        return True
+        if self.debug_wait_logging:
+            preview = tail_text[-400:] if len(tail_text) > 400 else tail_text
+            self._log_wait_debug(
+                "Ready check tail preview=%r markers_found=%s indicators_found=%s -> %s",
+                preview,
+                markers_found,
+                indicators_found,
+                ready,
+            )
+
+        return ready
 
     @staticmethod
     def _common_prefix_length(first: Sequence[str], second: Sequence[str]) -> int:
@@ -956,32 +966,107 @@ class TmuxController(SessionBackend):
         start_time = time.time()
         previous_output = ""
         stable_count = 0
+        half_timeout_warning_emitted = False
+        saw_loading_indicator = False
+        loading_cleared_time: Optional[float] = None
+
+        self._log_wait_debug(
+            "wait_for_ready start timeout=%ss interval=%.3fs stable_checks=%d",
+            timeout,
+            check_interval,
+            required_stable_checks,
+        )
 
         while (time.time() - start_time) < timeout:
+            elapsed = time.time() - start_time
+            if (
+                not half_timeout_warning_emitted
+                and timeout
+                and elapsed >= (timeout / 2)
+            ):
+                self.logger.warning(
+                    "wait_for_ready has been waiting %.2fs (>=50%% of timeout %ss) for session '%s'",
+                    elapsed,
+                    timeout,
+                    self.session_name,
+                )
+                half_timeout_warning_emitted = True
+
             current_output = self.capture_output()
             tail_lines = self._tail_lines(current_output)
 
             if tail_lines and self.loading_indicators:
                 tail_window = tail_lines[-6:] if len(tail_lines) > 6 else tail_lines
                 tail_text = "\n".join(tail_window)
-                if self._contains_any(tail_text, self.loading_indicators):
-                    self.logger.debug("Loading indicator detected in recent output; waiting...")
+                loading_present = self._contains_any(tail_text, self.loading_indicators)
+                if loading_present:
+                    if not saw_loading_indicator:
+                        self.logger.info("wait_for_ready detected processing start for session '%s'", self.session_name)
+                    saw_loading_indicator = True
+                    loading_cleared_time = None
+                    self._log_wait_debug("Loading indicator detected; waiting for completion")
                     stable_count = 0
                     previous_output = current_output
                     time.sleep(check_interval)
                     continue
+                if saw_loading_indicator and not loading_present:
+                    if loading_cleared_time is None:
+                        loading_cleared_time = time.time()
+                        self.logger.info(
+                            "wait_for_ready detected loading indicator cleared for session '%s'",
+                            self.session_name,
+                        )
+                    cleared_elapsed = time.time() - loading_cleared_time
+                    # Allow brief settling period after indicator clears
+                    if cleared_elapsed < max(check_interval, 1.0):
+                        self._log_wait_debug(
+                            "Loading indicator just cleared (%.2fs); waiting one more interval for output to settle",
+                            cleared_elapsed,
+                        )
+                        previous_output = current_output
+                        time.sleep(check_interval)
+                        continue
+                    if self._is_response_ready(tail_lines) or current_output == previous_output:
+                        self.logger.info(
+                            "wait_for_ready detected processing completion for session '%s' (%.2fs after indicator cleared)",
+                            self.session_name,
+                            cleared_elapsed,
+                        )
+                        return True
 
             # Check if output has stabilized (no changes)
             if current_output == previous_output:
                 stable_count += 1
+                elapsed = time.time() - start_time
+                self._log_wait_debug(
+                    "Output stable (%d/%d) after %.2fs",
+                    stable_count,
+                    required_stable_checks,
+                    elapsed,
+                )
                 if stable_count >= required_stable_checks and self._is_response_ready(tail_lines):
+                    self._log_wait_debug("Ready confirmed after %.2fs", elapsed)
+                    if saw_loading_indicator:
+                        self.logger.info(
+                            "wait_for_ready processed completion via stability fallback for session '%s'",
+                            self.session_name,
+                        )
                     return True
             else:
+                if stable_count:
+                    elapsed = time.time() - start_time
+                    self._log_wait_debug(
+                        "Output changed after %.2fs; reset stable_count (was %d)",
+                        elapsed,
+                        stable_count,
+                    )
                 stable_count = 0  # Reset if output changed
 
             previous_output = current_output
             time.sleep(check_interval)
 
+        elapsed_total = time.time() - start_time
+        self._log_wait_debug("wait_for_ready timed out after %.2fs", elapsed_total)
         return False  # Timeout
 
     def kill_session(self) -> bool:

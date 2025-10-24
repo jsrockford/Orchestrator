@@ -15,9 +15,10 @@ claude:
   init_wait: 3         # Wait after initialization
 
   # Response timing
-  response_timeout: 30      # Max seconds to wait for command response
+  response_timeout: 500     # Max seconds to wait for command response
   ready_check_interval: 0.5  # Seconds between output stability checks
   ready_stable_checks: 3     # Consecutive stable checks required
+  debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
 
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt (not reliable for ready detection)
@@ -29,11 +30,11 @@ claude:
     - "Running…"
     - "Waiting…"
     - "Working…"
-  response_complete_markers:
-    - "› "
+    - "(esc to interrupt"
+    - "esc to interrupt"
   thinking_indicator: "Lollygagging…"    # Shows when processing
   submit_key: "Enter"                    # Key tmux should send to submit commands
-  text_enter_delay: 0.1                  # Delay between text and Enter
+  text_enter_delay: 0.6                  # Delay between text and Enter
 
   # Path to Claude Code executable
   executable: "claude"  # Assumes it's in PATH
@@ -54,6 +55,7 @@ gemini:
   tool_timeout: 15          # Additional time for tool execution
   ready_check_interval: 0.5  # Seconds between output stability checks
   ready_stable_checks: 6     # Consecutive stable checks required
+  debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
 
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt
@@ -89,21 +91,20 @@ gemini:
 codex:
   startup_timeout: 20
   init_wait: 1
-  response_timeout: 150
+  # Codex can take a while on longer completions; align with Claude's higher ceiling.
+  response_timeout: 500
   ready_check_interval: 0.5
   ready_stable_checks: 4
+  debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
   prompt_pattern: ">"
   ready_indicators:
     - "OpenAI Codex"
     - "100% context left"
     - "Write tests for"
   loading_indicators:
-    - "Planning integration"
-    - "Working for"
-    - "◦"
+    - "esc to interrupt)"
   response_complete_markers:
-    - "› "
-    - "context left"
+    - "Worked for"
   submit_key: "Enter"
   text_enter_delay: 0.1
   response_marker: "▸"

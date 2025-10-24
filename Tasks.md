@@ -304,9 +304,48 @@
 
 **Timeline**: 2 weeks (Week 1: Integration, Week 2: Hardening)
 
+### Phase 6.1: Response Completion Detection Fix ✅ COMPLETE
+
+**Objective**: Fix premature turn-passing bug where orchestrator switched control before AI responses were complete.
+
+**Root Cause Identified**: `_is_response_ready()` was checking for completion markers anywhere in the buffer instead of only at the end, causing false positives from command echoes.
+
+**Implementation Date**: October 23, 2025
+
+#### Completed Tasks:
+- [x] Create debug logging infrastructure (`debug_wait_logging` config flag)
+- [x] Implement single-AI test harness (`tests/run_single_ai_wait_probe.py`)
+- [x] Fix Claude completion detection
+  - [x] Implement state-machine using "(esc to interrupt" loading indicator
+  - [x] Remove `response_complete_markers` (prompt always visible)
+  - [x] Fix race condition with `text_enter_delay` increased to 0.6s
+  - [x] Validate with 3 successful test runs
+- [x] Fix Gemini completion detection
+  - [x] Verify stability-based fallback works (no loading indicator)
+  - [x] Validate with 3 successful test runs
+- [x] Fix Codex completion detection
+  - [x] Implement state-machine using "esc to interrupt)" loading indicator
+  - [x] Handle post-indicator output streaming (wait ~1s after indicator clears)
+  - [x] Keep "Worked for" as fallback marker (not required)
+  - [x] Increase tail window to 26 lines
+  - [x] Validate with 3 successful test runs
+
+**Results**:
+- ✓ Claude: State-machine detection using "(esc to interrupt" presence/absence
+- ✓ Gemini: Stability-based detection (6 consecutive stable checks)
+- ✓ Codex: State-machine detection with 1s settle time after indicator clears
+- ✓ All three AIs: 9/9 test runs successful (3 per AI)
+- ✓ No premature completions, no false positives, no timeouts
+
+**Key Files Modified**:
+- `src/controllers/tmux_controller.py` - State-machine logic in `wait_for_ready()`
+- `tests/run_single_ai_wait_probe.py` - Single-AI testing harness
+- `config.yaml` - AI-specific loading indicators and timing parameters
+- `src/utils/logger.py` - Debug logging support
+
 ### Part A: Codex Integration via Agent Invocation
 
-#### Task 6.1: AgentController Architecture
+#### Task 6.2: AgentController Architecture (Deferred - Using Codex CLI Instead)
 - [ ] Design `AgentController` interface matching `TmuxController` API
   - [ ] `start_session()` - Initialize agent context within Claude Code session
   - [ ] `send_command(prompt)` - Invoke agent via `/agents` with formatted prompt
@@ -322,6 +361,8 @@
   - [ ] Agent not found
   - [ ] Agent timeout
   - [ ] Malformed agent responses
+
+**Note**: Phase 6.1 used Codex CLI directly via TmuxController instead of agent invocation. The completion detection fix applies to all three AI CLIs (Claude, Gemini, Codex) running in tmux sessions.
 
 #### Task 6.2: N-Agent Orchestration Support
 - [ ] Refactor `DevelopmentTeamOrchestrator` for N agents
