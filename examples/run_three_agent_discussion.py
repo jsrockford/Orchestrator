@@ -289,7 +289,7 @@ def run_discussion(
 
 def format_turn(turn: Dict[str, object]) -> str:
     parser = OutputParser()
-    response = parser.clean_output(turn.get("response") or "")
+    response = parser.clean_output(turn.get("response") or "", strip_trailing_prompts=True)
     dispatch = turn.get("dispatch") or {}
     queued = " (queued)" if dispatch.get("queued") else ""
     metadata = turn.get("metadata") or {}
@@ -483,7 +483,7 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screenReader",
+        default="gemini --yolo",
         help="Executable used to start Gemini.",
     )
     parser.add_argument(

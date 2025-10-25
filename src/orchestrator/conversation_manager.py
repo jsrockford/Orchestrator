@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..utils.logger import get_logger
 from ..utils.output_parser import OutputParser
+from ..utils.config_loader import get_config
 
 
 class ConversationManager:
@@ -56,6 +57,9 @@ class ConversationManager:
         self._conflict_code_pattern = re.compile(r"```.*?```", re.DOTALL)
         self._conflict_inline_code_pattern = re.compile(r"`[^`]*`")
         self._conflict_quoted_pattern = re.compile(r"\"[^\"]*\"|'[^']*'")
+        tmux_cfg = get_config().get_section("tmux") or {}
+        self._capture_tail_limit: int = int(tmux_cfg.get("capture_lines", 500) or 500)
+        self._fallback_notices: Set[str] = set()
 
         if self.message_router is not None:
             for name in self.participants:
@@ -109,8 +113,10 @@ class ConversationManager:
                 break
 
             prompt = self._build_prompt(speaker, topic, conversation)
+            pre_snapshot = self._capture_snapshot(speaker)
             dispatch_summary = self.orchestrator.dispatch_command(speaker, prompt)
-            response = self._read_last_output(speaker)
+            is_queued = bool(dispatch_summary.get("queued"))
+            response = None if is_queued else self._read_last_output(speaker, pre_snapshot)
 
             turn_record = {
                 "turn": self._turn_counter,
@@ -317,11 +323,91 @@ class ConversationManager:
 
         return prompt
 
-    def _read_last_output(self, controller_name: str) -> Optional[str]:
+    def _read_last_output(
+        self,
+        controller_name: str,
+        pre_snapshot: Optional[List[str]],
+    ) -> Optional[str]:
         controller = getattr(self.orchestrator, "controllers", {}).get(controller_name)
         if controller is None:
             return None
 
+        self._wait_for_controller(controller_name, controller)
+
+        capture = getattr(controller, "capture_scrollback", None)
+        if callable(capture):
+            try:
+                post_snapshot = capture().splitlines()
+            except Exception:  # noqa: BLE001
+                self.logger.debug(
+                    "Controller '%s' capture_scrollback failed; falling back to legacy output cache",
+                    controller_name,
+                    exc_info=True,
+                )
+            else:
+                parser = self._output_parsers.setdefault(controller_name, OutputParser())
+                if pre_snapshot is not None:
+                    delta = self._compute_delta(pre_snapshot, post_snapshot, self._capture_tail_limit)
+                else:
+                    delta = post_snapshot[-self._capture_tail_limit :]
+                if delta:
+                    raw_text = "\n".join(delta)
+                    cleaned = parser.clean_output(raw_text, strip_trailing_prompts=True)
+                    return cleaned or None
+                return None
+
+        reader = getattr(controller, "get_last_output", None)
+        if callable(reader):
+            if controller_name not in self._fallback_notices:
+                self.logger.warning(
+                    "Controller '%s' lacks scrollback capture support; falling back to get_last_output().",
+                    controller_name,
+                )
+                self._fallback_notices.add(controller_name)
+            try:
+                raw_output = reader()
+            except Exception:  # noqa: BLE001
+                self.logger.debug(
+                    "Controller '%s' get_last_output fallback failed",
+                    controller_name,
+                    exc_info=True,
+                )
+                return None
+            if not raw_output:
+                return None
+            parser = self._output_parsers.setdefault(controller_name, OutputParser())
+            cleaned = parser.clean_output(raw_output, strip_trailing_prompts=True)
+            return cleaned or None
+
+        if controller_name not in self._fallback_notices:
+            self.logger.warning(
+                "Controller '%s' exposes neither capture_scrollback nor get_last_output; no response captured.",
+                controller_name,
+            )
+            self._fallback_notices.add(controller_name)
+        return None
+
+    def _capture_snapshot(self, controller_name: str) -> Optional[List[str]]:
+        controller = getattr(self.orchestrator, "controllers", {}).get(controller_name)
+        if controller is None:
+            return None
+
+        capture = getattr(controller, "capture_scrollback", None)
+        if not callable(capture):
+            return None
+
+        try:
+            snapshot = capture()
+        except Exception:  # noqa: BLE001
+            self.logger.debug(
+                "Controller '%s' pre-dispatch capture failed",
+                controller_name,
+                exc_info=True,
+            )
+            return None
+        return snapshot.splitlines()
+
+    def _wait_for_controller(self, controller_name: str, controller: Any) -> None:
         waiter = getattr(controller, "wait_for_ready", None)
         if callable(waiter):
             try:
@@ -333,19 +419,24 @@ class ConversationManager:
                     exc_info=True,
                 )
 
-        reader = getattr(controller, "get_last_output", None)
-        if callable(reader):
-            try:
-                raw_output = reader()
-            except Exception:  # noqa: BLE001 - avoid breaking the discussion loop
-                self.logger.debug("Controller '%s' get_last_output failed", controller_name, exc_info=True)
-            else:
-                if not raw_output:
-                    return None
-                parser = self._output_parsers.setdefault(controller_name, OutputParser())
-                cleaned = parser.clean_output(raw_output)
-                return cleaned or None
-        return None
+    @staticmethod
+    def _compute_delta(
+        previous: List[str],
+        current: List[str],
+        tail_limit: Optional[int],
+    ) -> List[str]:
+        if previous and len(current) >= len(previous):
+            limit = min(len(previous), len(current))
+            prefix = 0
+            while prefix < limit and previous[prefix] == current[prefix]:
+                prefix += 1
+            delta = current[prefix:]
+        else:
+            delta = current
+
+        if tail_limit is not None and len(delta) > tail_limit:
+            delta = delta[-tail_limit:]
+        return delta
 
     def _store_turn(self, turn: Dict[str, Any]) -> None:
         """Persist the turn in the rolling history buffer."""

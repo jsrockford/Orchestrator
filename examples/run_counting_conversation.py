@@ -13,7 +13,7 @@ import re
 import time
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
@@ -83,7 +83,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screenReader",
+        default="gemini --yolo",
         help="Command to launch Gemini (default matches config).",
     )
     parser.add_argument("--claude-startup-timeout", type=int, default=20)
@@ -118,6 +118,29 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Seconds to wait for each AI response before giving up (default 30s).",
     )
     return parser.parse_args(argv)
+
+
+def capture_scrollback_lines(controller: TmuxController) -> List[str]:
+    try:
+        snapshot = controller.capture_scrollback()
+    except (SessionBackendError, SessionNotFoundError):
+        return []
+    return snapshot.splitlines()
+
+
+def compute_delta(previous: List[str], current: List[str], tail_limit: int) -> List[str]:
+    if previous and len(current) >= len(previous):
+        limit = min(len(previous), len(current))
+        prefix = 0
+        while prefix < limit and previous[prefix] == current[prefix]:
+            prefix += 1
+        delta = current[prefix:]
+    else:
+        delta = current
+
+    if tail_limit and len(delta) > tail_limit:
+        delta = delta[-tail_limit:]
+    return delta
 
 
 def build_prompt(number: int, speaker: str, next_speaker: str) -> str:
@@ -196,11 +219,19 @@ def main(argv: list[str]) -> int:
         if turn_delay:
             time.sleep(turn_delay)
 
+        controller = controllers[speaker]
+        before_lines = capture_scrollback_lines(controller)
         dispatch = orchestrator.dispatch_command(speaker, prompt)
-        controllers[speaker].wait_for_ready(timeout=max(int(args.response_timeout), 1))
+        controller.wait_for_ready(timeout=max(int(args.response_timeout), 1))
+        after_lines = capture_scrollback_lines(controller)
+        delta_lines = compute_delta(before_lines, after_lines, tail_limit=300)
+        if delta_lines:
+            raw_output = "\n".join(delta_lines)
+        else:
+            fallback = controller.get_last_output(tail_lines=300)
+            raw_output = fallback or ""
 
-        raw_output = controllers[speaker].get_last_output(tail_lines=200)
-        cleaned_output = parser.clean_output(raw_output)
+        cleaned_output = parser.clean_output(raw_output, strip_trailing_prompts=True)
         pairs = parser.extract_responses(raw_output) or parser.extract_responses(cleaned_output)
         response = pairs[-1]["response"].strip() if pairs else cleaned_output.strip() or raw_output.strip()
         reported_number: Optional[int] = None

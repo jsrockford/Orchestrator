@@ -12,7 +12,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from src.controllers.tmux_controller import (
     TmuxController,
@@ -20,6 +20,7 @@ from src.controllers.tmux_controller import (
     SessionNotFoundError,
 )
 from src.utils.config_loader import get_config
+from src.utils.output_parser import OutputParser
 
 
 def build_controller(
@@ -85,7 +86,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screenReader",
+        default="gemini --yolo",
     )
     parser.add_argument("--claude-startup-timeout", type=int, default=20)
     parser.add_argument("--gemini-startup-timeout", type=int, default=60)
@@ -109,13 +110,45 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def capture_scrollback_lines(controller: TmuxController) -> List[str]:
+    try:
+        snapshot = controller.capture_scrollback()
+    except (SessionBackendError, SessionNotFoundError):
+        return []
+    return snapshot.splitlines()
+
+
+def compute_delta(previous: List[str], current: List[str], tail_limit: int) -> List[str]:
+    if previous and len(current) >= len(previous):
+        limit = min(len(previous), len(current))
+        prefix = 0
+        while prefix < limit and previous[prefix] == current[prefix]:
+            prefix += 1
+        delta = current[prefix:]
+    else:
+        delta = current
+
+    if tail_limit and len(delta) > tail_limit:
+        delta = delta[-tail_limit:]
+    return delta
+
+
 def send_number(controller: TmuxController, number: int, turn_delay: float) -> str:
     prompt = f"Respond ONLY with the number {number}."
     if turn_delay > 0:
         time.sleep(turn_delay)
+    before_lines = capture_scrollback_lines(controller)
     controller.send_command(prompt, submit=True)
     controller.wait_for_ready()
-    return controller.get_last_output(tail_lines=40) or ""
+    after_lines = capture_scrollback_lines(controller)
+    delta_lines = compute_delta(before_lines, after_lines, tail_limit=120)
+    if delta_lines:
+        raw_output = "\n".join(delta_lines)
+    else:
+        raw_output = controller.get_last_output(tail_lines=120) or ""
+    parser = OutputParser()
+    cleaned = parser.clean_output(raw_output, strip_trailing_prompts=True)
+    return cleaned or raw_output
 
 
 def main(argv: list[str]) -> int:

@@ -221,8 +221,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screenReader",
-        help="Command used to launch Gemini CLI (default: 'gemini --yolo --screenReader').",
+        default="gemini --yolo",
+        help="Command used to launch Gemini CLI (default: 'gemini --yolo').",
     )
     parser.add_argument(
         "--claude-working-dir",

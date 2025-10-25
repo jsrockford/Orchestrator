@@ -32,7 +32,7 @@ def main():
         "new-session", "-d",
         "-s", session_name,
         "-c", "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest",
-        "gemini", "--screenReader"
+        "gemini", "--yolo"
     ])
 
     if result.returncode != 0:

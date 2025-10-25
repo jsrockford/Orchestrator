@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from typing import Callable, Dict, List, Type
+from typing import Callable, Dict, List, Optional, Type
 
 from src.controllers.claude_controller import ClaudeController
 from src.controllers.codex_controller import CodexController
@@ -84,6 +84,31 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def capture_scrollback_lines(controller: object) -> List[str]:
+    capture = getattr(controller, "capture_scrollback", None)
+    if callable(capture):
+        try:
+            return capture().splitlines()
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+def compute_delta(previous: List[str], current: List[str], tail_limit: Optional[int]) -> List[str]:
+    if previous and len(current) >= len(previous):
+        limit = min(len(previous), len(current))
+        prefix = 0
+        while prefix < limit and previous[prefix] == current[prefix]:
+            prefix += 1
+        delta = current[prefix:]
+    else:
+        delta = current
+
+    if tail_limit is not None and len(delta) > tail_limit:
+        delta = delta[-tail_limit:]
+    return delta
+
+
 def main(argv: List[str] | None = None) -> int:
     args = parse_args(argv)
     controller_cls = CONTROLLERS[args.controller]
@@ -111,14 +136,21 @@ def main(argv: List[str] | None = None) -> int:
 
     for idx, prompt in enumerate(args.prompts, start=1):
         print(f"[turn {idx}] prompt: {prompt}")
+        before_lines = capture_scrollback_lines(controller)
         controller.send_command(prompt)
         if controller.wait_for_ready(timeout=args.response_timeout):
             print("  [status] response complete")
         else:
             print("  [status] timeout waiting for response")
 
-        raw_delta = controller.get_last_output(tail_lines=args.tail_lines)
-        cleaned = parser.clean_output(raw_delta)
+        after_lines = capture_scrollback_lines(controller)
+        delta_lines = compute_delta(before_lines, after_lines, args.tail_lines)
+        if delta_lines:
+            raw_delta = "\n".join(delta_lines)
+        else:
+            getter = getattr(controller, "get_last_output", None)
+            raw_delta = getter(tail_lines=args.tail_lines) if callable(getter) else ""
+        cleaned = parser.clean_output(raw_delta, strip_trailing_prompts=True)
         print("  [raw delta]")
         print("    " + "\n    ".join(raw_delta.splitlines() or ["<empty>"]))
         print("  [clean]")
