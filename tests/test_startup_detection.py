@@ -10,19 +10,35 @@ def load_config():
     with open('config.yaml', 'r') as f:
         return yaml.safe_load(f)
 
+
+def _extract_executable_parts(config: dict, agent: str) -> tuple[str, tuple[str, ...]]:
+    section = config.get(agent, {})
+    executable = section.get("executable")
+    if not executable:
+        raise KeyError(f"No executable configured for '{agent}'")
+    args = section.get("executable_args", [])
+    if isinstance(args, str):
+        args = [args]
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(f"Invalid executable_args for '{agent}': {type(args)!r}")
+    return executable, tuple(str(arg) for arg in args)
+
 print("="*60)
 print("Testing Startup Detection")
 print("="*60)
 
 config = load_config()
+claude_exec, claude_args = _extract_executable_parts(config, "claude")
+gemini_exec, gemini_args = _extract_executable_parts(config, "gemini")
 
 # Test Claude
 print("\n1. Testing Claude startup detection...")
 claude = TmuxController(
     session_name="claude-startup-test",
-    executable="claude",
+    executable=claude_exec,
     working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
-    ai_config=config['claude']
+    ai_config=config['claude'],
+    executable_args=claude_args,
 )
 
 if claude.session_exists():
@@ -50,9 +66,10 @@ except Exception as e:
 print("\n2. Testing Gemini startup detection...")
 gemini = TmuxController(
     session_name="gemini-startup-test",
-    executable="gemini",
+    executable=gemini_exec,
     working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
-    ai_config=config['gemini']
+    ai_config=config['gemini'],
+    executable_args=gemini_args,
 )
 
 if gemini.session_exists():

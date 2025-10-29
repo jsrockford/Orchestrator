@@ -32,11 +32,24 @@ def main() -> int:
         print(f"[error] '{CODEX_KEY}' configuration missing in {CONFIG_PATH}")
         return 1
 
+    executable = codex_cfg.get("executable")
+    if not executable:
+        print(f"[error] No executable configured for '{CODEX_KEY}' in {CONFIG_PATH}")
+        return 1
+
+    raw_args = codex_cfg.get("executable_args", [])
+    if isinstance(raw_args, str):
+        raw_args = [raw_args]
+    if not isinstance(raw_args, (list, tuple)):
+        print(f"[error] Invalid executable_args for '{CODEX_KEY}': {type(raw_args)!r}")
+        return 1
+
     controller = TmuxController(
         session_name=SESSION_NAME,
-        executable=codex_cfg.get("executable", "codex"),
+        executable=executable,
         working_dir=WORKING_DIR,
         ai_config=codex_cfg,
+        executable_args=tuple(str(arg) for arg in raw_args),
     )
 
     if controller.session_exists():

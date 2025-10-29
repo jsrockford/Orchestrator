@@ -5,6 +5,7 @@ from typing import List
 import pytest
 
 from src.controllers.tmux_controller import TmuxController
+from src.utils.config_loader import get_config
 
 
 def _make_controller(monkeypatch, outputs: List[str]) -> TmuxController:
@@ -20,11 +21,13 @@ def _make_controller(monkeypatch, outputs: List[str]) -> TmuxController:
         "response_complete_markers": ["› "],
     }
 
+    exe_parts = get_config().get_executable_parts("claude")
+
     controller = TmuxController(
         session_name="test",
-        executable="claude",
+        executable=exe_parts[0],
         ai_config=config,
-        executable_args=[],
+        executable_args=tuple(exe_parts[1:]),
     )
 
     controller.session_exists = lambda: True

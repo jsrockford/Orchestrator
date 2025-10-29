@@ -2,10 +2,10 @@
 """
 Kick off a multi-AI discussion using the DevelopmentTeamOrchestrator.
 
-This script expects Claude and Gemini CLI sessions to be available (either
-already running inside tmux, or launchable via the configured executables).
-It wires the controllers into the orchestrator, runs a short discussion on
-the supplied topic, and prints a concise turn-by-turn summary.
+This script expects Claude, Gemini, and Codex CLI sessions to be available
+(either already running inside tmux, or launchable via the configured
+executables). It wires the controllers into the orchestrator, runs a short
+discussion on the supplied topic, and prints a concise turn-by-turn summary.
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from typing import Dict, Optional, Sequence
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
 from src.utils.config_loader import get_config
+
+logger = logging.getLogger(__name__)
 
 
 def build_controller(
@@ -96,6 +98,7 @@ def run_discussion(
     *,
     claude: TmuxController,
     gemini: TmuxController,
+    codex: TmuxController,
     topic: str,
     max_turns: int,
     history_size: int,
@@ -107,17 +110,30 @@ def run_discussion(
     message_router: MessageRouter | None = None,
     participants: Optional[Sequence[str]] = None,
 ) -> Dict[str, object]:
-    controllers = {"claude": claude, "gemini": gemini}
+    controllers = {"claude": claude, "gemini": gemini, "codex": codex}
     orchestrator = DevelopmentTeamOrchestrator(controllers)
     if debug_prompts:
         orchestrator.set_prompt_debug(True, preview_chars=debug_prompt_chars)
     context_manager = context_manager or ContextManager(history_size=history_size)
+    canonical_map = {name.lower(): name for name in controllers}
+
     if participants is None:
-        participants = ["claude", "gemini"]
-    if start_with.lower() == "gemini":
-        participants = ["gemini", "claude"]
-    elif start_with.lower() == "claude":
-        participants = ["claude", "gemini"]
+        participants = list(controllers.keys())
+    else:
+        normalized = []
+        for participant in participants:
+            normalized_name = canonical_map.get(participant.lower())
+            if normalized_name is None:
+                raise ValueError(f"Unknown participant '{participant}'.")
+            normalized.append(normalized_name)
+        participants = normalized
+
+    start_key = canonical_map.get(start_with.lower())
+    if start_key is None:
+        raise ValueError(f"Unknown --start-with value '{start_with}'.")
+    if start_key in participants:
+        start_idx = participants.index(start_key)
+        participants = participants[start_idx:] + participants[:start_idx]
 
     router = message_router or MessageRouter(participants, context_manager=context_manager)
 
@@ -166,8 +182,21 @@ def format_turn(turn: Dict[str, object]) -> str:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a coordinated discussion between Claude and Gemini."
+        description="Run a coordinated discussion between Claude, Gemini, and Codex."
     )
+    config = get_config()
+
+    def default_command(agent: str) -> str:
+        try:
+            return config.get_executable_command(agent)
+        except (KeyError, TypeError) as exc:
+            parser.error(
+                f"Executable for '{agent}' is not configured correctly in config.yaml: {exc}"
+            )
+
+    claude_default = default_command("claude")
+    gemini_default = default_command("gemini")
+    codex_default = default_command("codex")
     parser.add_argument("topic", help="Topic for the discussion.")
     parser.add_argument(
         "--max-turns",
@@ -188,7 +217,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--start-with",
-        choices=["claude", "gemini"],
+        choices=["claude", "gemini", "codex"],
         default="gemini",
         help="Which AI should speak first (default: gemini).",
     )
@@ -204,8 +233,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--claude-executable",
-        default="claude --dangerously-skip-permissions",
-        help="Executable used to start Claude (default: 'claude --dangerously-skip-permissions').",
+        default=claude_default,
+        help=f"Executable used to start Claude (default: '{claude_default}').",
     )
     parser.add_argument(
         "--claude-startup-timeout",
@@ -236,14 +265,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screenReader",
-        help="Executable used to start Gemini (default: 'gemini --yolo --screenReader').",
+        default=gemini_default,
+        help=f"Executable used to start Gemini (default: '{gemini_default}').",
     )
     parser.add_argument(
         "--gemini-startup-timeout",
         type=int,
-        default=20,
-        help="Seconds to wait for Gemini session readiness when auto-starting (default: 20).",
+        default=60,
+        help="Seconds to wait for Gemini session readiness when auto-starting (default: 60).",
     )
     parser.add_argument(
         "--gemini-init-wait",
@@ -262,6 +291,38 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Working directory for the Gemini session (defaults to current directory).",
     )
     parser.add_argument(
+        "--codex-session",
+        default="codex",
+        help="Tmux session name for Codex (default: codex).",
+    )
+    parser.add_argument(
+        "--codex-executable",
+        default=codex_default,
+        help=f"Executable used to start Codex (default: '{codex_default}').",
+    )
+    parser.add_argument(
+        "--codex-startup-timeout",
+        type=int,
+        default=20,
+        help="Seconds to wait for Codex session readiness when auto-starting (default: 20).",
+    )
+    parser.add_argument(
+        "--codex-init-wait",
+        type=float,
+        default=None,
+        help="Seconds to pause after spawning Codex before sending the first input.",
+    )
+    parser.add_argument(
+        "--codex-bootstrap",
+        default=None,
+        help="Command to run before launching the Codex executable.",
+    )
+    parser.add_argument(
+        "--codex-cwd",
+        default=None,
+        help="Working directory for the Codex session (defaults to current directory).",
+    )
+    parser.add_argument(
         "--log-file",
         default=None,
         help="Optional path to write the conversation transcript and summary.",
@@ -269,18 +330,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--kill-existing",
         action="store_true",
-        help="Kill existing Claude/Gemini tmux sessions before starting.",
+        help="Kill existing Claude/Gemini/Codex tmux sessions before starting.",
     )
     parser.add_argument(
         "--cleanup-after",
         action="store_true",
-        help="Kill Claude/Gemini tmux sessions after the discussion completes.",
+        help="Kill Claude/Gemini/Codex tmux sessions after the discussion completes.",
     )
     parser.add_argument(
         "--startup-timeout",
         type=int,
         default=None,
-        help="Convenience override for both --claude-startup-timeout and --gemini-startup-timeout.",
+        help="Convenience override for all --*-startup-timeout values.",
     )
     parser.add_argument(
         "--debug-prompts",
@@ -293,6 +354,46 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=200,
         help="How many characters of each prompt to include in debug logs (default 200).",
     )
+    parser.add_argument(
+        "--group-system-prompt",
+        default=None,
+        help="Optional system prompt sent to every AI before the discussion begins.",
+    )
+    parser.add_argument(
+        "--group-system-prompt-file",
+        default=None,
+        help="Path to a briefing file; sends 'Read @<file>' to every AI before the discussion.",
+    )
+    parser.add_argument(
+        "--claude-system-prompt",
+        default=None,
+        help="Additional system prompt sent only to Claude before the discussion.",
+    )
+    parser.add_argument(
+        "--claude-system-prompt-file",
+        default=None,
+        help="Path to a briefing file sent only to Claude (as 'Read @<file>').",
+    )
+    parser.add_argument(
+        "--gemini-system-prompt",
+        default=None,
+        help="Additional system prompt sent only to Gemini before the discussion.",
+    )
+    parser.add_argument(
+        "--gemini-system-prompt-file",
+        default=None,
+        help="Path to a briefing file sent only to Gemini (as 'Read @<file>').",
+    )
+    parser.add_argument(
+        "--codex-system-prompt",
+        default=None,
+        help="Additional system prompt sent only to Codex before the discussion.",
+    )
+    parser.add_argument(
+        "--codex-system-prompt-file",
+        default=None,
+        help="Path to a briefing file sent only to Codex (as 'Read @<file>').",
+    )
 
     args = parser.parse_args(argv)
 
@@ -302,6 +403,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             args.claude_startup_timeout = override
         if args.gemini_startup_timeout == parser.get_default("gemini_startup_timeout"):
             args.gemini_startup_timeout = override
+        if args.codex_startup_timeout == parser.get_default("codex_startup_timeout"):
+            args.codex_startup_timeout = override
 
     return args
 
@@ -337,6 +440,7 @@ def main(argv: list[str]) -> int:
 
     claude: Optional[TmuxController] = None
     gemini: Optional[TmuxController] = None
+    codex: Optional[TmuxController] = None
 
     try:
         claude = build_controller(
@@ -361,14 +465,60 @@ def main(argv: list[str]) -> int:
             bootstrap=args.gemini_bootstrap,
             kill_existing=args.kill_existing,
         )
+        codex = build_controller(
+            name="Codex",
+            session_name=args.codex_session,
+            executable=args.codex_executable,
+            working_dir=args.codex_cwd,
+            auto_start=args.auto_start,
+            startup_timeout=args.codex_startup_timeout,
+            init_wait=args.codex_init_wait,
+            bootstrap=args.codex_bootstrap,
+            kill_existing=args.kill_existing,
+        )
     except (SessionNotFoundError, SessionBackendError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
+
+    controllers = {"claude": claude, "gemini": gemini, "codex": codex}
+
+    prompt_queue: Dict[str, list[str]] = {name: [] for name in controllers}
+    if args.group_system_prompt or args.group_system_prompt_file:
+        group_prompt = args.group_system_prompt or f"Read @{args.group_system_prompt_file}"
+        for prompts in prompt_queue.values():
+            prompts.append(group_prompt)
+
+    for ai_name, controller in controllers.items():
+        if controller is None:
+            continue
+
+        prompt_arg = getattr(args, f"{ai_name}_system_prompt", None)
+        file_arg = getattr(args, f"{ai_name}_system_prompt_file", None)
+        if prompt_arg or file_arg:
+            prompt_queue[ai_name].append(prompt_arg or f"Read @{file_arg}")
+
+    if any(prompts for prompts in prompt_queue.values()):
+        for name, controller in controllers.items():
+            if controller is None:
+                continue
+
+            for prompt in prompt_queue[name]:
+                logger.info("Sending pre-discussion system prompt to %s", name)
+                try:
+                    controller.send_command(prompt)
+                    controller.wait_for_ready(timeout=30)
+                except Exception as exc:  # pylint: disable=broad-except
+                    print(
+                        f"[error] Failed to deliver pre-discussion prompt to {name}: {exc}",
+                        file=sys.stderr,
+                    )
+                    return 1
 
     try:
         result = run_discussion(
             claude=claude,
             gemini=gemini,
+            codex=codex,
             topic=args.topic,
             max_turns=args.max_turns,
             history_size=effective_history_size,
@@ -381,6 +531,7 @@ def main(argv: list[str]) -> int:
         if args.cleanup_after:
             cleanup_controller(claude, "Claude")
             cleanup_controller(gemini, "Gemini")
+            cleanup_controller(codex, "Codex")
 
     conversation = result["conversation"]
     context_manager: ContextManager = result["context_manager"]

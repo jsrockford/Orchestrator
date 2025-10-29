@@ -9,6 +9,8 @@ import subprocess
 import time
 import sys
 
+from src.utils.config_loader import get_config
+
 
 def run_tmux(args):
     """Run tmux command"""
@@ -27,12 +29,14 @@ def main():
     time.sleep(1)
 
     # Start Gemini session
+    gemini_parts = list(get_config().get_executable_parts("gemini"))
+
     print(f"Starting Gemini CLI session '{session_name}'...")
     result = run_tmux([
         "new-session", "-d",
         "-s", session_name,
         "-c", "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest",
-        "gemini", "--yolo"
+        *gemini_parts,
     ])
 
     if result.returncode != 0:

@@ -355,6 +355,19 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         description=__doc__,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    cfg = get_config()
+
+    def default_command(agent: str) -> str:
+        try:
+            return cfg.get_executable_command(agent)
+        except (KeyError, TypeError) as exc:
+            parser.error(
+                f"Executable for '{agent}' is not configured correctly in config.yaml: {exc}"
+            )
+
+    claude_default = default_command("claude")
+    gemini_default = default_command("gemini")
+    codex_default = default_command("codex")
     parser.add_argument(
         "topic",
         nargs="?",
@@ -449,8 +462,8 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--claude-executable",
-        default="claude --dangerously-skip-permissions",
-        help="Executable used to start Claude.",
+        default=claude_default,
+        help=f"Executable used to start Claude (default: '{claude_default}').",
     )
     parser.add_argument(
         "--claude-startup-timeout",
@@ -483,8 +496,8 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo",
-        help="Executable used to start Gemini.",
+        default=gemini_default,
+        help=f"Executable used to start Gemini (default: '{gemini_default}').",
     )
     parser.add_argument(
         "--gemini-startup-timeout",
@@ -517,8 +530,8 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--codex-executable",
-        default="codex",
-        help="Executable used to start Codex.",
+        default=codex_default,
+        help=f"Executable used to start Codex (default: '{codex_default}').",
     )
     parser.add_argument(
         "--codex-startup-timeout",

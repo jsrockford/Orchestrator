@@ -132,11 +132,11 @@ PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
 Start sessions manually for observation:
 
 ```bash
-# Terminal 1: Start Claude
-tmux new-session -s claude claude --dangerously-skip-permissions
+# Terminal 1: Start Claude via sandboxed wrapper
+tmux new-session -s claude safe_claude --dangerously-skip-permissions
 
 # Terminal 2: Start Gemini (screen reader mode produces linear text)
-tmux new-session -s gemini gemini --yolo --screenReader
+tmux new-session -s gemini safe_gemini --yolo --screenReader
 
 # Terminal 3: Run orchestrated discussion (reuses existing sessions)
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
@@ -154,10 +154,10 @@ PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
   --max-turns 10 \
   --history-size 50 \
   --claude-session my-claude \
-  --claude-executable "claude --dangerously-skip-permissions" \
+  --claude-executable "safe_claude --dangerously-skip-permissions" \
   --claude-startup-timeout 15 \
   --gemini-session my-gemini \
-  --gemini-executable "gemini --yolo --screenReader" \
+  --gemini-executable "safe_gemini --yolo --screenReader" \
   --gemini-startup-timeout 20 \
   --log-file logs/custom-discussion.log \
   "Design a REST API for a task management system"

@@ -11,6 +11,7 @@ from typing import Dict
 
 from examples.run_orchestrated_discussion import build_controller, run_discussion
 from src.orchestrator.context_manager import ContextManager
+from src.utils.config_loader import get_config
 from src.utils.logger import get_logger
 
 
@@ -187,6 +188,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Launch the CLAUDE↔Gemini code review simulation scenario."
     )
+    config = get_config()
+
+    def default_command(agent: str) -> str:
+        try:
+            return config.get_executable_command(agent)
+        except (KeyError, TypeError) as exc:
+            parser.error(
+                f"Executable for '{agent}' is not configured correctly in config.yaml: {exc}"
+            )
+
+    claude_default = default_command("claude")
+    gemini_default = default_command("gemini")
     parser.add_argument(
         "--snippet",
         type=Path,
@@ -216,13 +229,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--claude-executable",
-        default="claude --dangerously-skip-permissions",
-        help="Command used to launch Claude Code CLI (default: 'claude --dangerously-skip-permissions').",
+        default=claude_default,
+        help=f"Command used to launch Claude Code CLI (default: '{claude_default}').",
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo",
-        help="Command used to launch Gemini CLI (default: 'gemini --yolo').",
+        default=gemini_default,
+        help=f"Command used to launch Gemini CLI (default: '{gemini_default}').",
     )
     parser.add_argument(
         "--claude-working-dir",

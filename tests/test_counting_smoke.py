@@ -75,6 +75,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Minimal alternating counting smoke test for Claude and Gemini."
     )
+    def default_command(agent: str) -> str:
+        try:
+            return cfg.get_executable_command(agent)
+        except (KeyError, TypeError) as exc:
+            parser.error(
+                f"Executable for '{agent}' is not configured correctly in config.yaml: {exc}"
+            )
+
+    claude_default = default_command("claude")
+    gemini_default = default_command("gemini")
     parser.add_argument("--count-to", type=int, default=20)
     parser.add_argument("--auto-start", action="store_true")
     parser.add_argument("--kill-existing", action="store_true")
@@ -82,11 +92,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--gemini-session", default=tmux_cfg.get("gemini_session", "gemini"))
     parser.add_argument(
         "--claude-executable",
-        default="claude --dangerously-skip-permissions",
+        default=claude_default,
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo",
+        default=gemini_default,
     )
     parser.add_argument("--claude-startup-timeout", type=int, default=20)
     parser.add_argument("--gemini-startup-timeout", type=int, default=60)

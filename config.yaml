@@ -39,7 +39,7 @@ claude:
   text_enter_delay: 0.6                  # Delay between text and Enter
 
   # Path to Claude Code executable
-  executable: "claude"  # Assumes it's in PATH
+  executable: "safe_claude"  # Wrapper enforces sandboxed execution
   executable_args:
     - "--dangerously-skip-permissions"
 
@@ -94,7 +94,7 @@ gemini:
   tool_marker: "✓"       # Checkmark for successful tool execution
 
   # Path to Gemini executable
-  executable: "gemini"  # Assumes it's in PATH
+  executable: "safe_gemini"  # Wrapper enforces sandboxed execution
   executable_args:
     - "--yolo"
 
@@ -122,7 +122,7 @@ codex:
   submit_key: "Enter"
   text_enter_delay: 0.1
   response_marker: "▸"
-  executable: "codex"
+  executable: "safe_codex"
   executable_args: []
   pause_on_manual_clients: false
 

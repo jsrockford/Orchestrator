@@ -374,7 +374,7 @@
   - [ ] Agent timeout
   - [ ] Malformed agent responses
 
-**Note**: Phase 6.1 used Codex CLI directly via TmuxController instead of agent invocation. The completion detection fix applies to all three AI CLIs (Claude, Gemini, Codex) running in tmux sessions.
+**Note**: Phase 6.1 used Codex CLI directly via TmuxController instead of agent invocation. The completion detection fix applies to all three AI CLIs (Claude, Gemini, Codex) running in tmux sessions. We will not be calling ai cli models as agents in this project.
 
 #### Task 6.2: N-Agent Orchestration Support
 - [ ] Refactor `DevelopmentTeamOrchestrator` for N agents

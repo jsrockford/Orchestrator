@@ -8,7 +8,7 @@
 2. Start Claude in a new tmux session:
    ```bash
    tmux new -s claude
-   claude --dangerously-skip-permissions
+   safe_claude --dangerously-skip-permissions
    ```
 3. Accept the bypass warning if prompted.
 4. Detach from tmux (`Ctrl+b`, `d`) so the session keeps running in the background.
@@ -19,7 +19,7 @@
 2. Start Gemini in another tmux session:
    ```bash
    tmux new -s gemini
-   gemini --yolo
+   safe_gemini --yolo
    ```
 3. Wait until the prompt is ready.
 4. Detach from tmux (`Ctrl+b`, `d`) to release the session.

@@ -7,7 +7,7 @@ and Gemini can exchange updates automatically.
 ## Prerequisites
 
 - `tmux` installed and on `$PATH`
-- Claude Code and Gemini CLI binaries available on `$PATH`
+- Sandboxed wrapper scripts `safe_claude`, `safe_gemini`, and `safe_codex` available on `$PATH`
 - (Optional) Existing tmux sessions named `claude` and `gemini`
 
 If the sessions are not running you can allow the script to create them by
@@ -22,7 +22,7 @@ python examples/run_orchestrated_discussion.py "Decide next sprint focus" --auto
 Important flags:
 
 - `--claude-session` / `--gemini-session`: tmux session names (defaults: `claude`, `gemini`)
-- `--claude-executable` / `--gemini-executable`: CLI binaries or quoted commands (e.g., `claude --dangerously-skip-permissions`, `gemini --yolo`)
+- `--claude-executable` / `--gemini-executable`: CLI command strings sourced from `config.yaml` (defaults typically `safe_claude --dangerously-skip-permissions`, `safe_gemini --yolo`)
 - `--claude-bootstrap` / `--gemini-bootstrap`: Optional shell commands that run before the executable (useful for piping auto-confirm input, e.g., `echo "2"`)
 - `--claude-startup-timeout` / `--gemini-startup-timeout`: Seconds to allow each CLI to become ready (defaults: 10s for Claude, 20s for Gemini)
 - `--claude-init-wait` / `--gemini-init-wait`: Extra delay after spawning before the first input (useful for slower startups)
@@ -34,8 +34,10 @@ Important flags:
 
 1. Start or verify Claude and Gemini tmux sessions:
    ```bash
-   tmux new -s claude -d claude
-   tmux new -s gemini -d gemini
+   tmux new -s claude
+   safe_claude --dangerously-skip-permissions
+   tmux new -s gemini
+   safe_gemini --yolo
    ```
 2. Run the orchestrated discussion:
    ```bash

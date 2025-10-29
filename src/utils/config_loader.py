@@ -6,7 +6,7 @@ Loads and provides access to configuration values from config.yaml
 
 import os
 import yaml
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 
 class ConfigLoader:
@@ -108,6 +108,48 @@ class ConfigLoader:
             Section dictionary or empty dict if not found
         """
         return self.config.get(section, {})
+
+    def get_executable_parts(self, agent: str) -> Sequence[str]:
+        """
+        Return the executable and argument list for a given agent.
+
+        Args:
+            agent: Agent key in the config (e.g., "claude", "gemini").
+
+        Returns:
+            Sequence containing the executable and any configured arguments.
+
+        Raises:
+            KeyError: If the executable is not defined for the agent.
+        """
+        section = self.get_section(agent)
+        executable = section.get("executable")
+        if not executable:
+            raise KeyError(f"No executable configured for '{agent}'.")
+
+        raw_args = section.get("executable_args", [])
+        if isinstance(raw_args, str):
+            raw_args = [raw_args]
+
+        if not isinstance(raw_args, (list, tuple)):
+            raise TypeError(
+                f"Invalid executable_args for '{agent}': expected list/tuple, got {type(raw_args)!r}"
+            )
+
+        return (executable, *map(str, raw_args))
+
+    def get_executable_command(self, agent: str) -> str:
+        """
+        Build a shell-ready command string for the given agent.
+
+        Args:
+            agent: Agent key in the config (e.g., "claude", "gemini").
+
+        Returns:
+            Command string (executable + args) joined by spaces.
+        """
+        parts = self.get_executable_parts(agent)
+        return " ".join(parts)
 
     def reload(self) -> None:
         """Reload configuration from file."""
