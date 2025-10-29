@@ -1,3 +1,0 @@
-User:  In two sentences, explain why capturing both raw transcripts and cleaned parser output is useful when verifying .
-Model:  Capturing raw transcripts provides the exact, unaltered output of a component, which is essential for pinpointi.
-entry for "screenReader".

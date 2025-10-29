@@ -86,3 +86,5 @@ scratch/
 screens/
 logs/
 
+.claude/
+
