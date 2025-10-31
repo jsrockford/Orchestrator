@@ -16,6 +16,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.controllers.tmux_controller import TmuxController
 from src.utils.output_parser import OutputParser
+from src.utils.path_helpers import (
+    ensure_directory,
+    get_tmux_worktree_path,
+)
+
+
+TMUX_WORKTREE = get_tmux_worktree_path()
+TMUX_WORKTREE_STR = str(TMUX_WORKTREE)
 
 
 def load_config():
@@ -63,7 +71,7 @@ def test_multi_turn_claude():
     controller = TmuxController(
         session_name="claude-test",
         executable=claude_exec,
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
+        working_dir=TMUX_WORKTREE_STR,
         ai_config=config['claude'],
         executable_args=claude_args,
     )
@@ -147,7 +155,7 @@ def test_multi_turn_gemini():
     controller = TmuxController(
         session_name="gemini-test",
         executable=gemini_exec,
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
+        working_dir=TMUX_WORKTREE_STR,
         ai_config=config['gemini'],
         executable_args=gemini_args,
     )
@@ -225,7 +233,7 @@ def test_file_operations_claude():
     controller = TmuxController(
         session_name="claude-test",
         executable=claude_exec,
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
+        working_dir=TMUX_WORKTREE_STR,
         ai_config=config['claude'],
         executable_args=claude_args,
     )
@@ -247,7 +255,7 @@ def test_file_operations_claude():
         pause_for_observation("After file creation request", "claude-test")
 
         # Verify file was created
-        test_file = Path("/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux/test_output.txt")
+        test_file = ensure_directory(TMUX_WORKTREE) / "test_output.txt"
         if test_file.exists():
             content = test_file.read_text()
             print(f"✓ File created with content: {content.strip()}")
@@ -282,7 +290,7 @@ def test_file_operations_claude():
         time.sleep(10)
 
         # Clean up test file
-        test_file = Path("/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux/test_output.txt")
+        test_file = ensure_directory(TMUX_WORKTREE) / "test_output.txt"
         if test_file.exists():
             test_file.unlink()
             print("Test file removed")

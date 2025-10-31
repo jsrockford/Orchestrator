@@ -5,6 +5,7 @@ Quick test to verify wait_for_startup() works correctly.
 import sys
 import yaml
 from src.controllers.tmux_controller import TmuxController
+from src.utils.path_helpers import get_tmux_worktree_path
 
 def load_config():
     with open('config.yaml', 'r') as f:
@@ -28,6 +29,7 @@ print("Testing Startup Detection")
 print("="*60)
 
 config = load_config()
+tmux_worktree = str(get_tmux_worktree_path())
 claude_exec, claude_args = _extract_executable_parts(config, "claude")
 gemini_exec, gemini_args = _extract_executable_parts(config, "gemini")
 
@@ -36,7 +38,7 @@ print("\n1. Testing Claude startup detection...")
 claude = TmuxController(
     session_name="claude-startup-test",
     executable=claude_exec,
-    working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
+    working_dir=tmux_worktree,
     ai_config=config['claude'],
     executable_args=claude_args,
 )
@@ -67,7 +69,7 @@ print("\n2. Testing Gemini startup detection...")
 gemini = TmuxController(
     session_name="gemini-startup-test",
     executable=gemini_exec,
-    working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
+    working_dir=tmux_worktree,
     ai_config=config['gemini'],
     executable_args=gemini_args,
 )

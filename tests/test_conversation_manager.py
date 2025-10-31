@@ -155,6 +155,8 @@ def test_conversation_manager_records_history_in_context_manager() -> None:
 
     prompt = context_manager.build_prompt("gemini", "Provide final summary", include_history=True)
     assert "Recent context" in prompt
+    assert "claude: Consensus reached on plan A." in prompt
+    assert "gemini: Building on that idea." not in prompt
 
 
 def test_conflict_notification_updates_context_manager() -> None:

@@ -10,6 +10,7 @@ import time
 import sys
 
 from src.utils.config_loader import get_config
+from src.utils.path_helpers import get_repo_root
 
 
 def run_tmux(args):
@@ -20,6 +21,7 @@ def run_tmux(args):
 
 def main():
     session_name = "gemini-manual-test"
+    working_dir = str(get_repo_root())
 
     print("=== Gemini Manual Interactive Test ===\n")
 
@@ -35,7 +37,7 @@ def main():
     result = run_tmux([
         "new-session", "-d",
         "-s", session_name,
-        "-c", "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest",
+        "-c", working_dir,
         *gemini_parts,
     ])
 

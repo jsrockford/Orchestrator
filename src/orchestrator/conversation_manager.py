@@ -13,7 +13,7 @@ from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..utils.logger import get_logger
-from ..utils.output_parser import OutputParser
+from ..utils.output_parser import OutputParser, ParsedOutput
 from ..utils.config_loader import get_config
 
 
@@ -116,7 +116,8 @@ class ConversationManager:
             pre_snapshot = self._capture_snapshot(speaker)
             dispatch_summary = self.orchestrator.dispatch_command(speaker, prompt)
             is_queued = bool(dispatch_summary.get("queued"))
-            response = None if is_queued else self._read_last_output(speaker, pre_snapshot)
+            parsed_output = None if is_queued else self._read_last_output(speaker, pre_snapshot)
+            response = parsed_output.response if parsed_output else None
 
             turn_record = {
                 "turn": self._turn_counter,
@@ -126,6 +127,9 @@ class ConversationManager:
                 "dispatch": dispatch_summary,
                 "response": response,
             }
+            if parsed_output:
+                turn_record["response_prompt"] = parsed_output.prompt
+                turn_record["response_transcript"] = parsed_output.cleaned_output
             conversation.append(turn_record)
             self._turn_counter += 1
 
@@ -291,7 +295,12 @@ class ConversationManager:
             builder = getattr(self.context_manager, "build_prompt", None)
             if callable(builder):
                 try:
-                    return builder(speaker, topic, include_history=self._include_history)
+                    return builder(
+                        speaker,
+                        topic,
+                        include_history=self._include_history,
+                        current_turn=self._turn_counter,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning("Context builder failed for '%s': %s", speaker, exc)
 
@@ -327,7 +336,7 @@ class ConversationManager:
         self,
         controller_name: str,
         pre_snapshot: Optional[List[str]],
-    ) -> Optional[str]:
+    ) -> Optional[ParsedOutput]:
         controller = getattr(self.orchestrator, "controllers", {}).get(controller_name)
         if controller is None:
             return None
@@ -352,8 +361,10 @@ class ConversationManager:
                     delta = post_snapshot[-self._capture_tail_limit :]
                 if delta:
                     raw_text = "\n".join(delta)
-                    cleaned = parser.clean_output(raw_text, strip_trailing_prompts=True)
-                    return cleaned or None
+                    parsed = parser.split_prompt_and_response(raw_text)
+                    if parsed.response or parsed.cleaned_output.strip():
+                        return parsed
+                    return None
                 return None
 
         reader = getattr(controller, "get_last_output", None)
@@ -376,8 +387,10 @@ class ConversationManager:
             if not raw_output:
                 return None
             parser = self._output_parsers.setdefault(controller_name, OutputParser())
-            cleaned = parser.clean_output(raw_output, strip_trailing_prompts=True)
-            return cleaned or None
+            parsed = parser.split_prompt_and_response(raw_output)
+            if parsed.response or parsed.cleaned_output.strip():
+                return parsed
+            return None
 
         if controller_name not in self._fallback_notices:
             self.logger.warning(
@@ -440,7 +453,35 @@ class ConversationManager:
 
     def _store_turn(self, turn: Dict[str, Any]) -> None:
         """Persist the turn in the rolling history buffer."""
-        self.history.append(turn)
+        structured: Dict[str, Any] = {
+            "turn": turn.get("turn"),
+            "speaker": turn.get("speaker"),
+            "topic": turn.get("topic"),
+            "prompt": turn.get("prompt"),
+            "response": turn.get("response"),
+        }
+
+        response_prompt = turn.get("response_prompt")
+        if response_prompt is not None:
+            structured["response_prompt"] = response_prompt
+
+        response_transcript = turn.get("response_transcript")
+        if response_transcript:
+            structured["response_transcript"] = response_transcript
+
+        metadata = turn.get("metadata")
+        if isinstance(metadata, dict):
+            structured["metadata"] = metadata.copy()
+        elif metadata is not None:
+            structured["metadata"] = metadata
+
+        dispatch = turn.get("dispatch")
+        if isinstance(dispatch, dict):
+            structured["dispatch"] = dispatch.copy()
+        elif dispatch is not None:
+            structured["dispatch"] = dispatch
+
+        self.history.append(structured)
 
     def _record_with_context_manager(self, turn: Dict[str, Any]) -> None:
         """Forward the turn to the context manager if it exposes a compatible hook."""

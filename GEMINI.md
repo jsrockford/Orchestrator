@@ -41,6 +41,15 @@ pytest
 
 *TODO: The exact commands for running the application and tests need to be finalized based on the project's structure and chosen libraries.*
 
+## Operating Instructions
+
+*   **Project Directories**:
+    *   The project folder and primary code repository is `/home/dgray/Projects/Orchestrator`. All code changes must be made within this directory.
+    *   The worktree for testing is `/home/dgray/Projects/TestOrch`. The user, Don, is responsible for copying files and running tests in this directory.
+*   **Virtual Environment**:
+    *   This project uses a Python virtual environment located at `venv/`.
+    *   Remember to activate it (`source venv/bin/activate`) before running any Python scripts. Always ask for confirmation before executing project code.
+
 ## Development Conventions
 
 *   **Code Style:** The project is expected to follow standard Python coding conventions (PEP 8).

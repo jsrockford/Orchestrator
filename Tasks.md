@@ -374,7 +374,80 @@
   - [ ] Agent timeout
   - [ ] Malformed agent responses
 
-**Note**: Phase 6.1 used Codex CLI directly via TmuxController instead of agent invocation. The completion detection fix applies to all three AI CLIs (Claude, Gemini, Codex) running in tmux sessions. We will not be calling ai cli models as agents in this project.
+**Note**: Phase 6.1 used Codex CLI directly via TmuxController instead of agent invocation. The completion detection fix applies to all AI CLIs (Claude, Gemini, Codex, Qwen) running in tmux sessions. We will not be calling ai cli models as agents in this project.
+
+### Phase 6.8: Qwen CLI Integration ✅ COMPLETE
+
+**Objective**: Add Qwen Code as a fourth AI CLI to the orchestration system.
+
+**Implementation Date**: October 30, 2025
+
+#### Completed Tasks:
+- [x] Analyzed Qwen CLI indicators from screenshots
+  - [x] Identified loading indicator: "(esc to cancel" / "(escape to cancel"
+  - [x] Identified ready indicator: "▸ Type your message or @path/to/file"
+  - [x] Determined response marker: "▸" (triangle)
+- [x] Created QwenController class (src/controllers/qwen_controller.py)
+  - [x] Inherits from TmuxController
+  - [x] Configured with Qwen-specific settings
+  - [x] Implements multi-key submit fallback for multiline prompts
+- [x] Added Qwen configuration to config.yaml
+  - [x] Startup timeout: 25s
+  - [x] Response timeout: 500s
+  - [x] Loading indicators for busy state detection
+  - [x] Submit key configuration with fallback sequence
+- [x] Created standalone test (tests/test_qwen_standalone.py)
+  - [x] Validates session lifecycle
+  - [x] Tests command submission
+  - [x] Verifies output capture
+  - [x] Confirms loading indicator detection
+- [x] Fixed architectural submit key issues
+  - [x] Moved C-m configuration into QwenController and GeminiController
+  - [x] Removed script-specific overrides from run_orchestrated_discussion.py
+  - [x] Implemented multi-key fallback sequence (M-Enter → C-m) for Qwen
+- [x] Updated orchestration script
+  - [x] Added Qwen to CONTROLLER_REGISTRY
+  - [x] Updated to instantiate dedicated controllers
+  - [x] Validated 4-way orchestrated discussions
+- [x] Successful integration testing
+  - [x] test_qwen_standalone.py passing
+  - [x] Orchestrated discussion with Claude + Qwen working
+  - [x] All 4 AIs can participate in discussions
+
+**Results**:
+- ✓ Qwen successfully integrated as 4th AI CLI
+- ✓ Submit key architecture properly refactored (single source of truth)
+- ✓ Multi-key fallback pattern working for complex prompts
+
+### Phase 6.9: Structured Conversation History (Planned)
+
+**Objective**: Eliminate exponential prompt growth by storing prompts and responses separately, using the shared parser so history feeds only the model output.
+
+#### Planned Tasks:
+- [ ] Enhance `src/utils/output_parser.py`
+  - [ ] Add `split_prompt_and_response()` helper that accepts the AI’s response marker list
+  - [ ] Provide graceful fallback when no marker is present (first-line heuristic + logging)
+  - [ ] Unit-test against captured outputs for Claude, Gemini, Codex, and Qwen
+- [x] Update `src/orchestrator/conversation_manager.py`
+  - [x] Replace raw string storage with structured `{prompt_text, response_text}` turn data
+  - [ ] Persist raw capture only for diagnostics
+- [x] Update `src/orchestrator/context_manager.py`
+  - [x] Format recent history using `response_text` so prompts are not re-sent
+  - [x] Add regression coverage for compact history snippets
+  - [x] Filter recent history per participant by tracking each speaker's last turn index
+- [x] Refresh tests
+  - [x] Adjust fixtures asserting turn structure
+  - [ ] Add parser unit tests covering multi-marker detection and fallback paths
+  - [ ] Add integration test ensuring prompts do not grow between turns
+- ✓ System now supports Claude, Gemini, Codex, and Qwen
+- ✓ All controllers use consistent, reliable submission patterns
+
+**Key Files Modified**:
+- `src/controllers/qwen_controller.py` - New Qwen controller with submit fallback
+- `src/controllers/gemini_controller.py` - Added C-m override
+- `examples/run_orchestrated_discussion.py` - CONTROLLER_REGISTRY pattern
+- `config.yaml` - Qwen configuration section
+- `tests/test_qwen_standalone.py` - Qwen validation suite
 
 #### Task 6.2: N-Agent Orchestration Support
 - [ ] Refactor `DevelopmentTeamOrchestrator` for N agents
@@ -519,6 +592,7 @@
 
 ### Phase 6 Success Criteria
 - [x] Codex participates successfully in 3-agent discussions
+- [x] **Qwen participates successfully in 4-agent discussions** ✅ (Oct 30, 2025)
 - [x] System handles 10+ rapid commands without issues
 - [x] Graceful recovery from agent crashes demonstrated
 - [x] 2+ hour discussion runs without intervention
@@ -527,7 +601,7 @@
 - [x] Performance metrics collected and analyzed
 - [x] Error recovery scenarios validated
 
-**Completion Date**: TBD (Target: 2 weeks from start)
+**Completion Date**: October 30, 2025
 
 ## Success Criteria Checklist
 
@@ -538,5 +612,5 @@
 - [ ] Session remains stable for 1+ hour - **Will test in Phase 6.4**
 - [x] Command latency < 100ms ✅ ~0.1ms measured
 - [x] Output capture latency < 500ms ✅ ~10ms measured
-- [ ] Support 3+ agents in orchestrated discussion - **Phase 6 objective**
+- [x] Support 3+ agents in orchestrated discussion ✅ **4 AIs working (Claude, Gemini, Codex, Qwen) as of Oct 30, 2025**
 - [ ] Graceful error recovery demonstrated - **Phase 6 objective**

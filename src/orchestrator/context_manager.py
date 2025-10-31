@@ -39,6 +39,7 @@ class ContextManager:
         self._consensus_events: List[Dict[str, Any]] = []
         self._project_state: Dict[str, Any] = {}
         self._participants: Dict[str, Dict[str, Any]] = {}
+        self._last_turn_by_participant: Dict[str, int] = {}
 
         if participant_metadata:
             for name, metadata in participant_metadata.items():
@@ -50,7 +51,13 @@ class ContextManager:
 
     def record_turn(self, turn: Dict[str, Any]) -> None:
         """Store a sanitized copy of the latest conversation turn."""
-        self._history.append(self._sanitize_turn(turn))
+        sanitized = self._sanitize_turn(turn)
+        self._history.append(sanitized)
+
+        speaker = sanitized.get("speaker")
+        turn_index = sanitized.get("turn")
+        if isinstance(speaker, str) and isinstance(turn_index, int):
+            self._last_turn_by_participant[speaker] = turn_index
 
     # Backwards-compatible aliases for other naming conventions
     append_turn = record_turn
@@ -128,7 +135,14 @@ class ContextManager:
     # Prompt and summary helpers
     # ------------------------------------------------------------------ #
 
-    def build_prompt(self, ai_name: str, task: str, *, include_history: bool = True) -> str:
+    def build_prompt(
+        self,
+        ai_name: str,
+        task: str,
+        *,
+        include_history: bool = True,
+        current_turn: Optional[int] = None,
+    ) -> str:
         """
         Construct a prompt for the requested AI participant.
 
@@ -136,6 +150,7 @@ class ContextManager:
             ai_name: Controller identifier (e.g., "claude").
             task: The current topic or objective.
             include_history: Whether to embed a short context summary.
+            current_turn: Upcoming turn index for the speaker (unused but accepted for API parity).
         """
         metadata = self._participants.get(ai_name, {})
         participant_type = metadata.get("type", "cli")
@@ -167,7 +182,7 @@ class ContextManager:
             lines.append(str(guidance))
 
         if include_history:
-            blurb = self._format_recent_history()
+            blurb = self._format_recent_history(speaker=ai_name)
             if blurb:
                 lines.append(f"Recent context: {blurb}")
 
@@ -201,20 +216,41 @@ class ContextManager:
     # Internal helpers
     # ------------------------------------------------------------------ #
 
-    def _format_recent_history(self, max_turns: int = 3) -> str:
+    def _format_recent_history(
+        self,
+        *,
+        speaker: Optional[str] = None,
+        max_turns: int = 3,
+    ) -> str:
         """Return a compact description of the most recent turns."""
         if not self._history:
             return ""
 
-        recent = list(self._history)[-max_turns:]
+        recent = list(self._history)
+        if speaker is not None:
+            last_seen = self._last_turn_by_participant.get(speaker, -1)
+            filtered: List[Dict[str, Any]] = []
+            for turn in recent:
+                turn_index = turn.get("turn")
+                if isinstance(turn_index, int) and turn_index <= last_seen:
+                    continue
+                filtered.append(turn)
+            recent = filtered
+
+        if max_turns > 0:
+            recent = recent[-max_turns:]
+
+        if not recent:
+            return ""
+
         fragments = []
         for turn in recent:
-            speaker = turn.get("speaker", "unknown")
+            speaker_name = turn.get("speaker", "unknown")
             response = turn.get("response")
             if response:
-                fragments.append(f"{speaker}: {response}")
+                fragments.append(f"{speaker_name}: {response}")
             else:
-                fragments.append(f"{speaker} queued a prompt")
+                fragments.append(f"{speaker_name} queued a prompt")
         return "; ".join(fragments)
 
     @staticmethod
@@ -226,6 +262,12 @@ class ContextManager:
         metadata dictionaries are shallow-copied as well.
         """
         sanitized = turn.copy()
+        sanitized.pop("response_raw", None)
+
+        response = sanitized.get("response")
+        if isinstance(response, str):
+            sanitized["response"] = response.strip()
+
         metadata = sanitized.get("metadata")
         if isinstance(metadata, dict):
             sanitized["metadata"] = metadata.copy()
@@ -256,7 +298,6 @@ class ContextManager:
     def participants(self) -> Dict[str, Dict[str, Any]]:
         """Return a copy of registered participant metadata."""
         return {name: meta.copy() for name, meta in self._participants.items()}
-        return sanitized
 
 
 __all__ = ["ContextManager"]

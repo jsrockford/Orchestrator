@@ -12,10 +12,11 @@ This script will:
 import sys
 import time
 from src.controllers.tmux_controller import TmuxController
+from src.utils.path_helpers import get_tmux_worktree_path
 
 
 def main():
-    worktree_dir = "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+    worktree_dir = str(get_tmux_worktree_path())
 
     controller = TmuxController(
         session_name="claude-manual-test",

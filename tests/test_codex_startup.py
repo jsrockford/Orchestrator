@@ -13,10 +13,11 @@ import time
 import yaml
 
 from src.controllers.tmux_controller import TmuxController
+from src.utils.path_helpers import get_tmux_worktree_path
 
 CONFIG_PATH = "config.yaml"
 SESSION_NAME = "codex-startup-test"
-WORKING_DIR = "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+WORKING_DIR = str(get_tmux_worktree_path())
 CODEX_KEY = "codex"
 
 

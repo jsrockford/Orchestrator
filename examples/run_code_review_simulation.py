@@ -90,7 +90,14 @@ class ReviewContextManager(ContextManager):
         super().__init__(history_size=history_size)
         self._scenario = scenario
 
-    def build_prompt(self, ai_name: str, task: str, *, include_history: bool = True) -> str:  # type: ignore[override]
+    def build_prompt(
+        self,
+        ai_name: str,
+        task: str,
+        *,
+        include_history: bool = True,
+        current_turn: int | None = None,
+    ) -> str:  # type: ignore[override]
         lines = [
             f"{ai_name.title()}, you're co-reviewing the Python helper below.",
         ]
@@ -102,7 +109,7 @@ class ReviewContextManager(ContextManager):
             )
 
         if include_history:
-            recent = self._format_recent_history()
+            recent = self._format_recent_history(speaker=ai_name)
             if recent:
                 lines.append(f"Recent discussion: {recent}")
 

@@ -91,3 +91,44 @@ def test_clean_output_preserves_indentation(parser):
 
     assert '  def add(a, b):' in cleaned
     assert '      return a + b' in cleaned
+
+
+def test_split_prompt_and_response_returns_last_pair(parser):
+    snippet = """
+> Summarize the Fibonacci sequence in one sentence.
+
+● The Fibonacci sequence starts with 0 and 1, and each subsequent number is the sum of the previous two.
+"""
+    parsed = parser.split_prompt_and_response(snippet)
+
+    assert parsed.prompt == 'Summarize the Fibonacci sequence in one sentence.'
+    assert 'Fibonacci sequence starts with 0 and 1' in parsed.response
+    assert 'Summarize the Fibonacci sequence' in parsed.cleaned_output
+
+
+def test_split_prompt_and_response_handles_fallback(parser):
+    snippet = """
+> Provide a quick status update.
+
+The deployment succeeded and all services are healthy.
+"""
+    parsed = parser.split_prompt_and_response(snippet)
+
+    assert parsed.prompt == 'Provide a quick status update.'
+    assert parsed.response == 'The deployment succeeded and all services are healthy.'
+
+
+def test_split_prompt_and_response_keeps_multiline_response(parser):
+    snippet = """
+> qwen, draft a short agenda for the sync.
+
+✦ Here's a quick agenda:
+  1. Review open blockers
+  2. Confirm deployment timeline
+  3. Assign follow-up owners
+"""
+    parsed = parser.split_prompt_and_response(snippet)
+
+    assert parsed.prompt == 'qwen, draft a short agenda for the sync.'
+    assert parsed.response.splitlines()[0] == "Here's a quick agenda:"
+    assert '2. Confirm deployment timeline' in parsed.response

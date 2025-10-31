@@ -3,6 +3,11 @@
 ## Project Structure & Module Organization
 The orchestration runtime lives in `src/`, with session-aware controllers in `src/controllers/` (`claude_controller.py`, `gemini_controller.py`, `tmux_controller.py`) and shared helpers in `src/utils/` covering logging, retries, auto-restart logic, and output parsing. Top-level pytest suites such as `test_controller.py`, `test_dual_ai.py`, and `test_output_parser.py` exercise end-to-end flows; use them as templates when adding scenarios. Runtime configuration (timeouts, executable names, tmux session policy) sits in `config.yaml`, and execution logs stream to `logs/` for post-run diagnostics.
 
+## Critical Environment Rules
+- All code changes must occur inside `/home/dgray/Projects/Orchestrator`, the primary repository. Never modify files outside this directory.
+- `/home/dgray/Projects/TestOrch` is Don’s separate worktree for running tests. Do not edit files there unless explicitly instructed; Don will sync code and execute tests.
+- The project relies on the `venv` Python virtual environment. Before suggesting or running Python commands, confirm whether the environment is activated.
+
 ## Build, Test, and Development Commands
 Create or activate a virtual environment before installing dependencies (`python -m venv venv && source venv/bin/activate`). Install runtime packages with:
 ```bash

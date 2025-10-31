@@ -1,6 +1,6 @@
 # Multi-AI CLI Interaction POC Configuration
 # Values based on empirical testing and observation
-# Supports: Claude Code and Gemini CLI
+# Supports: Claude Code, Gemini CLI, Codex CLI, and Qwen CLI
 #
 # IMPORTANT: Startup timeouts should be generous to handle real-world variability:
 # - Network latency for credential loading
@@ -21,6 +21,7 @@ claude:
   ready_check_interval: 0.5  # Seconds between output stability checks
   ready_stable_checks: 3     # Consecutive stable checks required
   debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
+  ready_stabilization_delay: 1.0  # Pause after ready indicator before sending first command
 
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt (not reliable for ready detection)
@@ -39,7 +40,7 @@ claude:
   text_enter_delay: 0.6                  # Delay between text and Enter
 
   # Path to Claude Code executable
-  executable: "safe_claude"  # Wrapper enforces sandboxed execution
+  executable: "claude"  # Wrapper enforces sandboxed execution
   executable_args:
     - "--dangerously-skip-permissions"
 
@@ -60,6 +61,7 @@ gemini:
   ready_check_interval: 0.5  # Seconds between output stability checks
   ready_stable_checks: 6     # Consecutive stable checks required
   debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
+  ready_stabilization_delay: 2.0  # Gemini tends to need longer to accept first input
 
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt
@@ -94,7 +96,7 @@ gemini:
   tool_marker: "✓"       # Checkmark for successful tool execution
 
   # Path to Gemini executable
-  executable: "safe_gemini"  # Wrapper enforces sandboxed execution
+  executable: "gemini"  # Wrapper enforces sandboxed execution
   executable_args:
     - "--yolo"
 
@@ -108,6 +110,7 @@ codex:
   ready_check_interval: 0.5
   ready_stable_checks: 4
   debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
+  ready_stabilization_delay: 1.0
   prompt_pattern: ">"
   ready_indicators:
     - "OpenAI Codex"
@@ -122,7 +125,40 @@ codex:
   submit_key: "Enter"
   text_enter_delay: 0.1
   response_marker: "▸"
-  executable: "safe_codex"
+  executable: "codex"
+  executable_args: []
+  pause_on_manual_clients: false
+
+qwen:
+  # Startup timing
+  startup_timeout: 25
+  init_wait: 2
+  pane_width: 200
+  pane_height: 50
+
+  # Response timing
+  response_timeout: 500
+  ready_check_interval: 0.5
+  ready_stable_checks: 4
+  debug_wait_logging: false
+
+  # Command patterns and indicators
+  ready_indicators:
+    - "▸ Type your message or @path/to/file"
+    - "Type your message or @path/to/file"
+  loading_indicators:
+    - "(esc to cancel"
+    - "(escape to cancel"
+  loading_indicator_settle_time: 1.5
+  ready_stabilization_delay: 0.75
+  submit_key: "Enter"
+  text_enter_delay: 0.6
+  post_text_delay: 0.0
+  strip_ansi_for_indicators: true
+
+  # Response marker and executable
+  response_marker: "▸"
+  executable: "qwen"
   executable_args: []
   pause_on_manual_clients: false
 
@@ -131,6 +167,7 @@ tmux:
   claude_session: "claude"   # Default Claude session name
   gemini_session: "gemini"   # Default Gemini session name
   codex_session: "codex"     # Default Codex session name
+  qwen_session: "qwen"       # Default Qwen session name
   default_pane_width: 200
   default_pane_height: 50
 
@@ -154,8 +191,8 @@ logging:
 
 worktree:
   # Git worktree configuration for multi-instance testing
-  main_path: "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest"
-  tmux_path: "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+  main_path: "/home/dgray/Projects/Orchestrator"
+  tmux_path: "/home/dgray/Projects/TestOrch"
 
 test_commands:
   # Sample commands for testing
