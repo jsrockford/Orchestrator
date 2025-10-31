@@ -1,0 +1,7 @@
+2025-10-22 15:55:17 - src.controllers.tmux_controller.claude - INFO - Initializing TmuxController for claude in session claude
+2025-10-22 15:55:17 - src.controllers.tmux_controller.gemini - INFO - Initializing TmuxController for gemini in session gemini
+2025-10-22 15:55:17 - src.controllers.tmux_controller.gemini - INFO - Configured post_text_delay=0.500s (text_enter_delay=0.500s)
+2025-10-22 15:55:17 - src.controllers.tmux_controller.codex - INFO - Initializing TmuxController for codex in session codex
+2025-10-22 15:55:17 - src.controllers.tmux_controller.claude - INFO - Starting session 'claude'
+2025-10-22 15:55:17 - src.controllers.tmux_controller.claude - ERROR - Failed to create tmux session: create window failed: fork failed: Permission denied
+

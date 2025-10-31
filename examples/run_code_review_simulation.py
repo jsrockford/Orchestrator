@@ -11,6 +11,7 @@ from typing import Dict
 
 from examples.run_orchestrated_discussion import build_controller, run_discussion
 from src.orchestrator.context_manager import ContextManager
+from src.utils.config_loader import get_config
 from src.utils.logger import get_logger
 
 
@@ -89,7 +90,14 @@ class ReviewContextManager(ContextManager):
         super().__init__(history_size=history_size)
         self._scenario = scenario
 
-    def build_prompt(self, ai_name: str, task: str, *, include_history: bool = True) -> str:  # type: ignore[override]
+    def build_prompt(
+        self,
+        ai_name: str,
+        task: str,
+        *,
+        include_history: bool = True,
+        current_turn: int | None = None,
+    ) -> str:  # type: ignore[override]
         lines = [
             f"{ai_name.title()}, you're co-reviewing the Python helper below.",
         ]
@@ -101,7 +109,7 @@ class ReviewContextManager(ContextManager):
             )
 
         if include_history:
-            recent = self._format_recent_history()
+            recent = self._format_recent_history(speaker=ai_name)
             if recent:
                 lines.append(f"Recent discussion: {recent}")
 
@@ -187,6 +195,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Launch the CLAUDE↔Gemini code review simulation scenario."
     )
+    config = get_config()
+
+    def default_command(agent: str) -> str:
+        try:
+            return config.get_executable_command(agent)
+        except (KeyError, TypeError) as exc:
+            parser.error(
+                f"Executable for '{agent}' is not configured correctly in config.yaml: {exc}"
+            )
+
+    claude_default = default_command("claude")
+    gemini_default = default_command("gemini")
     parser.add_argument(
         "--snippet",
         type=Path,
@@ -216,13 +236,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--claude-executable",
-        default="claude --dangerously-skip-permissions",
-        help="Command used to launch Claude Code CLI (default: 'claude --dangerously-skip-permissions').",
+        default=claude_default,
+        help=f"Command used to launch Claude Code CLI (default: '{claude_default}').",
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screenReader",
-        help="Command used to launch Gemini CLI (default: 'gemini --yolo --screenReader').",
+        default=gemini_default,
+        help=f"Command used to launch Gemini CLI (default: '{gemini_default}').",
     )
     parser.add_argument(
         "--claude-working-dir",

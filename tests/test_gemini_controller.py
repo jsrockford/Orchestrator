@@ -6,6 +6,7 @@ Test GeminiController with refactored architecture
 import sys
 import time
 from src.controllers.gemini_controller import GeminiController
+from src.utils.path_helpers import get_repo_root
 
 
 def main():
@@ -14,7 +15,7 @@ def main():
     # Create controller using new GeminiController class
     controller = GeminiController(
         session_name="gemini-controller-test",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest"
+        working_dir=str(get_repo_root())
     )
 
     print(f"1. Controller created")

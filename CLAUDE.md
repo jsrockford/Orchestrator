@@ -6,6 +6,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a proof-of-concept for programmatically interacting with Claude Code CLI running in WSL while maintaining manual user interaction capability. The goal is to test and validate methods for sending automated commands, capturing responses, and enabling multi-AI orchestration.
 
+## Critical Working Directory Rules
+
+**IMPORTANT**: Follow these directory rules strictly:
+
+1. **Project Repository**: `/home/dgray/Projects/Orchestrator`
+   - This is the ONLY directory where code changes should be made
+   - All edits, new files, and modifications MUST be in this directory
+   - NEVER make changes outside this directory
+
+2. **Test Worktree Directory**: `/home/dgray/Projects/TestOrch`
+   - This is a separate worktree for testing purposes
+   - The user maintains fresh copies of code here for testing
+   - The user is responsible for running tests in this directory
+   - DO NOT modify files in this directory unless explicitly instructed
+
+3. **Virtual Environment**: `venv`
+   - The project uses a Python virtual environment named `venv`
+   - Always ask the user before running Python project code
+   - Be mindful of virtual environment activation when suggesting commands
+
 ## Architecture
 
 The POC implements three controller approaches to interact with Claude Code:

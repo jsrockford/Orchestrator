@@ -9,6 +9,7 @@ import sys
 import time
 from src.controllers.claude_controller import ClaudeController
 from src.controllers.gemini_controller import GeminiController
+from src.utils.path_helpers import get_tmux_worktree_path, get_repo_root
 
 
 def main():
@@ -20,12 +21,12 @@ def main():
     # Create both controllers
     claude = ClaudeController(
         session_name="claude-dual-test",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+        working_dir=str(get_tmux_worktree_path())
     )
 
     gemini = GeminiController(
         session_name="gemini-dual-test",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest"
+        working_dir=str(get_repo_root())
     )
 
     print("1. Controllers created:")

@@ -8,6 +8,7 @@ This module provides programmatic control over AI CLI tools
 import subprocess
 import time
 import shutil
+import re
 from collections import deque
 from typing import Optional, List, Dict, Any, Mapping, Sequence, Deque, Tuple
 
@@ -28,9 +29,13 @@ from ..utils.exceptions import (
     TmuxError
 )
 from ..utils.logger import get_logger
+from ..utils.config_loader import get_config
 from ..utils.retry import retry_with_backoff, STANDARD_RETRY
 from ..utils.health_check import HealthChecker
 from ..utils.auto_restart import AutoRestarter, RestartPolicy
+
+
+ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 
 class TmuxController(SessionBackend):
@@ -96,15 +101,40 @@ class TmuxController(SessionBackend):
         self.ready_check_interval = self.config.get('ready_check_interval', 0.5)
         self.ready_stable_checks = self.config.get('ready_stable_checks', 3)
         self.ready_indicators = self.config.get('ready_indicators', [])
+        self.loading_indicators = self.config.get('loading_indicators', [])
+        self.loading_indicator_settle_time = float(self.config.get('loading_indicator_settle_time', 1.0))
+        self.response_complete_markers = self.config.get('response_complete_markers', [])
         self.submit_key = self.config.get('submit_key', 'Enter')
         self.text_enter_delay = float(self.config.get('text_enter_delay', 0.1))
         self.post_text_delay = float(self.config.get('post_text_delay', 0.0))
+        fallback_keys = self.config.get('submit_fallback_keys', ())
+        if isinstance(fallback_keys, str):
+            fallback_keys = [fallback_keys]
+        self.submit_fallback_keys = tuple(str(key).strip() for key in fallback_keys if key)
+        self.submit_retry_delay = float(self.config.get('submit_retry_delay', 0.0))
+        ready_delay_config = self.config.get('ready_stabilization_delay')
+        if ready_delay_config is None:
+            self.ready_stabilization_delay = 2.0 if self.executable == "gemini" else 1.0
+            ready_delay_explicit = False
+        else:
+            self.ready_stabilization_delay = float(ready_delay_config)
+            ready_delay_explicit = True
+        self._strip_ansi_for_markers = bool(self.config.get('strip_ansi_for_indicators', True))
+        self.debug_wait_logging = bool(self.config.get('debug_wait_logging', False))
         if self.post_text_delay > 0:
             self.logger.info(
                 "Configured post_text_delay=%.3fs (text_enter_delay=%.3fs)",
                 self.post_text_delay,
                 self.text_enter_delay,
             )
+        if ready_delay_explicit and self.ready_stabilization_delay >= 0:
+            self.logger.info(
+                "Configured ready_stabilization_delay=%.3fs for executable '%s'",
+                self.ready_stabilization_delay,
+                self.executable,
+            )
+        if self._strip_ansi_for_markers:
+            self.logger.debug("ANSI stripping enabled for indicator detection")
         self._pause_on_manual_clients = bool(self.config.get('pause_on_manual_clients', True))
 
         # Verify environment on initialization
@@ -418,6 +448,9 @@ class TmuxController(SessionBackend):
                         fallback.stderr.strip() if fallback.stderr else "unknown",
                     )
 
+            if self.submit_fallback_keys:
+                self._trigger_fallback_submit_if_needed()
+
         self.logger.debug("Command sent successfully")
         return True
 
@@ -432,6 +465,72 @@ class TmuxController(SessionBackend):
             return
 
         self._last_output_lines = raw_output.splitlines()
+
+    def _submission_in_progress(self) -> bool:
+        """
+        Detect whether the CLI has started processing the previously submitted command.
+
+        We treat the presence of any configured loading indicator as evidence that the
+        command was accepted and is currently running.
+        """
+        if not self.loading_indicators:
+            return False
+        if not self.session_exists():
+            return False
+
+        try:
+            output = self.capture_output()
+        except SessionBackendError:
+            return False
+
+        tail_text = "\n".join(self._tail_lines(output, limit=20))
+        sanitized_tail = self._indicator_text(tail_text)
+        return any(
+            indicator and indicator in sanitized_tail
+            for indicator in self.loading_indicators
+        )
+
+    def _trigger_fallback_submit_if_needed(self) -> None:
+        """
+        Send additional submit keys when the primary submit sequence appears to stall.
+        """
+        if not self.submit_fallback_keys:
+            return
+
+        delay = max(0.0, self.submit_retry_delay)
+        if delay:
+            time.sleep(delay)
+
+        if self._submission_in_progress():
+            self.logger.debug("Submission in progress; fallback submit keys not required")
+            return
+
+        for key in self.submit_fallback_keys:
+            self.logger.warning(
+                "Primary submit key did not trigger processing; sending fallback key '%s'",
+                key,
+            )
+            result = self._run_tmux_command([
+                "send-keys", "-t", self.session_name, key
+            ])
+            stderr = result.stderr.strip() if result.stderr else ""
+            suffix = f" (stderr: {stderr})" if stderr else ""
+            self.logger.info(
+                "Fallback submit key '%s' send-keys returned %s%s",
+                key,
+                result.returncode,
+                suffix,
+            )
+
+            if result.returncode != 0:
+                continue
+
+            post_delay = delay if delay > 0 else 0.1
+            if post_delay > 0:
+                time.sleep(post_delay)
+
+            if self._submission_in_progress():
+                break
 
     # ========================================================================
     # SessionBackend Interface Implementation
@@ -496,6 +595,8 @@ class TmuxController(SessionBackend):
                         "Fallback Enter send failed in send_enter: %s",
                         fallback.stderr.strip() if fallback.stderr else "unknown",
                     )
+            if self.submit_fallback_keys:
+                self._trigger_fallback_submit_if_needed()
         except TmuxError as e:
             raise SessionBackendError(f"Failed to send Enter: {e}") from e
 
@@ -696,16 +797,49 @@ class TmuxController(SessionBackend):
             self.logger.error(f"Session '{self.session_name}' already exists")
             raise SessionAlreadyExists(f"Session '{self.session_name}' already exists")
 
+        tmux_defaults = {}
+        try:
+            tmux_defaults = get_config().get_section("tmux") or {}
+        except Exception:  # pragma: no cover - config loader errors bubble later
+            tmux_defaults = {}
+
+        pane_width = self.config.get('pane_width')
+        if pane_width is None:
+            pane_width = tmux_defaults.get('default_pane_width')
+        pane_height = self.config.get('pane_height')
+        if pane_height is None:
+            pane_height = tmux_defaults.get('default_pane_height')
+
+        def _normalize_dimension(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                numeric = int(value)
+            except (TypeError, ValueError):
+                return None
+            return numeric if numeric > 0 else None
+
+        pane_width_int = _normalize_dimension(pane_width) or 200
+        pane_height_int = _normalize_dimension(pane_height) or 50
+
         # Create detached tmux session with AI executable
-        self.logger.debug(f"Creating tmux session with executable: {self.executable}")
-        result = self._run_tmux_command([
+        self.logger.debug(
+            "Creating tmux session with executable: %s (pane %dx%d)",
+            self.executable,
+            pane_width_int,
+            pane_height_int,
+        )
+        command = [
             "new-session",
             "-d",  # Detached
             "-s", self.session_name,  # Session name
             "-c", self.working_dir,  # Working directory
+            "-x", str(pane_width_int),
+            "-y", str(pane_height_int),
             self.executable,  # Command to run (claude, gemini, etc.)
-            *self.executable_args
-        ])
+            *self.executable_args,
+        ]
+        result = self._run_tmux_command(command)
 
         if result.returncode != 0:
             self.logger.error(f"Failed to create tmux session: {result.stderr}")
@@ -739,9 +873,15 @@ class TmuxController(SessionBackend):
         # Stabilization delay after detecting ready indicator
         # Ensures input buffer is fully initialized and ready for first command
         # Critical for Gemini which can show prompt before buffer is ready
-        stabilization_delay = 2.0 if self.executable == "gemini" else 1.0
-        self.logger.debug(f"Ready indicator found, allowing input buffer to stabilize ({stabilization_delay}s)...")
-        time.sleep(stabilization_delay)
+        stabilization_delay = max(0.0, float(self.ready_stabilization_delay))
+        if stabilization_delay > 0:
+            self.logger.debug(
+                "Ready indicator found, allowing input buffer to stabilize (%.3fs)...",
+                stabilization_delay,
+            )
+            time.sleep(stabilization_delay)
+        else:
+            self.logger.debug("Ready indicator found; no additional stabilization delay configured")
 
         # Verify session is actually ready
         if not self.session_exists():
@@ -809,15 +949,13 @@ class TmuxController(SessionBackend):
         check_interval = 0.5
         start_time = time.time()
 
-        # Get loading indicators from config (if available)
-        loading_indicators = self.config.get('loading_indicators', [])
-
         self.logger.debug(f"Waiting for startup ready indicators: {self.ready_indicators}")
-        if loading_indicators:
-            self.logger.debug(f"Will check for absence of loading indicators: {loading_indicators}")
+        if self.loading_indicators:
+            self.logger.debug(f"Will check for absence of loading indicators: {self.loading_indicators}")
 
         while (time.time() - start_time) < timeout:
             output = self.capture_output()
+            search_output = self._indicator_text(output)
 
             # Check for AI-specific ready indicators
             if self.ready_indicators:
@@ -826,15 +964,18 @@ class TmuxController(SessionBackend):
                 # First check if ready indicator is present
                 ready_indicator_found = False
                 for indicator in self.ready_indicators:
-                    if indicator in output:
+                    if indicator and indicator in search_output:
                         ready_indicator_found = True
                         self.logger.debug(f"Startup ready indicator found: '{indicator}'")
                         break
 
                 if ready_indicator_found:
                     # Now check that no loading indicators are present
-                    if loading_indicators:
-                        has_loading = any(loading_ind in output for loading_ind in loading_indicators)
+                    if self.loading_indicators:
+                        has_loading = any(
+                            loading_ind and loading_ind in search_output
+                            for loading_ind in self.loading_indicators
+                        )
                         if has_loading:
                             self.logger.debug("Ready indicator found but loading indicator still present, waiting...")
                             time.sleep(check_interval)
@@ -891,6 +1032,57 @@ class TmuxController(SessionBackend):
         self._last_output_lines = []
 
     @staticmethod
+    def _tail_lines(output: str, limit: int = 26) -> List[str]:
+        if not output:
+            return []
+        lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+        return lines[-limit:]
+
+    @staticmethod
+    def _contains_any(haystack: str, needles: Sequence[str]) -> bool:
+        return any(needle and needle in haystack for needle in needles)
+
+    def _indicator_text(self, text: str) -> str:
+        if not text:
+            return ""
+        if self._strip_ansi_for_markers:
+            return ANSI_ESCAPE_RE.sub('', text)
+        return text
+
+    def _log_wait_debug(self, message: str, *args) -> None:
+        if self.debug_wait_logging:
+            self.logger.debug(message, *args)
+
+    def _is_response_ready(self, tail_lines: Sequence[str]) -> bool:
+        if not tail_lines:
+            return False
+
+        sanitized = [self._indicator_text(line) for line in tail_lines]
+        relevant = list(sanitized[-5:]) if len(sanitized) > 5 else list(sanitized)
+        tail_text = "\n".join(relevant)
+
+        markers_found = [marker for marker in self.response_complete_markers if marker and marker in tail_text]
+        indicators_found = [indicator for indicator in self.ready_indicators if indicator and indicator in tail_text]
+
+        ready = True
+        if self.response_complete_markers and not markers_found:
+            ready = False
+        if self.ready_indicators and not indicators_found:
+            ready = False
+
+        if self.debug_wait_logging:
+            preview = tail_text[-400:] if len(tail_text) > 400 else tail_text
+            self._log_wait_debug(
+                "Ready check tail preview=%r markers_found=%s indicators_found=%s -> %s",
+                preview,
+                markers_found,
+                indicators_found,
+                ready,
+            )
+
+        return ready
+
+    @staticmethod
     def _common_prefix_length(first: Sequence[str], second: Sequence[str]) -> int:
         limit = min(len(first), len(second))
         for idx in range(limit):
@@ -923,28 +1115,119 @@ class TmuxController(SessionBackend):
         start_time = time.time()
         previous_output = ""
         stable_count = 0
+        half_timeout_warning_emitted = False
+        saw_loading_indicator = False
+        loading_cleared_time: Optional[float] = None
+        ready_gate_released = True
+
+        self._log_wait_debug(
+            "wait_for_ready start timeout=%ss interval=%.3fs stable_checks=%d",
+            timeout,
+            check_interval,
+            required_stable_checks,
+        )
 
         while (time.time() - start_time) < timeout:
+            elapsed = time.time() - start_time
+            if (
+                not half_timeout_warning_emitted
+                and timeout
+                and elapsed >= (timeout / 2)
+            ):
+                self.logger.warning(
+                    "wait_for_ready has been waiting %.2fs (>=50%% of timeout %ss) for session '%s'",
+                    elapsed,
+                    timeout,
+                    self.session_name,
+                )
+                half_timeout_warning_emitted = True
+
             current_output = self.capture_output()
+            tail_lines = self._tail_lines(current_output)
+            sanitized_tail_lines = [self._indicator_text(line) for line in tail_lines]
+
+            if sanitized_tail_lines and self.loading_indicators:
+                tail_window = sanitized_tail_lines[-6:] if len(sanitized_tail_lines) > 6 else sanitized_tail_lines
+                tail_text = "\n".join(tail_window)
+                loading_present = self._contains_any(tail_text, self.loading_indicators)
+                if loading_present:
+                    if loading_cleared_time is not None:
+                        self._log_wait_debug(
+                            "Loading indicator reappeared after %.2fs; resetting settle timer",
+                            time.time() - loading_cleared_time,
+                        )
+                    if not saw_loading_indicator:
+                        self.logger.info("wait_for_ready detected processing start for session '%s'", self.session_name)
+                    saw_loading_indicator = True
+                    loading_cleared_time = None
+                    ready_gate_released = False
+                    self._log_wait_debug("Loading indicator detected; waiting for completion")
+                    stable_count = 0
+                    previous_output = current_output
+                    time.sleep(check_interval)
+                    continue
+                if saw_loading_indicator and not loading_present:
+                    if loading_cleared_time is None:
+                        loading_cleared_time = time.time()
+                        self.logger.info(
+                            "wait_for_ready detected loading indicator cleared for session '%s'",
+                            self.session_name,
+                        )
+                    cleared_elapsed = time.time() - loading_cleared_time
+                    # Allow brief settling period after indicator clears
+                    settle_required = max(check_interval, self.loading_indicator_settle_time)
+                    if cleared_elapsed < settle_required:
+                        self._log_wait_debug(
+                            "Loading indicator just cleared (%.2fs); waiting one more interval for output to settle",
+                            cleared_elapsed,
+                        )
+                        previous_output = current_output
+                        time.sleep(check_interval)
+                        continue
+                    ready_gate_released = True
+                    self._log_wait_debug(
+                        "Loading indicator cleared and settle requirement satisfied (%.2fs >= %.2fs)",
+                        cleared_elapsed,
+                        settle_required,
+                    )
 
             # Check if output has stabilized (no changes)
             if current_output == previous_output:
                 stable_count += 1
-                if stable_count >= required_stable_checks:
-                    # Check for AI-specific ready indicators
-                    if self.ready_indicators:
-                        # Check if any ready indicator is present
-                        if any(indicator in current_output for indicator in self.ready_indicators):
-                            return True
-                    else:
-                        # No specific indicators configured, just use stabilization
-                        return True
+                elapsed = time.time() - start_time
+                self._log_wait_debug(
+                    "Output stable (%d/%d) after %.2fs",
+                    stable_count,
+                    required_stable_checks,
+                    elapsed,
+                )
+                if (
+                    stable_count >= required_stable_checks
+                    and ready_gate_released
+                    and self._is_response_ready(sanitized_tail_lines)
+                ):
+                    self._log_wait_debug("Ready confirmed after %.2fs", elapsed)
+                    if saw_loading_indicator:
+                        self.logger.info(
+                            "wait_for_ready processed completion via stability fallback for session '%s'",
+                            self.session_name,
+                        )
+                    return True
             else:
+                if stable_count:
+                    elapsed = time.time() - start_time
+                    self._log_wait_debug(
+                        "Output changed after %.2fs; reset stable_count (was %d)",
+                        elapsed,
+                        stable_count,
+                    )
                 stable_count = 0  # Reset if output changed
 
             previous_output = current_output
             time.sleep(check_interval)
 
+        elapsed_total = time.time() - start_time
+        self._log_wait_debug("wait_for_ready timed out after %.2fs", elapsed_total)
         return False  # Timeout
 
     def kill_session(self) -> bool:

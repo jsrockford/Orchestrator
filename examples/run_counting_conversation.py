@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Let Claude and Gemini count upward together using the orchestrator.
+Let Claude, Gemini, and Codex count upward together using the orchestrator.
 
-Claude starts at 1, Gemini replies with 2, and so on until the target count.
+The first AI starts at 1, the next replies with 2, and so on until the target count.
 The script records the transcript and verifies that every number appears in order.
 """
 
@@ -13,7 +13,7 @@ import re
 import time
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError, TmuxController
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
@@ -70,7 +70,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     cfg = get_config()
     tmux_cfg = cfg.get_section("tmux")
 
-    parser = argparse.ArgumentParser(description="Have Claude and Gemini count together.")
+    parser = argparse.ArgumentParser(description="Have Claude, Gemini, and Codex count together.")
+
+    def default_command(agent: str) -> str:
+        try:
+            return cfg.get_executable_command(agent)
+        except (KeyError, TypeError) as exc:
+            parser.error(
+                f"Executable for '{agent}' is not configured correctly in config.yaml: {exc}"
+            )
+
+    claude_default = default_command("claude")
+    gemini_default = default_command("gemini")
+    codex_default = default_command("codex")
     parser.add_argument("--count-to", type=int, default=20, help="Highest number to reach (default 20).")
     parser.add_argument("--auto-start", action="store_true", help="Launch sessions automatically if needed.")
     parser.add_argument("--kill-existing", action="store_true", help="Kill sessions before starting.")
@@ -78,13 +90,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--gemini-session", default=tmux_cfg.get("gemini_session", "gemini"))
     parser.add_argument(
         "--claude-executable",
-        default="claude --dangerously-skip-permissions",
-        help="Command to launch Claude (default matches config).",
+        default=claude_default,
+        help=f"Command to launch Claude (default: '{claude_default}').",
     )
     parser.add_argument(
         "--gemini-executable",
-        default="gemini --yolo --screenReader",
-        help="Command to launch Gemini (default matches config).",
+        default=gemini_default,
+        help=f"Command to launch Gemini (default: '{gemini_default}').",
     )
     parser.add_argument("--claude-startup-timeout", type=int, default=20)
     parser.add_argument("--gemini-startup-timeout", type=int, default=60)
@@ -92,6 +104,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--gemini-init-wait", type=float, default=None)
     parser.add_argument("--claude-cwd", default=None)
     parser.add_argument("--gemini-cwd", default=None)
+    parser.add_argument("--codex-session", default=tmux_cfg.get("codex_session", "codex"))
+    parser.add_argument(
+        "--codex-executable",
+        default=codex_default,
+        help=f"Command to launch Codex (default: '{codex_default}').",
+    )
+    parser.add_argument("--codex-startup-timeout", type=int, default=20)
+    parser.add_argument("--codex-init-wait", type=float, default=None)
+    parser.add_argument("--codex-cwd", default=None)
     parser.add_argument("--log-file", default=None, help="Optional path to write the transcript.")
     parser.add_argument(
         "--history-size",
@@ -118,6 +139,29 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Seconds to wait for each AI response before giving up (default 30s).",
     )
     return parser.parse_args(argv)
+
+
+def capture_scrollback_lines(controller: TmuxController) -> List[str]:
+    try:
+        snapshot = controller.capture_scrollback()
+    except (SessionBackendError, SessionNotFoundError):
+        return []
+    return snapshot.splitlines()
+
+
+def compute_delta(previous: List[str], current: List[str], tail_limit: int) -> List[str]:
+    if previous and len(current) >= len(previous):
+        limit = min(len(previous), len(current))
+        prefix = 0
+        while prefix < limit and previous[prefix] == current[prefix]:
+            prefix += 1
+        delta = current[prefix:]
+    else:
+        delta = current
+
+    if tail_limit and len(delta) > tail_limit:
+        delta = delta[-tail_limit:]
+    return delta
 
 
 def build_prompt(number: int, speaker: str, next_speaker: str) -> str:
@@ -154,17 +198,27 @@ def main(argv: list[str]) -> int:
             init_wait=args.gemini_init_wait,
             kill_existing=args.kill_existing,
         )
+        codex = build_controller(
+            name="Codex",
+            session_name=args.codex_session,
+            executable=args.codex_executable,
+            working_dir=args.codex_cwd,
+            auto_start=args.auto_start,
+            startup_timeout=args.codex_startup_timeout,
+            init_wait=args.codex_init_wait,
+            kill_existing=args.kill_existing,
+        )
     except (SessionBackendError, SessionNotFoundError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
 
-    controllers: Dict[str, TmuxController] = {"claude": claude, "gemini": gemini}
+    controllers: Dict[str, TmuxController] = {"claude": claude, "gemini": gemini, "codex": codex}
     orchestrator = DevelopmentTeamOrchestrator(controllers)
     context_manager = ContextManager(history_size=args.history_size)
-    router = MessageRouter(["claude", "gemini"], context_manager=context_manager)
+    router = MessageRouter(["claude", "gemini", "codex"], context_manager=context_manager)
     manager = ConversationManager(
         orchestrator,
-        ["claude", "gemini"],
+        ["claude", "gemini", "codex"],
         context_manager=context_manager,
         message_router=router,
         max_history=args.history_size,
@@ -196,11 +250,19 @@ def main(argv: list[str]) -> int:
         if turn_delay:
             time.sleep(turn_delay)
 
+        controller = controllers[speaker]
+        before_lines = capture_scrollback_lines(controller)
         dispatch = orchestrator.dispatch_command(speaker, prompt)
-        controllers[speaker].wait_for_ready(timeout=max(int(args.response_timeout), 1))
+        controller.wait_for_ready(timeout=max(int(args.response_timeout), 1))
+        after_lines = capture_scrollback_lines(controller)
+        delta_lines = compute_delta(before_lines, after_lines, tail_limit=300)
+        if delta_lines:
+            raw_output = "\n".join(delta_lines)
+        else:
+            fallback = controller.get_last_output(tail_lines=300)
+            raw_output = fallback or ""
 
-        raw_output = controllers[speaker].get_last_output(tail_lines=200)
-        cleaned_output = parser.clean_output(raw_output)
+        cleaned_output = parser.clean_output(raw_output, strip_trailing_prompts=True)
         pairs = parser.extract_responses(raw_output) or parser.extract_responses(cleaned_output)
         response = pairs[-1]["response"].strip() if pairs else cleaned_output.strip() or raw_output.strip()
         reported_number: Optional[int] = None

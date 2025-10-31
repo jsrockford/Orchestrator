@@ -82,3 +82,9 @@ CCompact.md
 *.png
 REMINDER.md
 observations.md
+scratch/
+screens/
+logs/
+
+.claude/
+

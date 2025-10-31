@@ -4,12 +4,15 @@ Test OutputParser with real Claude Code output
 """
 
 from src.utils.output_parser import OutputParser
+from src.utils.path_helpers import get_tmux_worktree_path
 
 # Sample output from our actual tests
-SAMPLE_OUTPUT = """
+WORKDIR_DISPLAY = str(get_tmux_worktree_path())
+
+SAMPLE_OUTPUT = f"""
  ▐▛███▜▌   Claude Code v2.0.8
 ▝▜█████▛▘  Sonnet 4.5 · Claude Pro
-  ▘▘ ▝▝    /mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux
+  ▘▘ ▝▝    {WORKDIR_DISPLAY}
 
 > What is 2 + 2?
 

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..utils.logger import get_logger
-from ..utils.output_parser import OutputParser
+from ..utils.output_parser import OutputParser, ParsedOutput
+from ..utils.config_loader import get_config
 
 
 class ConversationManager:
@@ -34,6 +35,7 @@ class ConversationManager:
         *,
         context_manager: Any | None = None,
         message_router: Any | None = None,
+        participant_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
         max_history: int = 200,
         include_history: bool = True,
     ) -> None:
@@ -45,6 +47,8 @@ class ConversationManager:
         self.participants: List[str] = list(participants)
         self.context_manager = context_manager
         self.message_router = message_router
+        metadata_source = participant_metadata or {}
+        self.participant_metadata: Dict[str, Dict[str, Any]] = {}
         self._max_history = max(1, int(max_history))
         self._include_history = bool(include_history)
         self._turn_counter: int = 0
@@ -53,6 +57,9 @@ class ConversationManager:
         self._conflict_code_pattern = re.compile(r"```.*?```", re.DOTALL)
         self._conflict_inline_code_pattern = re.compile(r"`[^`]*`")
         self._conflict_quoted_pattern = re.compile(r"\"[^\"]*\"|'[^']*'")
+        tmux_cfg = get_config().get_section("tmux") or {}
+        self._capture_tail_limit: int = int(tmux_cfg.get("capture_lines", 500) or 500)
+        self._fallback_notices: Set[str] = set()
 
         if self.message_router is not None:
             for name in self.participants:
@@ -62,6 +69,25 @@ class ConversationManager:
                         register(name)
                     except Exception as exc:  # noqa: BLE001
                         self.logger.debug("Message router registration failed for '%s': %s", name, exc)
+
+        # Prepare metadata for participants and forward to context manager when available.
+        for name in self.participants:
+            merged: Dict[str, Any] = {"name": name, "type": "cli"}
+            candidate = metadata_source.get(name)
+            if isinstance(candidate, dict):
+                merged.update(candidate)
+            merged.setdefault("type", "cli")
+            self.participant_metadata[name] = merged
+
+            if self.context_manager is not None:
+                registrar = getattr(self.context_manager, "register_participant", None)
+                if callable(registrar):
+                    try:
+                        registrar(name, merged)
+                    except TypeError:
+                        registrar(name)
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.debug("Context manager registration failed for '%s': %s", name, exc)
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -87,8 +113,11 @@ class ConversationManager:
                 break
 
             prompt = self._build_prompt(speaker, topic, conversation)
+            pre_snapshot = self._capture_snapshot(speaker)
             dispatch_summary = self.orchestrator.dispatch_command(speaker, prompt)
-            response = self._read_last_output(speaker)
+            is_queued = bool(dispatch_summary.get("queued"))
+            parsed_output = None if is_queued else self._read_last_output(speaker, pre_snapshot)
+            response = parsed_output.response if parsed_output else None
 
             turn_record = {
                 "turn": self._turn_counter,
@@ -98,6 +127,9 @@ class ConversationManager:
                 "dispatch": dispatch_summary,
                 "response": response,
             }
+            if parsed_output:
+                turn_record["response_prompt"] = parsed_output.prompt
+                turn_record["response_transcript"] = parsed_output.cleaned_output
             conversation.append(turn_record)
             self._turn_counter += 1
 
@@ -263,7 +295,12 @@ class ConversationManager:
             builder = getattr(self.context_manager, "build_prompt", None)
             if callable(builder):
                 try:
-                    return builder(speaker, topic, include_history=self._include_history)
+                    return builder(
+                        speaker,
+                        topic,
+                        include_history=self._include_history,
+                        current_turn=self._turn_counter,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning("Context builder failed for '%s': %s", speaker, exc)
 
@@ -295,11 +332,95 @@ class ConversationManager:
 
         return prompt
 
-    def _read_last_output(self, controller_name: str) -> Optional[str]:
+    def _read_last_output(
+        self,
+        controller_name: str,
+        pre_snapshot: Optional[List[str]],
+    ) -> Optional[ParsedOutput]:
         controller = getattr(self.orchestrator, "controllers", {}).get(controller_name)
         if controller is None:
             return None
 
+        self._wait_for_controller(controller_name, controller)
+
+        capture = getattr(controller, "capture_scrollback", None)
+        if callable(capture):
+            try:
+                post_snapshot = capture().splitlines()
+            except Exception:  # noqa: BLE001
+                self.logger.debug(
+                    "Controller '%s' capture_scrollback failed; falling back to legacy output cache",
+                    controller_name,
+                    exc_info=True,
+                )
+            else:
+                parser = self._output_parsers.setdefault(controller_name, OutputParser())
+                if pre_snapshot is not None:
+                    delta = self._compute_delta(pre_snapshot, post_snapshot, self._capture_tail_limit)
+                else:
+                    delta = post_snapshot[-self._capture_tail_limit :]
+                if delta:
+                    raw_text = "\n".join(delta)
+                    parsed = parser.split_prompt_and_response(raw_text)
+                    if parsed.response or parsed.cleaned_output.strip():
+                        return parsed
+                    return None
+                return None
+
+        reader = getattr(controller, "get_last_output", None)
+        if callable(reader):
+            if controller_name not in self._fallback_notices:
+                self.logger.warning(
+                    "Controller '%s' lacks scrollback capture support; falling back to get_last_output().",
+                    controller_name,
+                )
+                self._fallback_notices.add(controller_name)
+            try:
+                raw_output = reader()
+            except Exception:  # noqa: BLE001
+                self.logger.debug(
+                    "Controller '%s' get_last_output fallback failed",
+                    controller_name,
+                    exc_info=True,
+                )
+                return None
+            if not raw_output:
+                return None
+            parser = self._output_parsers.setdefault(controller_name, OutputParser())
+            parsed = parser.split_prompt_and_response(raw_output)
+            if parsed.response or parsed.cleaned_output.strip():
+                return parsed
+            return None
+
+        if controller_name not in self._fallback_notices:
+            self.logger.warning(
+                "Controller '%s' exposes neither capture_scrollback nor get_last_output; no response captured.",
+                controller_name,
+            )
+            self._fallback_notices.add(controller_name)
+        return None
+
+    def _capture_snapshot(self, controller_name: str) -> Optional[List[str]]:
+        controller = getattr(self.orchestrator, "controllers", {}).get(controller_name)
+        if controller is None:
+            return None
+
+        capture = getattr(controller, "capture_scrollback", None)
+        if not callable(capture):
+            return None
+
+        try:
+            snapshot = capture()
+        except Exception:  # noqa: BLE001
+            self.logger.debug(
+                "Controller '%s' pre-dispatch capture failed",
+                controller_name,
+                exc_info=True,
+            )
+            return None
+        return snapshot.splitlines()
+
+    def _wait_for_controller(self, controller_name: str, controller: Any) -> None:
         waiter = getattr(controller, "wait_for_ready", None)
         if callable(waiter):
             try:
@@ -311,23 +432,56 @@ class ConversationManager:
                     exc_info=True,
                 )
 
-        reader = getattr(controller, "get_last_output", None)
-        if callable(reader):
-            try:
-                raw_output = reader()
-            except Exception:  # noqa: BLE001 - avoid breaking the discussion loop
-                self.logger.debug("Controller '%s' get_last_output failed", controller_name, exc_info=True)
-            else:
-                if not raw_output:
-                    return None
-                parser = self._output_parsers.setdefault(controller_name, OutputParser())
-                cleaned = parser.clean_output(raw_output)
-                return cleaned or None
-        return None
+    @staticmethod
+    def _compute_delta(
+        previous: List[str],
+        current: List[str],
+        tail_limit: Optional[int],
+    ) -> List[str]:
+        if previous and len(current) >= len(previous):
+            limit = min(len(previous), len(current))
+            prefix = 0
+            while prefix < limit and previous[prefix] == current[prefix]:
+                prefix += 1
+            delta = current[prefix:]
+        else:
+            delta = current
+
+        if tail_limit is not None and len(delta) > tail_limit:
+            delta = delta[-tail_limit:]
+        return delta
 
     def _store_turn(self, turn: Dict[str, Any]) -> None:
         """Persist the turn in the rolling history buffer."""
-        self.history.append(turn)
+        structured: Dict[str, Any] = {
+            "turn": turn.get("turn"),
+            "speaker": turn.get("speaker"),
+            "topic": turn.get("topic"),
+            "prompt": turn.get("prompt"),
+            "response": turn.get("response"),
+        }
+
+        response_prompt = turn.get("response_prompt")
+        if response_prompt is not None:
+            structured["response_prompt"] = response_prompt
+
+        response_transcript = turn.get("response_transcript")
+        if response_transcript:
+            structured["response_transcript"] = response_transcript
+
+        metadata = turn.get("metadata")
+        if isinstance(metadata, dict):
+            structured["metadata"] = metadata.copy()
+        elif metadata is not None:
+            structured["metadata"] = metadata
+
+        dispatch = turn.get("dispatch")
+        if isinstance(dispatch, dict):
+            structured["dispatch"] = dispatch.copy()
+        elif dispatch is not None:
+            structured["dispatch"] = dispatch
+
+        self.history.append(structured)
 
     def _record_with_context_manager(self, turn: Dict[str, Any]) -> None:
         """Forward the turn to the context manager if it exposes a compatible hook."""

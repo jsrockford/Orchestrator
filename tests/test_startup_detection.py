@@ -5,24 +5,42 @@ Quick test to verify wait_for_startup() works correctly.
 import sys
 import yaml
 from src.controllers.tmux_controller import TmuxController
+from src.utils.path_helpers import get_tmux_worktree_path
 
 def load_config():
     with open('config.yaml', 'r') as f:
         return yaml.safe_load(f)
+
+
+def _extract_executable_parts(config: dict, agent: str) -> tuple[str, tuple[str, ...]]:
+    section = config.get(agent, {})
+    executable = section.get("executable")
+    if not executable:
+        raise KeyError(f"No executable configured for '{agent}'")
+    args = section.get("executable_args", [])
+    if isinstance(args, str):
+        args = [args]
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(f"Invalid executable_args for '{agent}': {type(args)!r}")
+    return executable, tuple(str(arg) for arg in args)
 
 print("="*60)
 print("Testing Startup Detection")
 print("="*60)
 
 config = load_config()
+tmux_worktree = str(get_tmux_worktree_path())
+claude_exec, claude_args = _extract_executable_parts(config, "claude")
+gemini_exec, gemini_args = _extract_executable_parts(config, "gemini")
 
 # Test Claude
 print("\n1. Testing Claude startup detection...")
 claude = TmuxController(
     session_name="claude-startup-test",
-    executable="claude",
-    working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
-    ai_config=config['claude']
+    executable=claude_exec,
+    working_dir=tmux_worktree,
+    ai_config=config['claude'],
+    executable_args=claude_args,
 )
 
 if claude.session_exists():
@@ -50,9 +68,10 @@ except Exception as e:
 print("\n2. Testing Gemini startup detection...")
 gemini = TmuxController(
     session_name="gemini-startup-test",
-    executable="gemini",
-    working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
-    ai_config=config['gemini']
+    executable=gemini_exec,
+    working_dir=tmux_worktree,
+    ai_config=config['gemini'],
+    executable_args=gemini_args,
 )
 
 if gemini.session_exists():

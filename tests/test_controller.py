@@ -8,11 +8,12 @@ Tests basic functionality of the TmuxController class.
 import sys
 import time
 from src.controllers.tmux_controller import TmuxController
+from src.utils.path_helpers import get_tmux_worktree_path
 
 
 def main():
     # Use the worktree directory for testing
-    worktree_dir = "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+    worktree_dir = str(get_tmux_worktree_path())
 
     # Create controller
     controller = TmuxController(

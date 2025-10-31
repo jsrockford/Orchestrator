@@ -5,7 +5,18 @@ Utilities for parsing and cleaning Claude Code output captured from tmux.
 """
 
 import re
-from typing import List, Optional, Dict
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+
+@dataclass(frozen=True)
+class ParsedOutput:
+    """Represents the structured pieces of a single CLI turn."""
+
+    prompt: Optional[str]
+    response: Optional[str]
+    cleaned_output: str
+    raw_output: Optional[str] = None
 
 
 class OutputParser:
@@ -13,6 +24,7 @@ class OutputParser:
 
     # ANSI escape code pattern
     ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    AGENT_COMMAND_PATTERN = re.compile(r'^(?:>|\$)?\s*/agents\b', re.IGNORECASE)
 
     # Unicode box drawing characters used by Claude Code
     BOX_CHARS = ['─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '═', '║', '╔', '╗', '╚', '╝', '╠', '╣', '╦', '╩', '╬']
@@ -63,7 +75,10 @@ class OutputParser:
         """
         return self.ANSI_ESCAPE.sub('', text)
 
-    def clean_output(self, text: str, strip_ui: bool = True) -> str:
+    PROMPT_MARKERS = ('>', '›')
+    RESPONSE_MARKERS = ('●', '✦', '•')
+
+    def clean_output(self, text: str, strip_ui: bool = True, strip_trailing_prompts: bool = False) -> str:
         """
         Clean Claude Code output by removing UI elements.
 
@@ -88,7 +103,10 @@ class OutputParser:
             if normalized is not None:
                 cleaned_lines.append(normalized)
 
-        return '\n'.join(cleaned_lines).strip()
+        if strip_trailing_prompts:
+            cleaned_lines = self._trim_trailing_prompts(cleaned_lines)
+
+        return '\n'.join(cleaned_lines).rstrip('\n')
 
     def _normalize_line(self, line: str) -> Optional[str]:
         """Normalize or drop a single line of CLI output."""
@@ -156,9 +174,13 @@ class OutputParser:
             line = stripped
 
         # Remove inline shortcut/tool hints
-        line = self.SHORTCUT_HINT_PATTERN.sub('', line).strip()
+        line = self.SHORTCUT_HINT_PATTERN.sub('', line).rstrip()
         stripped = line.strip()
         if not stripped:
+            return None
+
+        # Skip agent invocation commands (e.g., > /agents codex "prompt")
+        if self.AGENT_COMMAND_PATTERN.match(stripped):
             return None
 
         return line
@@ -215,7 +237,8 @@ class OutputParser:
                 continue
 
             # Detect plain question (Claude format): > Question
-            if stripped.startswith('>') and len(stripped) > 2 and not '│' in line:
+            prompt_text = self._extract_prompt_text(stripped)
+            if prompt_text and '│' not in line:
                 # Save previous pair if exists
                 if current_question and current_response:
                     pairs.append({
@@ -224,13 +247,13 @@ class OutputParser:
                     })
 
                 # Start new question
-                current_question = stripped[1:].strip()
+                current_question = prompt_text
                 current_response = []
                 in_response = False
                 continue
 
             # Detect response start (● for Claude or ✦ for Gemini)
-            if stripped.startswith('●') or stripped.startswith('✦'):
+            if stripped.startswith(tuple(self.RESPONSE_MARKERS)):
                 in_response = True
                 # Add response text (without marker)
                 response_text = stripped[1:].strip()
@@ -261,6 +284,44 @@ class OutputParser:
 
         return pairs
 
+    def _extract_prompt_text(self, stripped_line: str) -> Optional[str]:
+        """Return prompt text without leading marker."""
+        for marker in self.PROMPT_MARKERS:
+            if stripped_line.startswith(marker):
+                prompt_text = stripped_line[len(marker):].strip()
+                if prompt_text:
+                    return prompt_text
+        return None
+
+    def _trim_trailing_prompts(self, lines: List[str]) -> List[str]:
+        """Remove trailing prompt lines if a response is present."""
+        if not lines:
+            return lines
+
+        if not any(self._line_has_response_marker(line) for line in lines):
+            return lines
+
+        trimmed = list(lines)
+        while trimmed and self._is_prompt_line(trimmed[-1]):
+            trimmed.pop()
+        return trimmed
+
+    def _is_prompt_line(self, line: str) -> bool:
+        """Return True if the line looks like a CLI prompt (>, ›, etc)."""
+        stripped = line.strip()
+        if not stripped:
+            return False
+        return any(
+            stripped.startswith(marker) and stripped[len(marker):].strip()
+            for marker in self.PROMPT_MARKERS
+        )
+
+    def _line_has_response_marker(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+        return stripped[0] in self.RESPONSE_MARKERS and stripped[1:].strip()
+
     def get_last_response(self, text: str) -> Optional[str]:
         """
         Extract just the last response from output.
@@ -290,6 +351,91 @@ class OutputParser:
         if pairs:
             return pairs[-1]['question']
         return None
+
+    def split_prompt_and_response(
+        self,
+        text: str,
+        *,
+        strip_ui: bool = True,
+        strip_trailing_prompts: bool = True,
+    ) -> ParsedOutput:
+        """
+        Split CLI output into the echoed prompt and the assistant response.
+
+        The helper first performs standard cleaning to remove UI chrome, then
+        extracts the final prompt/response pair when response markers are
+        present. If no markers are found, the method falls back to removing the
+        first detected prompt marker and treats the remaining lines as the
+        response body.
+
+        Args:
+            text: Raw CLI output (typically scrollback delta).
+            strip_ui: Whether to remove UI furniture via ``clean_output``.
+            strip_trailing_prompts: Whether to drop trailing blanks/prompts.
+
+        Returns:
+            ParsedOutput with separate prompt/response sections plus cleaned
+            output. Missing data returns ``None`` for the respective field.
+        """
+        raw = text or ""
+        cleaned = self.clean_output(raw, strip_ui=strip_ui, strip_trailing_prompts=strip_trailing_prompts)
+        cleaned = cleaned.rstrip('\n')
+
+        if not cleaned:
+            return ParsedOutput(prompt=None, response=None, cleaned_output="", raw_output=raw or None)
+
+        pairs = self.extract_responses(cleaned)
+        if pairs:
+            last = pairs[-1]
+            prompt_text = (last.get('question') or "").strip() or None
+            response_text = (last.get('response') or "").strip() or None
+            return ParsedOutput(
+                prompt=prompt_text,
+                response=response_text,
+                cleaned_output=cleaned,
+                raw_output=raw or None,
+            )
+
+        # Fallback: identify the first prompt line (e.g., "> Prompt") and treat
+        # the remainder as the response content.
+        lines = cleaned.splitlines()
+        prompt_candidate: Optional[str] = None
+        start_index = 0
+        for idx, line in enumerate(lines):
+            maybe_prompt = self._extract_prompt_text(line.strip())
+            if maybe_prompt:
+                prompt_candidate = maybe_prompt
+                start_index = idx + 1
+                break
+
+        if prompt_candidate is None:
+            response_body = cleaned.strip() or None
+            return ParsedOutput(
+                prompt=None,
+                response=response_body,
+                cleaned_output=cleaned,
+                raw_output=raw or None,
+            )
+
+        remainder = []
+        for line in lines[start_index:]:
+            stripped = line.strip()
+            if not stripped:
+                remainder.append("")
+                continue
+            # Skip duplicate prompt echoes (e.g., multi-line prompts that tmux reprints).
+            prompt_match = self._extract_prompt_text(stripped)
+            if prompt_match and prompt_match == prompt_candidate:
+                continue
+            remainder.append(stripped)
+
+        response_body = "\n".join(remainder).strip() or None
+        return ParsedOutput(
+            prompt=prompt_candidate,
+            response=response_body,
+            cleaned_output=cleaned,
+            raw_output=raw or None,
+        )
 
     def is_error_response(self, text: str) -> bool:
         """

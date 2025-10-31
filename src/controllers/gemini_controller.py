@@ -26,8 +26,15 @@ class GeminiController(TmuxController):
         """
         # Load Gemini configuration
         config = get_config()
-        gemini_config = config.get_section('gemini')
+        gemini_config = dict(config.get_section('gemini') or {})
         tmux_config = config.get_section('tmux')
+
+        # Override for tmux reliability: Use C-m for consistent command submission
+        # This enables the double-submit pattern (C-m + fallback Enter) which is
+        # essential for complex/normalized multiline commands in orchestrated scenarios
+        gemini_config["submit_key"] = "C-m"
+        gemini_config["text_enter_delay"] = 0.5
+        gemini_config["post_text_delay"] = 0.5
 
         # Use configured session name if not specified
         if session_name is None:

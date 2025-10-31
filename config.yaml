@@ -1,6 +1,6 @@
 # Multi-AI CLI Interaction POC Configuration
 # Values based on empirical testing and observation
-# Supports: Claude Code and Gemini CLI
+# Supports: Claude Code, Gemini CLI, Codex CLI, and Qwen CLI
 #
 # IMPORTANT: Startup timeouts should be generous to handle real-world variability:
 # - Network latency for credential loading
@@ -13,23 +13,34 @@ claude:
   startup_timeout: 20  # Total seconds to wait for Claude to start (allows for variability)
   trust_wait: 3        # Wait after confirming trust prompt
   init_wait: 3         # Wait after initialization
+  pane_width: 200      # tmux pane width in columns
+  pane_height: 50      # tmux pane height in rows
 
   # Response timing
-  response_timeout: 30      # Max seconds to wait for command response
+  response_timeout: 500     # Max seconds to wait for command response
   ready_check_interval: 0.5  # Seconds between output stability checks
   ready_stable_checks: 3     # Consecutive stable checks required
+  debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
+  ready_stabilization_delay: 1.0  # Pause after ready indicator before sending first command
 
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt (not reliable for ready detection)
   ready_indicators:                      # Patterns indicating ready state
     - "────────────────────────"         # Separator line
     - "? for shortcuts"                  # Status line
+  loading_indicators:
+    - "⎿"
+    - "Running…"
+    - "Waiting…"
+    - "Working…"
+    - "(esc to interrupt"
+    - "esc to interrupt"
   thinking_indicator: "Lollygagging…"    # Shows when processing
   submit_key: "Enter"                    # Key tmux should send to submit commands
-  text_enter_delay: 0.1                  # Delay between text and Enter
+  text_enter_delay: 0.6                  # Delay between text and Enter
 
   # Path to Claude Code executable
-  executable: "claude"  # Assumes it's in PATH
+  executable: "claude"  # Wrapper enforces sandboxed execution
   executable_args:
     - "--dangerously-skip-permissions"
 
@@ -39,14 +50,18 @@ claude:
 
 gemini:
   # Startup timing
-  startup_timeout: 20  # Total seconds to wait for Gemini to start (allows for variability, credential loading, etc.)
+  startup_timeout: 60  # Total seconds to wait for Gemini to start (allows for variability, credential loading, etc.)
   init_wait: 3         # Wait after initialization
+  pane_width: 220      # Gemini often renders wide tables; give extra width
+  pane_height: 50
 
   # Response timing
   response_timeout: 75      # Max seconds to wait for command response
   tool_timeout: 15          # Additional time for tool execution
   ready_check_interval: 0.5  # Seconds between output stability checks
   ready_stable_checks: 6     # Consecutive stable checks required
+  debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
+  ready_stabilization_delay: 2.0  # Gemini tends to need longer to accept first input
 
   # Command patterns and indicators
   prompt_pattern: ">"                    # Input prompt
@@ -56,8 +71,18 @@ gemini:
   loading_indicators:                    # Shows when processing
     - "⠦"
     - "⠼"
+    - "⠧"
+    - "⠏"
+    - "⠋"
+    - "⠙"
+    - "⠹"
+    - "⠸"
     - "Enhancing..."
     - "Counting electrons..."
+  loading_indicator_settle_time: 3.0
+  response_complete_markers:
+    - "› "
+    - "Type your message or @path/to/file"
   submit_key: "C-m"                      # Gemini prefers Ctrl-M when running in tmux
   text_enter_delay: 0.5                  # Give Gemini extra time to ingest pasted text
   post_text_delay: 0.5                  # Pause after pasting before submitting
@@ -71,18 +96,83 @@ gemini:
   tool_marker: "✓"       # Checkmark for successful tool execution
 
   # Path to Gemini executable
-  executable: "gemini"  # Assumes it's in PATH
+  executable: "gemini"  # Wrapper enforces sandboxed execution
   executable_args:
     - "--yolo"
-    - "--screenReader"
+
+codex:
+  startup_timeout: 20
+  init_wait: 1
+  pane_width: 200
+  pane_height: 50
+  # Codex can take a while on longer completions; align with Claude's higher ceiling.
+  response_timeout: 500
+  ready_check_interval: 0.5
+  ready_stable_checks: 4
+  debug_wait_logging: false  # Emit detailed wait_for_ready diagnostics
+  ready_stabilization_delay: 1.0
+  prompt_pattern: ">"
+  ready_indicators:
+    - "OpenAI Codex"
+    - "100% context left"
+    - "Write tests for"
+  loading_indicators:
+    - "esc to interrupt)"
+  loading_indicator_settle_time: 2.5
+  response_complete_markers:
+    - "Worked for"
+    - "› "
+  submit_key: "Enter"
+  text_enter_delay: 0.1
+  response_marker: "▸"
+  executable: "codex"
+  executable_args: []
+  pause_on_manual_clients: false
+
+qwen:
+  # Startup timing
+  startup_timeout: 25
+  init_wait: 2
+  pane_width: 200
+  pane_height: 50
+
+  # Response timing
+  response_timeout: 500
+  ready_check_interval: 0.5
+  ready_stable_checks: 4
+  debug_wait_logging: false
+
+  # Command patterns and indicators
+  ready_indicators:
+    - "▸ Type your message or @path/to/file"
+    - "Type your message or @path/to/file"
+  loading_indicators:
+    - "(esc to cancel"
+    - "(escape to cancel"
+  loading_indicator_settle_time: 1.5
+  ready_stabilization_delay: 0.75
+  submit_key: "Enter"
+  text_enter_delay: 0.6
+  post_text_delay: 0.0
+  strip_ansi_for_indicators: true
+
+  # Response marker and executable
+  response_marker: "▸"
+  executable: "qwen"
+  executable_args: []
+  pause_on_manual_clients: false
 
 tmux:
   # Session configuration
   claude_session: "claude"   # Default Claude session name
   gemini_session: "gemini"   # Default Gemini session name
+  codex_session: "codex"     # Default Codex session name
+  qwen_session: "qwen"       # Default Qwen session name
+  default_pane_width: 200
+  default_pane_height: 50
 
   # Output capture settings
-  capture_lines: 100     # Default lines to capture from pane
+  capture_lines: 500     # Default lines to capture from pane
   capture_delay: 0.1     # Seconds to wait before capturing output
 
   # Command injection settings
@@ -101,8 +191,8 @@ logging:
 
 worktree:
   # Git worktree configuration for multi-instance testing
-  main_path: "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest"
-  tmux_path: "/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+  main_path: "/home/dgray/Projects/Orchestrator"
+  tmux_path: "/home/dgray/Projects/TestOrch"
 
 test_commands:
   # Sample commands for testing

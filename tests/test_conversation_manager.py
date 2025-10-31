@@ -4,7 +4,7 @@ Tests for the conversation manager scaffold.
 """
 
 from collections import deque
-from typing import Deque, Dict, List, Tuple
+from typing import Any, Deque, Dict, List, Tuple
 
 from src.orchestrator.conversation_manager import ConversationManager
 from src.orchestrator.message_router import MessageRouter
@@ -155,6 +155,8 @@ def test_conversation_manager_records_history_in_context_manager() -> None:
 
     prompt = context_manager.build_prompt("gemini", "Provide final summary", include_history=True)
     assert "Recent context" in prompt
+    assert "claude: Consensus reached on plan A." in prompt
+    assert "gemini: Building on that idea." not in prompt
 
 
 def test_conflict_notification_updates_context_manager() -> None:
@@ -196,6 +198,74 @@ def test_detect_conflict_matches_stronger_phrases() -> None:
 
     assert conflict is True
     assert "cannot agree" in reason
+
+
+def test_participant_metadata_registered_with_context_manager() -> None:
+    class RecordingContext(ContextManager):
+        def __init__(self) -> None:
+            super().__init__()
+            self.registered: Dict[str, Dict[str, Any]] = {}
+
+        def register_participant(self, name: str, metadata: Dict[str, Any] | None = None) -> None:  # type: ignore[override]
+            self.registered[name] = metadata or {}
+            super().register_participant(name, metadata)
+
+    orchestrator = DevelopmentTeamOrchestrator({})
+    context = RecordingContext()
+    metadata = {"codex": {"type": "cli", "role": "implementation"}}
+
+    ConversationManager(
+        orchestrator,
+        ["codex"],
+        context_manager=context,
+        participant_metadata=metadata,
+    )
+
+    assert "codex" in context.registered
+    assert context.registered["codex"]["type"] == "cli"
+    stored = context.get_participant_metadata("codex")
+    assert stored["role"] == "implementation"
+
+def test_context_manager_prompt_includes_role_details() -> None:
+    context = ContextManager(
+        participant_metadata={"codex": {"type": "cli", "role": "implementation"}}
+    )
+    prompt = context.build_prompt("codex", "Implement the new endpoint", include_history=True)
+    assert "implementation" in prompt.lower()
+
+
+def test_orchestrator_start_discussion_with_codex_participant() -> None:
+    claude_controller = FakeConversationalController(
+        ["Initial assessment.", "Alignment reached."]
+    )
+    gemini_controller = FakeConversationalController(
+        ["Architecture notes.", "No blockers identified."]
+    )
+    codex_controller = FakeConversationalController(
+        ["Implementation plan ready.", "Pushing final changes."]
+    )
+
+    controllers = {
+        "claude": claude_controller,
+        "gemini": gemini_controller,
+        "codex": codex_controller,
+    }
+    metadata = {
+        "claude": {"type": "cli", "role": "review"},
+        "gemini": {"type": "cli", "role": "architecture"},
+        "codex": {"type": "cli", "role": "implementation"},
+    }
+
+    orchestrator = DevelopmentTeamOrchestrator(controllers, metadata=metadata)
+    result = orchestrator.start_discussion("Coordinate handoff", max_turns=3)
+
+    conversation = result["conversation"]
+    assert len(conversation) == 3
+    assert [turn["speaker"] for turn in conversation] == ["claude", "gemini", "codex"]
+
+    context = result["context_manager"]
+    agent_prompt = context.build_prompt("codex", "Follow-up validation", include_history=True)
+    assert "implementation" in agent_prompt.lower()
 
 
 def test_message_router_adds_partner_updates_to_prompt() -> None:

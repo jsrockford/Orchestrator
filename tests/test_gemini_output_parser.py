@@ -9,9 +9,12 @@ import sys
 import time
 from src.utils.output_parser import OutputParser
 from src.controllers.gemini_controller import GeminiController
+from src.utils.path_helpers import get_repo_root
 
 # Sample Gemini output from our tests
-SAMPLE_GEMINI_OUTPUT = """
+WORKDIR_DISPLAY = str(get_repo_root())
+
+SAMPLE_GEMINI_OUTPUT = f"""
  ███            █████████  ██████████ ██████   ██████ █████ ██████   █████ █████
 ░░░███         ███░░░░░███░░███░░░░░█░░██████ ██████ ░░███ ░░██████ ░░███ ░░███
   ░░░███      ███     ░░░  ░███  █ ░  ░███░█████░███  ░███  ░███░███ ░███  ░███
@@ -46,7 +49,7 @@ Using: 2 GEMINI.md files
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ >   Type your message or @path/to/file                                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest            no sandbox (see     gemini-2.5-pro (99% context
+{WORKDIR_DISPLAY}            no sandbox (see     gemini-2.5-pro (99% context
 (GeminiDev*)                                            /docs)             left)
 """
 
@@ -95,7 +98,7 @@ def main():
 
     controller = GeminiController(
         session_name="gemini-parser-test",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest"
+        working_dir=WORKDIR_DISPLAY
     )
 
     # Clean up existing

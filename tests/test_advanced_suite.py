@@ -16,12 +16,33 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.controllers.tmux_controller import TmuxController
 from src.utils.output_parser import OutputParser
+from src.utils.path_helpers import (
+    ensure_directory,
+    get_tmux_worktree_path,
+)
+
+
+TMUX_WORKTREE = get_tmux_worktree_path()
+TMUX_WORKTREE_STR = str(TMUX_WORKTREE)
 
 
 def load_config():
     """Load configuration from config.yaml"""
     with open('config.yaml', 'r') as f:
         return yaml.safe_load(f)
+
+
+def _extract_executable_parts(config: dict, agent: str) -> tuple[str, tuple[str, ...]]:
+    section = config.get(agent, {})
+    executable = section.get("executable")
+    if not executable:
+        raise KeyError(f"No executable configured for '{agent}'")
+    args = section.get("executable_args", [])
+    if isinstance(args, str):
+        args = [args]
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(f"Invalid executable_args for '{agent}': {type(args)!r}")
+    return executable, tuple(str(arg) for arg in args)
 
 
 def pause_for_observation(test_name: str, session_name: str, delay: int = 5):
@@ -45,11 +66,14 @@ def test_multi_turn_claude():
     parser = OutputParser()
 
     # Create controller for Claude
+    claude_exec, claude_args = _extract_executable_parts(config, "claude")
+
     controller = TmuxController(
         session_name="claude-test",
-        executable="claude",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
-        ai_config=config['claude']
+        executable=claude_exec,
+        working_dir=TMUX_WORKTREE_STR,
+        ai_config=config['claude'],
+        executable_args=claude_args,
     )
 
     try:
@@ -126,11 +150,14 @@ def test_multi_turn_gemini():
     parser = OutputParser()
 
     # Create controller for Gemini
+    gemini_exec, gemini_args = _extract_executable_parts(config, "gemini")
+
     controller = TmuxController(
         session_name="gemini-test",
-        executable="gemini",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
-        ai_config=config['gemini']
+        executable=gemini_exec,
+        working_dir=TMUX_WORKTREE_STR,
+        ai_config=config['gemini'],
+        executable_args=gemini_args,
     )
 
     try:
@@ -201,11 +228,14 @@ def test_file_operations_claude():
 
     config = load_config()
 
+    claude_exec, claude_args = _extract_executable_parts(config, "claude")
+
     controller = TmuxController(
         session_name="claude-test",
-        executable="claude",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux",
-        ai_config=config['claude']
+        executable=claude_exec,
+        working_dir=TMUX_WORKTREE_STR,
+        ai_config=config['claude'],
+        executable_args=claude_args,
     )
 
     try:
@@ -225,7 +255,7 @@ def test_file_operations_claude():
         pause_for_observation("After file creation request", "claude-test")
 
         # Verify file was created
-        test_file = Path("/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux/test_output.txt")
+        test_file = ensure_directory(TMUX_WORKTREE) / "test_output.txt"
         if test_file.exists():
             content = test_file.read_text()
             print(f"✓ File created with content: {content.strip()}")
@@ -260,7 +290,7 @@ def test_file_operations_claude():
         time.sleep(10)
 
         # Clean up test file
-        test_file = Path("/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux/test_output.txt")
+        test_file = ensure_directory(TMUX_WORKTREE) / "test_output.txt"
         if test_file.exists():
             test_file.unlink()
             print("Test file removed")

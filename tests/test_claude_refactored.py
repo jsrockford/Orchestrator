@@ -6,6 +6,7 @@ Test refactored ClaudeController to ensure Claude Code still works
 import sys
 import time
 from src.controllers.claude_controller import ClaudeController
+from src.utils.path_helpers import get_tmux_worktree_path
 
 
 def main():
@@ -14,7 +15,7 @@ def main():
     # Create controller using new ClaudeController class
     controller = ClaudeController(
         session_name="claude-refactor-test",
-        working_dir="/mnt/f/PROGRAMMING_PROJECTS/OrchestratorTest-tmux"
+        working_dir=str(get_tmux_worktree_path())
     )
 
     print(f"1. Controller created")
