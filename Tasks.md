@@ -530,19 +530,27 @@
     - [ ] Empty/truncated responses
     - [ ] Loop detection dialogs
     - [ ] Model switching notifications
+  - [x] Centralize validation settings in `config.yaml` (`response_validation` block with ignore/error patterns and heuristics)
   - [ ] Auto-retry logic for failed responses:
-    - [ ] Re-submit original prompt on error detection
-    - [ ] Configurable max retry attempts (default: 2)
-    - [ ] Exponential backoff between retries
-    - [ ] Fallback to manual intervention after max retries
+    - [x] Re-submit original prompt on error detection
+    - [x] Configurable max retry attempts (default: 2)
+    - [x] Exponential backoff between retries
+    - [x] Fallback to manual intervention after max retries
   - [ ] Response validation framework:
-    - [ ] Minimum content length checks
-    - [ ] Structure validation (code blocks, tables, etc.)
+    - [x] Implement `validate_response(raw_output, ai_name)` in `src/utils/output_parser.py`
+    - [x] Return structured result (`valid`, `cleaned_output`, `issues`, `should_retry`)
+    - [x] Strip harmless noise patterns before validation
+    - [x] Detect configured error patterns and set retry flag
+    - [x] Minimum content length checks
+    - [x] Response marker presence requirement
     - [ ] Completeness indicators (no mid-sentence truncation)
+    - [x] Unit tests covering Claude/Gemini/Codex/Qwen outputs
   - [ ] Integration with orchestrator:
-    - [ ] Track retry attempts per turn
-    - [ ] Log all retry events for debugging
-    - [ ] Option to skip turn vs. retry vs. fail conversation
+    - [x] Invoke validator in `ConversationManager` after each capture
+    - [x] Track retry attempts per turn (max 2, backoff 0.6s/1.2s)
+    - [x] Skip turn gracefully when retries exhausted
+    - [x] Log filtered noise to `logs/filtered_patterns.log`
+    - [x] Log validation failures to `logs/response_errors.log` with context
 - [ ] Implement dead agent detection
   - [ ] Health check ping for each agent
   - [ ] Timeout-based failure detection

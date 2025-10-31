@@ -9,11 +9,13 @@ higher-level workflows can decide when to stop or escalate a dialogue.
 from __future__ import annotations
 
 import re
+import time
 from collections import deque
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..utils.logger import get_logger
-from ..utils.output_parser import OutputParser, ParsedOutput
+from ..utils.output_parser import OutputParser, ParsedOutput, ValidationResult
 from ..utils.config_loader import get_config
 
 
@@ -113,11 +115,57 @@ class ConversationManager:
                 break
 
             prompt = self._build_prompt(speaker, topic, conversation)
-            pre_snapshot = self._capture_snapshot(speaker)
-            dispatch_summary = self.orchestrator.dispatch_command(speaker, prompt)
-            is_queued = bool(dispatch_summary.get("queued"))
-            parsed_output = None if is_queued else self._read_last_output(speaker, pre_snapshot)
-            response = parsed_output.response if parsed_output else None
+            validation_cfg = get_config().get_section("response_validation") or {}
+            max_retries = max(0, int(validation_cfg.get("max_retries", 2)))
+            backoff_sequence = validation_cfg.get("retry_backoff_seconds") or []
+
+            attempt = 1
+            retries_used = 0
+            dispatch_summary: Dict[str, Any] = {}
+            parsed_output: Optional[ParsedOutput] = None
+            validation_result = None
+            is_queued = False
+
+            while True:
+                pre_snapshot = self._capture_snapshot(speaker)
+                dispatch_summary = self.orchestrator.dispatch_command(speaker, prompt)
+                is_queued = bool(dispatch_summary.get("queued"))
+                if is_queued:
+                    parsed_output = None
+                    validation_result = None
+                    break
+
+                parsed_output = self._read_last_output(speaker, pre_snapshot)
+                parser = self._output_parsers.setdefault(speaker, OutputParser())
+                validation_result = parser.validate_response(parsed_output, speaker)
+                self._log_filtered_patterns(validation_cfg, speaker, validation_result)
+
+                if validation_result.valid:
+                    break
+
+                self._log_validation_error(
+                    validation_cfg,
+                    speaker,
+                    prompt,
+                    validation_result,
+                    attempt,
+                )
+
+                if not validation_result.should_retry or retries_used >= max_retries:
+                    break
+
+                delay = self._select_retry_delay(backoff_sequence, retries_used)
+                retries_used += 1
+                attempt += 1
+                if delay > 0:
+                    time.sleep(delay)
+                continue
+
+            response = None
+            if validation_result and validation_result.response_text is not None:
+                response = validation_result.response_text
+            elif parsed_output:
+                response = parsed_output.response
 
             turn_record = {
                 "turn": self._turn_counter,
@@ -129,7 +177,20 @@ class ConversationManager:
             }
             if parsed_output:
                 turn_record["response_prompt"] = parsed_output.prompt
-                turn_record["response_transcript"] = parsed_output.cleaned_output
+                if validation_result:
+                    turn_record["response_transcript"] = validation_result.cleaned_output
+                else:
+                    turn_record["response_transcript"] = parsed_output.cleaned_output
+
+            if validation_result:
+                turn_record["validation"] = {
+                    "valid": validation_result.valid,
+                    "issues": list(validation_result.issues),
+                    "attempts": attempt,
+                    "retries_used": retries_used,
+                }
+                if validation_result.ignored_patterns:
+                    turn_record["validation"]["ignored_patterns"] = list(validation_result.ignored_patterns)
             conversation.append(turn_record)
             self._turn_counter += 1
 
@@ -142,6 +203,12 @@ class ConversationManager:
             metadata = turn_record.setdefault("metadata", {})
             if is_queued:
                 metadata["queued"] = True
+            if validation_result and not validation_result.valid:
+                metadata["validation_failed"] = True
+                metadata["validation_issues"] = list(validation_result.issues)
+                metadata["retries_exhausted"] = bool(
+                    validation_result.should_retry and retries_used >= max_retries
+                )
             if consensus:
                 metadata["consensus"] = True
             if conflict:
@@ -482,6 +549,85 @@ class ConversationManager:
             structured["dispatch"] = dispatch
 
         self.history.append(structured)
+
+    @staticmethod
+    def _select_retry_delay(sequence: Any, ordinal: int) -> float:
+        """Return the retry delay for the given ordinal (0-indexed)."""
+        if sequence is None:
+            return 0.0
+
+        try:
+            if isinstance(sequence, (list, tuple)):
+                if not sequence:
+                    return 0.0
+                index = min(max(ordinal, 0), len(sequence) - 1)
+                candidate = sequence[index]
+            else:
+                candidate = sequence
+            return max(0.0, float(candidate))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _log_filtered_patterns(
+        self,
+        validation_cfg: Dict[str, Any],
+        speaker: str,
+        result: Optional[ValidationResult],
+    ) -> None:
+        """Append filtered noise patterns to the configured log."""
+        if not validation_cfg or result is None:
+            return
+
+        if not result.ignored_patterns:
+            return
+
+        path_str = validation_cfg.get("noise_log")
+        if not path_str:
+            return
+
+        try:
+            path = Path(path_str)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            with path.open("a", encoding="utf-8") as handle:
+                for pattern in result.ignored_patterns:
+                    handle.write(f"{timestamp} {speaker}: filtered '{pattern}'\n")
+        except Exception:  # noqa: BLE001
+            self.logger.debug("Failed to write noise log '%s'", path_str, exc_info=True)
+
+    def _log_validation_error(
+        self,
+        validation_cfg: Dict[str, Any],
+        speaker: str,
+        prompt: str,
+        result: Optional[ValidationResult],
+        attempt: int,
+    ) -> None:
+        """Append validation failures to the configured log file."""
+        if not validation_cfg or result is None:
+            return
+
+        if not result.issues:
+            return
+
+        path_str = validation_cfg.get("error_log")
+        if not path_str:
+            return
+
+        try:
+            path = Path(path_str)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            issues = ", ".join(result.issues)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{timestamp} {speaker} attempt={attempt} issues={issues}\n")
+                handle.write(f"Prompt: {prompt}\n")
+                if result.cleaned_output:
+                    handle.write("Output:\n")
+                    handle.write(f"{result.cleaned_output}\n")
+                handle.write("----\n")
+        except Exception:  # noqa: BLE001
+            self.logger.debug("Failed to write validation log '%s'", path_str, exc_info=True)
 
     def _record_with_context_manager(self, turn: Dict[str, Any]) -> None:
         """Forward the turn to the context manager if it exposes a compatible hook."""

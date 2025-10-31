@@ -378,3 +378,21 @@ def test_orchestrator_start_discussion_with_router() -> None:
         base_prompt="[Reminder]",
     )
     assert "[Reminder]" in prompt
+
+
+def test_validation_warnings_do_not_trigger_retry() -> None:
+    controller = FakeConversationalController(["Short reply."])
+    orchestrator = DevelopmentTeamOrchestrator({"claude": controller})
+    manager = ConversationManager(orchestrator, ["claude"])
+
+    conversation = manager.facilitate_discussion("Check warning behavior", max_turns=1)
+
+    assert len(conversation) == 1
+    turn = conversation[0]
+    assert "validation" in turn
+    assert turn["validation"]["valid"] is True
+    assert any(issue.startswith("response_too_short") for issue in turn["validation"]["issues"])
+    metadata = turn.get("metadata") or {}
+    assert "validation_failed" not in metadata
+    # Controller should only receive a single command since we accepted the warning.
+    assert len(controller.sent) == 1

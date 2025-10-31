@@ -189,6 +189,38 @@ logging:
   max_bytes: 10485760    # 10MB
   backup_count: 3        # Number of backup files to keep
 
+response_validation:
+  noise_log: "logs/filtered_patterns.log"
+  error_log: "logs/response_errors.log"
+  max_retries: 2
+  retry_backoff_seconds:
+    - 0.6
+    - 1.2
+  ignore_patterns:
+    - "CLI update available"
+    - "Attempting to automatically update"
+    - "Installed with npm"
+    - "npm install"
+  error_patterns:
+    - "Failed to login"
+    - "Authentication failed"
+    - "Invalid API key"
+    - "Rate limit exceeded"
+    - "Too many requests"
+    - "Connection timeout"
+    - "Network error"
+    - "UNABLE_TO_GET_ISSUER_CERT"
+    - "API error"
+    - "API Error"
+    - "Context length exceeded"
+    - "Maximum tokens exceeded"
+    - "FatalTurnLimitedError"
+    - "MODULE_NOT_FOUND"
+    - "Operation not permitted"
+    - "Permission denied"
+  min_response_length: 20
+  require_response_marker: true
+
 worktree:
   # Git worktree configuration for multi-instance testing
   main_path: "/home/dgray/Projects/Orchestrator"
