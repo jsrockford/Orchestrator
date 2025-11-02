@@ -79,7 +79,7 @@ repomix-output.txt
 #@CodexReminder.md
 #AI_Dev_Team_Orchestration_System.md
 CCompact.md
-*.png
+# *.png
 REMINDER.md
 observations.md
 scratch/
