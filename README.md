@@ -145,23 +145,28 @@ PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
 
 ### Advanced Options
 
-Control session behavior, startup timing, and CLI flags:
+Control session behavior, startup timing, agent-specific instructions, and CLI flags:
 
 ```bash
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
+  "Design a REST API for a task management system" \
   --auto-start \
   --startup-timeout 60 \
   --max-turns 10 \
-  --history-size 50 \
+  --group-system-prompt "Initial briefing for all agents." \
   --claude-session my-claude \
-  --claude-executable "safe_claude --dangerously-skip-permissions" \
-  --claude-startup-timeout 15 \
+  --claude-executable "claude --dangerously-skip-permissions" \
+  --claude-cwd /path/to/project \
+  --claude-system-prompt-file /path/to/claude_instructions.md \
   --gemini-session my-gemini \
-  --gemini-executable "safe_gemini --yolo --screenReader" \
-  --gemini-startup-timeout 20 \
-  --log-file logs/custom-discussion.log \
-  "Design a REST API for a task management system"
+  --gemini-executable "gemini --yolo" \
+  --log-file logs/custom-discussion.log
 ```
+
+**Additional Flags:**
+- `--group-system-prompt <text>`: A text prompt sent to all participating agents at the beginning of the session.
+- `--<agent>-system-prompt-file <path>`: Instructs a specific agent to read a file at the start of the session (e.g., `--claude-system-prompt-file CLAUDE.md`).
+- `--<agent>-cwd <path>`: Sets the working directory for a specific agent's session.
 
 ### Manual Intervention During Discussions
 

@@ -449,6 +449,42 @@
 - `config.yaml` - Qwen configuration section
 - `tests/test_qwen_standalone.py` - Qwen validation suite
 
+#### Task 6.10: Hybrid Completion Detection
+- [x] Implement hybrid completion stop logic in `src/orchestrator/conversation_manager.py`
+  - [x] Detect explicit `[[PROJECT_COMPLETE]]` signals
+  - [x] Detect configurable agreement phrases from conversation history
+  - [x] Short-circuit orchestration loop once consensus threshold met
+  - [x] Define consensus tracking (per-agent signals, recency window, reset rules) and log state each turn
+- [x] Extend `config.yaml` with completion detection settings (mode, phrases, threshold, cooldown)
+- [x] Update AI instruction files to describe the completion signal protocol
+- [x] Log completion trigger and reason in session summary output
+- [x] Add unit tests covering completion detection and consensus reset behavior
+- [ ] Add integration regression using orchestrated discussion example to confirm early exit
+
+#### Task 6.11: Tool Loop Detection MVP
+- [x] Extend `config.yaml` with loop detection settings (`repeat_threshold`, ignore list, escalation toggle)
+- [x] Update `src/orchestrator/conversation_manager.py`
+  - [x] Track per-participant tool invocations across recent turns (window ≥ repeat threshold)
+  - [x] Detect repeated identical tool calls and annotate turn metadata with loop details
+  - [x] Record first detection vs. escalation (next-turn relapse) and log both cases
+  - [x] Surface loop events to the context manager for downstream consumers
+- [x] Update `src/orchestrator/context_manager.py` to persist loop events
+- [x] Add unit tests covering loop detection, escalation, and ignore list behavior
+- [x] Add regression test ensuring normal tool usage below threshold does not trigger loops
+- [x] Add interactive shell guard to auto-interrupt hanging CLI tool runs (configurable via `config.yaml`)
+- [x] Add unit tests covering guard timeout, completion reset, and allow-list behavior
+
+#### Task 6.12: Post-Completion Validation Hooks
+- [x] Extend `config.yaml` with post-completion validation settings (enable flag, test discovery patterns, command timeout)
+- [x] Add validation utilities (e.g., `src/orchestrator/validation.py`) to inspect conversations for test evidence and run optional checks
+- [x] Update `examples/run_orchestrated_discussion.py`
+  - [x] Invoke validation after consensus and before exit
+  - [x] Emit warnings when teams skip tests or validation fails
+  - [x] Optionally push validation diagnostics back into the log file summary
+- [x] Record validation outcomes in `ContextManager` for later reporting
+- [x] Add unit tests covering validation helpers (tests present/absent, mentions of tests, simulated failures)
+- [ ] Add integration test or harness fixture ensuring orchestrated runs report missing tests
+
 #### Task 6.2: N-Agent Orchestration Support
 - [ ] Refactor `DevelopmentTeamOrchestrator` for N agents
   - [ ] Remove hardcoded 2-agent assumptions

@@ -37,6 +37,8 @@ class ContextManager:
         self._decisions: List[Dict[str, Any]] = []
         self._conflicts: List[Dict[str, Any]] = []
         self._consensus_events: List[Dict[str, Any]] = []
+        self._loops: List[Dict[str, Any]] = []
+        self._validations: List[Dict[str, Any]] = []
         self._project_state: Dict[str, Any] = {}
         self._participants: Dict[str, Dict[str, Any]] = {}
         self._last_turn_by_participant: Dict[str, int] = {}
@@ -69,9 +71,23 @@ class ContextManager:
         payload["reason"] = reason
         self._conflicts.append(payload)
 
+    def record_loop(self, turn: Dict[str, Any], reason: str) -> None:
+        """Track loop detection events for diagnostics."""
+        payload = self._sanitize_turn(turn)
+        payload["reason"] = reason
+        self._loops.append(payload)
+
     def record_consensus(self, turn: Dict[str, Any]) -> None:
         """Track consensus outcomes so we can summarize decisions later."""
         self._consensus_events.append(self._sanitize_turn(turn))
+
+    def record_validation(self, payload: Dict[str, Any]) -> None:
+        """Store post-completion validation results."""
+        if not isinstance(payload, dict):
+            self.logger.debug("Ignoring non-dict validation payload: %r", payload)
+            return
+        sanitized = payload.copy()
+        self._validations.append(sanitized)
 
     def save_decision(self, decision: Dict[str, Any]) -> None:
         """Persist key decisions reached by the team."""
@@ -105,6 +121,16 @@ class ContextManager:
         """Return turns where consensus was detected."""
         return list(self._consensus_events)
 
+    @property
+    def loops(self) -> List[Dict[str, Any]]:
+        """Return turns that triggered loop detection."""
+        return list(self._loops)
+
+    @property
+    def validations(self) -> List[Dict[str, Any]]:
+        """Return recorded validation results."""
+        return list(self._validations)
+
     def get_project_context(self) -> Dict[str, Any]:
         """
         Consolidated view of recent history and decisions.
@@ -115,6 +141,8 @@ class ContextManager:
                 - decisions: list of decisions
                 - conflicts: recorded conflict events
                 - consensus: recorded consensus events
+                - loops: recorded loop detection events
+                - validations: post-completion validation entries
                 - state: current project state payload
                 - participants: participant metadata (if registered)
         """
@@ -123,6 +151,8 @@ class ContextManager:
             "decisions": self.decisions,
             "conflicts": self.conflicts,
             "consensus": self.consensus_events,
+            "loops": self.loops,
+            "validations": self.validations,
             "state": self._project_state.copy(),
             "participants": self.participants,
         }

@@ -28,6 +28,8 @@ Use `CodexConcerns.md` as the shared message board for multi-agent coordination.
 
 When posting to `MessageBoard.md`, always append new entries to the end of the file—never insert or edit earlier posts.
 
+- During orchestrated runs, signal completion explicitly with `[[PROJECT_COMPLETE]]` once all objectives are met; the orchestrator also watches for agreement phrases, so reiterate completion in plain language to help the hybrid detector converge quickly.
+
 ## Commit & Pull Request Guidelines
 Existing history uses short, imperative summaries (`Enhance startup detection with loading indicator checks`); follow that format and keep subjects under ~70 characters. Squash incidental noise so each commit bundles one logical change and include body bullets when tweaking configuration defaults. Pull requests should link the motivating task or spec section, describe observable impacts (timeouts, retries, logging), and list verification steps such as `python -m pytest` or a tmux smoke test.
 
