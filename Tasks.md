@@ -658,3 +658,263 @@
 - [x] Output capture latency < 500ms ✅ ~10ms measured
 - [x] Support 3+ agents in orchestrated discussion ✅ **4 AIs working (Claude, Gemini, Codex, Qwen) as of Oct 30, 2025**
 - [ ] Graceful error recovery demonstrated - **Phase 6 objective**
+
+## Phase 7: Human-in-the-Loop Control System
+
+**Objective**: Enable human intervention during orchestrated discussions to handle permissions dialogs, inject guidance prompts, and manually control agent interactions.
+
+**Timeline**: 2-3 weeks (Week 1: Core infrastructure, Week 2: Advanced control, Week 3: Testing & refinement)
+
+**Design Approach**: Named pipe (FIFO) control channel with phased capability rollout per team consensus (Claude, Gemini, Codex agreement on MessageBoard).
+
+### Phase 7.1: Control Channel Infrastructure ✅ PLANNED
+
+**Objective**: Establish the foundational control pipe mechanism and basic command processing.
+
+#### Task 7.1.1: Named Pipe Setup
+- [ ] Create `src/orchestrator/control_channel.py` module
+- [ ] Implement `ControlChannel` class
+  - [ ] `__init__(pipe_path="/tmp/orchestrator_control")` - Initialize control channel
+  - [ ] `setup_pipe()` - Create FIFO if doesn't exist, open in non-blocking mode
+  - [ ] `check_for_commands()` - Non-blocking read using `select.select()`
+  - [ ] `cleanup()` - Remove pipe on shutdown
+- [ ] Add error handling
+  - [ ] Pipe already exists (remove and recreate)
+  - [ ] Pipe blocked/broken (recreate)
+  - [ ] Invalid command format (log and ignore)
+- [ ] Add command parsing
+  - [ ] Split command into type and arguments
+  - [ ] Validate command format
+  - [ ] Return structured command object
+
+#### Task 7.1.2: Pause/Resume Mechanism
+- [ ] Update `ConversationManager.__init__()`
+  - [ ] Initialize `ControlChannel` instance
+  - [ ] Add `human_control_mode` flag (default: False)
+  - [ ] Add `_current_agent` tracking attribute
+- [ ] Implement `_check_control_commands()` method
+  - [ ] Call `control_channel.check_for_commands()` non-blocking
+  - [ ] Delegate to `_handle_control_command()`
+- [ ] Implement `_handle_control_command(command)` method
+  - [ ] Handle `PAUSE` command: set flag, send ESC to current agent, log event
+  - [ ] Handle `RESUME` command: clear flag, log event
+  - [ ] Handle `STATUS` command: report current state, turn count, active agent
+- [ ] Implement `_send_escape(agent_name)` helper
+  - [ ] Map agent name to controller instance
+  - [ ] Call `controller.send_key("Escape")`
+  - [ ] Log interrupt event
+- [ ] Update `ConversationManager.run()` main loop
+  - [ ] Call `_check_control_commands()` before each turn
+  - [ ] Add pause wait loop: `while self.human_control_mode: sleep(0.5); check_commands()`
+  - [ ] Track `self._current_agent = next_speaker` before dispatch
+
+#### Task 7.1.3: TmuxController Keyboard Support
+- [ ] Implement `TmuxController.send_key(key_name)` method
+  - [ ] Execute `tmux send-keys -t {session} {key_name}`
+  - [ ] Support standard keys: Escape, Enter, Up, Down, Left, Right, Tab, Space
+  - [ ] Add debug logging
+  - [ ] Handle errors (session not found, invalid key)
+- [ ] Add unit tests
+  - [ ] Test sending each supported key
+  - [ ] Verify correct tmux command format
+  - [ ] Test error handling for invalid sessions
+
+#### Task 7.1.4: Basic Command Testing
+- [ ] Create `tests/test_control_channel.py`
+  - [ ] Test pipe creation and cleanup
+  - [ ] Test non-blocking command reading
+  - [ ] Test command parsing (valid and invalid formats)
+  - [ ] Test concurrent access (multiple readers/writers)
+- [ ] Create `tests/test_pause_resume.py`
+  - [ ] Test PAUSE command sets flag and sends ESC
+  - [ ] Test RESUME command clears flag
+  - [ ] Test orchestration waits during pause
+  - [ ] Test commands checked before each turn
+- [ ] Create integration test with real orchestration
+  - [ ] Start 2-AI discussion
+  - [ ] Send PAUSE mid-turn
+  - [ ] Verify orchestration stops
+  - [ ] Send RESUME
+  - [ ] Verify orchestration continues
+
+### Phase 7.2: Prompt Injection ✅ PLANNED
+
+**Objective**: Allow human to inject custom prompts to specific agents while paused.
+
+#### Task 7.2.1: TEXT Command Implementation
+- [ ] Extend `_handle_control_command()` with TEXT handler
+  - [ ] Parse format: `TEXT <target>: <prompt_text>`
+  - [ ] Validate target agent name (gemini, qwen, claude, codex, both, all)
+  - [ ] Extract prompt text (handle multi-line, special characters)
+- [ ] Implement `_send_text_to_agent(target, text)` method
+  - [ ] Map target to controller(s): single agent, "both" (first 2), "all" (all agents)
+  - [ ] Call `controller.send_command(text)`
+  - [ ] Log injection event with agent and text preview (first 50 chars)
+- [ ] Add injection queue (optional enhancement)
+  - [ ] Store injected prompts in queue
+  - [ ] Process after RESUME command
+  - [ ] Alternative: require RESUME after each injection
+
+#### Task 7.2.2: Injection Testing
+- [ ] Unit tests for TEXT command parsing
+  - [ ] Single-line prompts
+  - [ ] Multi-line prompts (with newlines)
+  - [ ] Special characters (quotes, apostrophes)
+  - [ ] Different target formats (single, both, all)
+- [ ] Integration test for prompt injection
+  - [ ] Start discussion, PAUSE
+  - [ ] Send TEXT command to one agent
+  - [ ] Verify agent receives and responds to prompt
+  - [ ] Send TEXT to multiple agents
+  - [ ] Verify both respond independently
+  - [ ] RESUME and verify orchestration continues
+
+### Phase 7.3: Raw Keystroke Control ✅ PLANNED
+
+**Objective**: Enable direct keyboard control for handling permission dialogs and UI navigation.
+
+#### Task 7.3.1: KEY Command Implementation
+- [ ] Extend `_handle_control_command()` with KEY handler
+  - [ ] Parse format: `KEY <target>: <key_name>`
+  - [ ] Validate target agent (gemini, qwen, claude, codex, both, all)
+  - [ ] Validate key name against supported keys
+- [ ] Implement `_send_key_to_agent(target, key)` method
+  - [ ] Map friendly names to tmux key names (Up→Up, Enter→Enter, etc.)
+  - [ ] Support target expansion (single, both, all)
+  - [ ] Call `controller.send_key(tmux_key)` for each target
+  - [ ] Log keystroke event
+- [ ] Add key mapping dictionary
+  - [ ] Arrow keys: Up, Down, Left, Right
+  - [ ] Control keys: Enter, Escape, Tab, Space, Backspace, Delete
+  - [ ] Function keys: F1-F12 (if needed)
+  - [ ] Modifiers: Ctrl-C, Ctrl-D (if needed)
+
+#### Task 7.3.2: Keystroke Testing
+- [ ] Unit tests for KEY command
+  - [ ] Test each supported key type
+  - [ ] Test different target formats
+  - [ ] Test invalid key names
+  - [ ] Test rapid key sequences
+- [ ] Integration test for permission dialog simulation
+  - [ ] Trigger permission request (if possible in test env)
+  - [ ] Send PAUSE
+  - [ ] Send KEY commands: Down, Down, Enter
+  - [ ] Verify correct navigation
+  - [ ] RESUME and continue
+
+### Phase 7.4: User Experience Enhancements ✅ PLANNED
+
+**Objective**: Make the control system easy and intuitive to use.
+
+#### Task 7.4.1: Shell Wrapper Script
+- [ ] Create `scripts/orchestrator_control.sh`
+  - [ ] Command: `pause` - Send PAUSE to pipe
+  - [ ] Command: `resume` - Send RESUME to pipe
+  - [ ] Command: `status` - Send STATUS to pipe
+  - [ ] Command: `say <agent> <text>` - Send TEXT command
+  - [ ] Command: `key <agent> <key>` - Send KEY command
+  - [ ] Add help text and usage examples
+  - [ ] Make executable (chmod +x)
+- [ ] Add user-friendly error messages
+  - [ ] Pipe not found: "Orchestrator not running"
+  - [ ] Invalid agent name: List valid agents
+  - [ ] Invalid key name: List supported keys
+- [ ] Add command history/logging
+  - [ ] Log all control commands to separate file
+  - [ ] Timestamp each command
+  - [ ] Show last N commands with `history` command
+
+#### Task 7.4.2: Status Feedback System
+- [ ] Enhance STATUS command output
+  - [ ] Show current mode (RUNNING/PAUSED)
+  - [ ] Show turn count and max turns
+  - [ ] Show active/last agent
+  - [ ] Show time elapsed
+  - [ ] Show time since last activity
+- [ ] Add visual indicators
+  - [ ] Color coding (green=running, yellow=paused, red=error)
+  - [ ] Progress bar (turns completed/total)
+  - [ ] Agent status table (active/idle/error)
+- [ ] Optional: Real-time status file
+  - [ ] Write status to `/tmp/orchestrator_status.txt`
+  - [ ] Update every 5 seconds
+  - [ ] Allow external monitoring (tail -f)
+
+#### Task 7.4.3: Comprehensive Documentation
+- [ ] Update MessageBoard with implementation notes
+- [ ] Create `docs/Human_Control_Guide.md`
+  - [ ] Overview of control system
+  - [ ] Command reference with examples
+  - [ ] Common use cases (permissions, guidance, debugging)
+  - [ ] Troubleshooting section
+  - [ ] Best practices
+- [ ] Update README.md
+  - [ ] Add "Human Intervention" section
+  - [ ] Quick start examples
+  - [ ] Link to detailed guide
+- [ ] Add inline code comments
+  - [ ] Document control flow
+  - [ ] Explain design decisions
+  - [ ] Provide usage examples
+
+### Phase 7.5: Advanced Features (Optional) ✅ DEFERRED
+
+**Objective**: Enhanced control capabilities for advanced use cases.
+
+#### Task 7.5.1: Auto-Pause Triggers
+- [ ] Implement configurable auto-pause conditions
+  - [ ] Pause on permission request detected
+  - [ ] Pause on error threshold exceeded
+  - [ ] Pause on specific keywords in responses
+  - [ ] Pause on agent timeout/failure
+- [ ] Add notification system
+  - [ ] Log auto-pause reason
+  - [ ] Optional: Send alert to monitoring system
+  - [ ] Optional: Play system sound
+- [ ] Add configuration section in config.yaml
+  - [ ] `auto_pause.enabled: true/false`
+  - [ ] `auto_pause.triggers: [...]`
+  - [ ] `auto_pause.notify: true/false`
+
+#### Task 7.5.2: Macro/Script Support
+- [ ] Support command sequences in single file
+  - [ ] Read from file: `LOAD_SCRIPT /path/to/script.txt`
+  - [ ] Execute line-by-line with delays
+  - [ ] Support comments and blank lines
+- [ ] Add control flow
+  - [ ] Conditional execution based on status
+  - [ ] Loop support for repeated actions
+  - [ ] Variables for agent names, prompts
+- [ ] Error handling for scripts
+  - [ ] Abort on error vs continue
+  - [ ] Rollback on failure
+  - [ ] Logging of script execution
+
+#### Task 7.5.3: Remote Control API
+- [ ] HTTP API for remote control (optional)
+  - [ ] REST endpoints for commands
+  - [ ] Authentication/authorization
+  - [ ] WebSocket for real-time status
+- [ ] Web UI dashboard (optional)
+  - [ ] Real-time conversation view
+  - [ ] Control panel for commands
+  - [ ] Agent status monitoring
+  - [ ] Log viewing interface
+
+### Phase 7 Success Criteria
+
+- [ ] Control pipe established and commands processed reliably
+- [ ] PAUSE/RESUME stops and restarts orchestration correctly
+- [ ] TEXT command injects prompts to specified agents
+- [ ] KEY command sends keystrokes for UI navigation
+- [ ] Shell wrapper script makes control intuitive
+- [ ] Permission dialog navigation demonstrated
+- [ ] Mid-discussion guidance injection demonstrated
+- [ ] No impact on orchestration when not in use (non-blocking)
+- [ ] All control events logged to audit trail
+- [ ] Comprehensive documentation and examples provided
+- [ ] Integration tests validate all command types
+- [ ] Auto-pause triggers work (if implemented)
+
+**Start Date**: November 2, 2025 (design phase complete)
+**Target Completion**: November 22, 2025
