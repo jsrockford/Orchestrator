@@ -5,8 +5,10 @@ Utilities for parsing and cleaning Claude Code output captured from tmux.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+from .config_loader import get_config
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,20 @@ class ParsedOutput:
     response: Optional[str]
     cleaned_output: str
     raw_output: Optional[str] = None
+    used_response_delimiter: bool = False
+
+
+@dataclass(frozen=True)
+class ValidationResult:
+    """Represents the outcome of validating an AI response."""
+
+    valid: bool
+    cleaned_output: str
+    issues: List[str] = field(default_factory=list)
+    should_retry: bool = False
+    ignored_patterns: List[str] = field(default_factory=list)
+    raw_output: Optional[str] = None
+    response_text: Optional[str] = None
 
 
 class OutputParser:
@@ -77,6 +93,9 @@ class OutputParser:
 
     PROMPT_MARKERS = ('>', '›')
     RESPONSE_MARKERS = ('●', '✦', '•')
+    RESPONSE_DELIMITER_PATTERN = re.compile(
+        r'<<<RESPONSE_START>>>(.*?)<<<RESPONSE_END>>>', re.DOTALL | re.IGNORECASE
+    )
 
     def clean_output(self, text: str, strip_ui: bool = True, strip_trailing_prompts: bool = False) -> str:
         """
@@ -107,6 +126,23 @@ class OutputParser:
             cleaned_lines = self._trim_trailing_prompts(cleaned_lines)
 
         return '\n'.join(cleaned_lines).rstrip('\n')
+
+    def extract_delimited_response(self, text: str) -> Optional[str]:
+        """
+        Extract content wrapped in explicit response delimiters.
+
+        Args:
+            text: Raw text that may contain response delimiters.
+
+        Returns:
+            Extracted response content or None when delimiters are absent.
+        """
+        if not text:
+            return None
+        match = self.RESPONSE_DELIMITER_PATTERN.search(text)
+        if not match:
+            return None
+        return self._normalize_delimited_content(match.group(1))
 
     def _normalize_line(self, line: str) -> Optional[str]:
         """Normalize or drop a single line of CLI output."""
@@ -198,6 +234,7 @@ class OutputParser:
             List of dictionaries with 'question' and 'response' keys
         """
         text = self.strip_ansi(text)
+        text = self._strip_response_delimiters(text)
         lines = text.split('\n')
 
         pairs = []
@@ -379,21 +416,45 @@ class OutputParser:
         """
         raw = text or ""
         cleaned = self.clean_output(raw, strip_ui=strip_ui, strip_trailing_prompts=strip_trailing_prompts)
+        used_delimiter = False
+        delimited_response: Optional[str] = None
+        if raw:
+            match = self.RESPONSE_DELIMITER_PATTERN.search(raw)
+            if match:
+                used_delimiter = True
+                delimited_response = self._normalize_delimited_content(match.group(1))
+        if not used_delimiter and cleaned:
+            match = self.RESPONSE_DELIMITER_PATTERN.search(cleaned)
+            if match:
+                used_delimiter = True
+                delimited_response = self._normalize_delimited_content(match.group(1))
+        cleaned = self._strip_response_delimiters(cleaned)
         cleaned = cleaned.rstrip('\n')
 
         if not cleaned:
-            return ParsedOutput(prompt=None, response=None, cleaned_output="", raw_output=raw or None)
+            return ParsedOutput(
+                prompt=None,
+                response=None,
+                cleaned_output="",
+                raw_output=raw or None,
+                used_response_delimiter=used_delimiter,
+            )
 
         pairs = self.extract_responses(cleaned)
         if pairs:
             last = pairs[-1]
             prompt_text = (last.get('question') or "").strip() or None
             response_text = (last.get('response') or "").strip() or None
+            if delimited_response is not None:
+                response_text = delimited_response or ""
+                if response_text == "":
+                    response_text = None
             return ParsedOutput(
                 prompt=prompt_text,
                 response=response_text,
                 cleaned_output=cleaned,
                 raw_output=raw or None,
+                used_response_delimiter=used_delimiter,
             )
 
         # Fallback: identify the first prompt line (e.g., "> Prompt") and treat
@@ -410,11 +471,14 @@ class OutputParser:
 
         if prompt_candidate is None:
             response_body = cleaned.strip() or None
+            if delimited_response is not None:
+                response_body = delimited_response or None
             return ParsedOutput(
                 prompt=None,
                 response=response_body,
                 cleaned_output=cleaned,
                 raw_output=raw or None,
+                used_response_delimiter=used_delimiter,
             )
 
         remainder = []
@@ -430,11 +494,117 @@ class OutputParser:
             remainder.append(stripped)
 
         response_body = "\n".join(remainder).strip() or None
+        if delimited_response is not None:
+            response_body = delimited_response or None
         return ParsedOutput(
             prompt=prompt_candidate,
             response=response_body,
             cleaned_output=cleaned,
             raw_output=raw or None,
+            used_response_delimiter=used_delimiter,
+        )
+
+    def validate_response(self, parsed_output: Optional[ParsedOutput], ai_name: str) -> ValidationResult:
+        """
+        Validate a parsed CLI response using heuristics defined in config.
+
+        Args:
+            parsed_output: ParsedOutput returned from ``split_prompt_and_response``.
+            ai_name: Name of the AI/controller (e.g., "claude", "gemini").
+
+        Returns:
+            ValidationResult indicating whether the response is usable, the cleaned
+            transcript (with harmless noise stripped), and any issues encountered.
+        """
+        if parsed_output is None:
+            return ValidationResult(
+                valid=False,
+                cleaned_output="",
+                issues=["missing_output"],
+                should_retry=True,
+                ignored_patterns=[],
+                raw_output=None,
+                response_text=None,
+            )
+
+        config = get_config()
+        validation_cfg = config.get_section("response_validation") or {}
+
+        ignore_patterns = validation_cfg.get("ignore_patterns") or []
+        error_patterns = validation_cfg.get("error_patterns") or []
+        min_length = int(validation_cfg.get("min_response_length") or 0)
+        require_marker = bool(validation_cfg.get("require_response_marker", False))
+
+        cleaned = parsed_output.cleaned_output or ""
+        raw_text = parsed_output.raw_output or cleaned
+        filtered = cleaned
+        ignored_hits: List[str] = []
+        response_text = (parsed_output.response or "").strip()
+        filtered_response_text = response_text
+
+        # Strip configured noise patterns prior to validation.
+        for pattern in ignore_patterns:
+            if not isinstance(pattern, str) or not pattern:
+                continue
+            compiled = re.compile(re.escape(pattern), flags=re.IGNORECASE)
+            pattern_found = False
+            if compiled.search(filtered):
+                filtered = compiled.sub("", filtered)
+                pattern_found = True
+            if filtered_response_text:
+                if compiled.search(filtered_response_text):
+                    filtered_response_text = compiled.sub("", filtered_response_text)
+                    pattern_found = True
+            if pattern_found:
+                ignored_hits.append(pattern)
+
+        filtered = filtered.strip()
+        filtered_response_text = (filtered_response_text or "").strip()
+        response_text = filtered_response_text
+
+        issues: List[str] = []
+        should_retry = False
+        severe_issue = False
+
+        # Detect configured error patterns in the filtered transcript.
+        for pattern in error_patterns:
+            if not isinstance(pattern, str) or not pattern:
+                continue
+            if re.search(pattern, filtered, flags=re.IGNORECASE):
+                issues.append(f"error_pattern:{pattern}")
+                should_retry = True
+                severe_issue = True
+
+        if not filtered:
+            issues.append("empty_output")
+            should_retry = True
+            severe_issue = True
+
+        if min_length > 0 and len(response_text) < min_length:
+            issues.append(f"response_too_short:{len(response_text)}<{min_length}")
+            if len(response_text) == 0:
+                should_retry = True
+                severe_issue = True
+
+        if require_marker:
+            # Require that a response body was parsed successfully.
+            if not response_text:
+                issues.append("response_marker_missing")
+                if "empty_output" not in issues:
+                    issues.append("empty_output")
+                should_retry = True
+                severe_issue = True
+
+        valid = not severe_issue
+
+        return ValidationResult(
+            valid=valid,
+            cleaned_output=filtered,
+            issues=issues,
+            should_retry=should_retry,
+            ignored_patterns=ignored_hits,
+            raw_output=raw_text if raw_text != cleaned else raw_text or None,
+            response_text=response_text or None,
         )
 
     def is_error_response(self, text: str) -> bool:
@@ -447,7 +617,8 @@ class OutputParser:
         Returns:
             True if error detected, False otherwise
         """
-        error_patterns = [
+        validation_cfg = get_config().get_section("response_validation") or {}
+        error_patterns = validation_cfg.get("error_patterns") or [
             r'error',
             r'failed',
             r'cannot',
@@ -456,8 +627,7 @@ class OutputParser:
             r'invalid',
         ]
 
-        text_lower = text.lower()
-        return any(re.search(pattern, text_lower) for pattern in error_patterns)
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in error_patterns)
 
     def format_conversation(self, text: str) -> str:
         """
@@ -478,3 +648,18 @@ class OutputParser:
             formatted.append("")  # Blank line between pairs
 
         return '\n'.join(formatted).strip()
+
+    def _strip_response_delimiters(self, text: str) -> str:
+        """Remove response delimiters while preserving the content."""
+        if not text:
+            return text
+
+        def _replace(match: re.Match) -> str:
+            return self._normalize_delimited_content(match.group(1))
+
+        return self.RESPONSE_DELIMITER_PATTERN.sub(_replace, text)
+
+    @staticmethod
+    def _normalize_delimited_content(content: str) -> str:
+        """Normalize the inner content extracted from delimiters."""
+        return content.strip()

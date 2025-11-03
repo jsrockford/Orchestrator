@@ -449,6 +449,42 @@
 - `config.yaml` - Qwen configuration section
 - `tests/test_qwen_standalone.py` - Qwen validation suite
 
+#### Task 6.10: Hybrid Completion Detection
+- [x] Implement hybrid completion stop logic in `src/orchestrator/conversation_manager.py`
+  - [x] Detect explicit `[[PROJECT_COMPLETE]]` signals
+  - [x] Detect configurable agreement phrases from conversation history
+  - [x] Short-circuit orchestration loop once consensus threshold met
+  - [x] Define consensus tracking (per-agent signals, recency window, reset rules) and log state each turn
+- [x] Extend `config.yaml` with completion detection settings (mode, phrases, threshold, cooldown)
+- [x] Update AI instruction files to describe the completion signal protocol
+- [x] Log completion trigger and reason in session summary output
+- [x] Add unit tests covering completion detection and consensus reset behavior
+- [ ] Add integration regression using orchestrated discussion example to confirm early exit
+
+#### Task 6.11: Tool Loop Detection MVP
+- [x] Extend `config.yaml` with loop detection settings (`repeat_threshold`, ignore list, escalation toggle)
+- [x] Update `src/orchestrator/conversation_manager.py`
+  - [x] Track per-participant tool invocations across recent turns (window ≥ repeat threshold)
+  - [x] Detect repeated identical tool calls and annotate turn metadata with loop details
+  - [x] Record first detection vs. escalation (next-turn relapse) and log both cases
+  - [x] Surface loop events to the context manager for downstream consumers
+- [x] Update `src/orchestrator/context_manager.py` to persist loop events
+- [x] Add unit tests covering loop detection, escalation, and ignore list behavior
+- [x] Add regression test ensuring normal tool usage below threshold does not trigger loops
+- [x] Add interactive shell guard to auto-interrupt hanging CLI tool runs (configurable via `config.yaml`)
+- [x] Add unit tests covering guard timeout, completion reset, and allow-list behavior
+
+#### Task 6.12: Post-Completion Validation Hooks
+- [x] Extend `config.yaml` with post-completion validation settings (enable flag, test discovery patterns, command timeout)
+- [x] Add validation utilities (e.g., `src/orchestrator/validation.py`) to inspect conversations for test evidence and run optional checks
+- [x] Update `examples/run_orchestrated_discussion.py`
+  - [x] Invoke validation after consensus and before exit
+  - [x] Emit warnings when teams skip tests or validation fails
+  - [x] Optionally push validation diagnostics back into the log file summary
+- [x] Record validation outcomes in `ContextManager` for later reporting
+- [x] Add unit tests covering validation helpers (tests present/absent, mentions of tests, simulated failures)
+- [ ] Add integration test or harness fixture ensuring orchestrated runs report missing tests
+
 #### Task 6.2: N-Agent Orchestration Support
 - [ ] Refactor `DevelopmentTeamOrchestrator` for N agents
   - [ ] Remove hardcoded 2-agent assumptions
@@ -530,19 +566,27 @@
     - [ ] Empty/truncated responses
     - [ ] Loop detection dialogs
     - [ ] Model switching notifications
+  - [x] Centralize validation settings in `config.yaml` (`response_validation` block with ignore/error patterns and heuristics)
   - [ ] Auto-retry logic for failed responses:
-    - [ ] Re-submit original prompt on error detection
-    - [ ] Configurable max retry attempts (default: 2)
-    - [ ] Exponential backoff between retries
-    - [ ] Fallback to manual intervention after max retries
+    - [x] Re-submit original prompt on error detection
+    - [x] Configurable max retry attempts (default: 2)
+    - [x] Exponential backoff between retries
+    - [x] Fallback to manual intervention after max retries
   - [ ] Response validation framework:
-    - [ ] Minimum content length checks
-    - [ ] Structure validation (code blocks, tables, etc.)
+    - [x] Implement `validate_response(raw_output, ai_name)` in `src/utils/output_parser.py`
+    - [x] Return structured result (`valid`, `cleaned_output`, `issues`, `should_retry`)
+    - [x] Strip harmless noise patterns before validation
+    - [x] Detect configured error patterns and set retry flag
+    - [x] Minimum content length checks
+    - [x] Response marker presence requirement
     - [ ] Completeness indicators (no mid-sentence truncation)
+    - [x] Unit tests covering Claude/Gemini/Codex/Qwen outputs
   - [ ] Integration with orchestrator:
-    - [ ] Track retry attempts per turn
-    - [ ] Log all retry events for debugging
-    - [ ] Option to skip turn vs. retry vs. fail conversation
+    - [x] Invoke validator in `ConversationManager` after each capture
+    - [x] Track retry attempts per turn (max 2, backoff 0.6s/1.2s)
+    - [x] Skip turn gracefully when retries exhausted
+    - [x] Log filtered noise to `logs/filtered_patterns.log`
+    - [x] Log validation failures to `logs/response_errors.log` with context
 - [ ] Implement dead agent detection
   - [ ] Health check ping for each agent
   - [ ] Timeout-based failure detection
@@ -614,3 +658,259 @@
 - [x] Output capture latency < 500ms ✅ ~10ms measured
 - [x] Support 3+ agents in orchestrated discussion ✅ **4 AIs working (Claude, Gemini, Codex, Qwen) as of Oct 30, 2025**
 - [ ] Graceful error recovery demonstrated - **Phase 6 objective**
+
+## Phase 7: Human-in-the-Loop Control System
+
+**Objective**: Enable human intervention during orchestrated discussions to handle permissions dialogs, inject guidance prompts, and manually control agent interactions.
+
+**Timeline**: 2-3 weeks (Week 1: Core infrastructure, Week 2: Advanced control, Week 3: Testing & refinement)
+
+**Design Approach**: Named pipe (FIFO) control channel with phased capability rollout per team consensus (Claude, Gemini, Codex agreement on MessageBoard).
+
+### Phase 7.1: Control Channel Infrastructure ✅ IN PROGRESS
+
+**Objective**: Establish the foundational control pipe mechanism and basic command processing.
+
+#### Task 7.1.1: Named Pipe Setup ✅ DONE
+- [x] Create `src/orchestrator/control_channel.py` module
+- [x] Implement `ControlChannel` class
+  - [x] `__init__(pipe_path="/tmp/orchestrator_control")` - Initialize control channel
+  - [x] `setup_pipe()` - Create FIFO if doesn't exist, open in non-blocking mode
+  - [x] `check_for_commands()` - Non-blocking read using `select.select()`
+  - [x] `cleanup()` - Remove pipe on shutdown
+- [x] Add error handling
+  - [x] Pipe already exists (remove and recreate)
+  - [x] Pipe blocked/broken (recreate)
+  - [x] Invalid command format (log and ignore)
+- [x] Add command parsing
+  - [x] Split command into type and arguments
+  - [x] Validate command format
+  - [x] Return structured command object
+
+#### Task 7.1.2: Pause/Resume Mechanism ✅ DONE
+- [x] Update `ConversationManager.__init__()`
+  - [x] Initialize `ControlChannel` instance
+  - [x] Add `human_control_mode` flag (default: False)
+  - [x] Add `_current_agent` tracking attribute
+- [x] Implement `_check_control_commands()` method
+  - [x] Call `control_channel.check_for_commands()` non-blocking
+  - [x] Delegate to `_handle_control_command()`
+- [x] Implement `_handle_control_command(command)` method
+  - [x] Handle `PAUSE` command: set flag, send ESC to current agent, log event
+  - [x] Handle `RESUME` command: clear flag, log event
+  - [x] Handle `STATUS` command: report current state, turn count, active agent
+- [x] Implement `_send_escape(agent_name)` helper
+  - [x] Map agent name to controller instance
+  - [x] Call `controller.send_key("Escape")`
+  - [x] Log interrupt event
+- [x] Update `ConversationManager.facilitate_discussion()` main loop
+  - [x] Call `_check_control_commands()` before each turn
+  - [x] Add pause wait loop: `while self.human_control_mode: sleep(0.5); check_commands()`
+  - [x] Track `self._current_agent = next_speaker` before dispatch
+
+#### Task 7.1.3: TmuxController Keyboard Support ✅ DONE
+- [x] Implement `TmuxController.send_key(key_name)` method
+  - [x] Execute `tmux send-keys -t {session} {key_name}`
+  - [x] Support standard keys: Escape, Enter, Up, Down, Left, Right, Tab, Space
+  - [x] Add debug logging
+  - [x] Handle errors (session not found, invalid key)
+- [x] Add unit tests
+  - [x] Test sending supported keys and alias mapping
+  - [x] Verify correct tmux command format
+  - [x] Test error handling for invalid sessions and tmux failures
+
+#### Task 7.1.4: Basic Command Testing ✅ DONE
+- [x] Create `tests/test_control_channel.py`
+  - [x] Test pipe creation and cleanup
+  - [x] Test non-blocking command reading
+  - [x] Test command parsing (valid and invalid formats)
+  - [x] Test concurrent access (multiple writers)
+- [x] Create `tests/test_pause_resume.py`
+  - [x] Test PAUSE command sets flag and sends ESC
+  - [x] Test RESUME command clears flag
+  - [x] Test orchestration waits during pause
+  - [x] Test commands checked before each turn
+- [x] Create integration test with orchestration stub
+  - [x] Start 2-AI discussion
+  - [x] Send PAUSE mid-turn
+  - [x] Verify orchestration stops
+  - [x] Send RESUME
+  - [x] Verify orchestration continues
+
+### Phase 7.2: Prompt Injection ✅ PLANNED
+
+**Objective**: Allow human to inject custom prompts to specific agents while paused.
+
+#### Task 7.2.1: TEXT Command Implementation ✅ DONE
+- [x] Extend `_handle_control_command()` with TEXT handler
+  - [x] Parse format: `TEXT <target>: <prompt_text>`
+  - [x] Validate target agent name (gemini, qwen, claude, codex, both, all)
+  - [x] Extract prompt text (handles whitespace and special characters)
+- [x] Implement `_send_text_to_agent(target, text)` method
+  - [x] Map target to controller(s): single agent, "both" (first 2), "all" (all participants)
+  - [x] Call orchestrator `dispatch_command` (with controller fallback)
+  - [x] Log injection event with participant list and prompt length
+- [ ] Add injection queue (optional enhancement)
+  - [ ] Store injected prompts in queue
+  - [ ] Process after RESUME command
+  - [ ] Alternative: require RESUME after each injection
+
+#### Task 7.2.2: Injection Testing ✅ DONE
+- [x] Unit tests for TEXT command parsing
+  - [x] Single-line prompts
+  - [x] Multi-line prompts (with newlines)
+  - [x] Special characters (quotes, apostrophes, hyphens)
+  - [x] Different target formats (single, both, all)
+- [x] Integration test for prompt injection
+  - [x] Start discussion, PAUSE
+  - [x] Send TEXT command to one agent
+  - [x] Verify agent receives prompt via orchestrator dispatch
+  - [x] Send TEXT to multiple agents
+  - [x] Verify both receive prompts while paused
+  - [x] RESUME and verify pause state clears
+
+### Phase 7.3: Raw Keystroke Control ✅ IN PROGRESS
+
+**Objective**: Enable direct keyboard control for handling permission dialogs and UI navigation.
+
+#### Task 7.3.1: KEY Command Implementation ✅ DONE
+- [x] Extend `_handle_control_command()` with KEY handler
+  - [x] Parse format: `KEY <target> <key_1> <key_2> ...`
+  - [x] Validate target agent (gemini, qwen, claude, codex, both, all)
+  - [x] Handle missing keys gracefully
+- [x] Implement `_send_keys_to_agent(target, keys)` helper
+  - [x] Map friendly names via TmuxController alias table
+  - [x] Support target expansion (single, both, all)
+  - [x] Call `controller.send_key()` for each key (fallback to `send_keys`)
+  - [x] Log keystroke successes/failures
+- [x] Verified alias coverage through existing TmuxController tests
+
+#### Task 7.3.2: Keystroke Testing ✅ DONE
+- [x] Unit tests for KEY command
+  - [x] Test each supported key type
+  - [x] Test different target formats
+  - [x] Test invalid key names (ensure errors handled)
+  - [x] Test rapid key sequences
+- [x] Integration-style pause test
+  - [x] Simulate human PAUSE state
+  - [x] Send KEY commands: Down, Down, Enter
+  - [x] Verify keys recorded per agent
+  - [x] Send RESUME and ensure discussion can continue
+  - [ ] Pending: real permission dialog capture (manual follow-up)
+
+### Phase 7.4: User Experience Enhancements ✅ PLANNED
+
+**Objective**: Make the control system easy and intuitive to use.
+
+#### Task 7.4.1: Shell Wrapper Script ✅ DONE
+- [x] Create `scripts/orchestrator_control.sh`
+  - [x] Command: `pause` - Send PAUSE to pipe
+  - [x] Command: `resume` - Send RESUME to pipe
+  - [x] Command: `status` - Send STATUS to pipe
+  - [x] Command: `say <agent> <text>` - Send TEXT command
+  - [x] Command: `key <agent> <key>` - Send KEY command
+  - [x] Add help text and usage examples
+  - [x] Make executable (chmod +x)
+- [x] Add user-friendly error messages
+  - [x] Pipe not found: "Orchestrator not running"
+  - [x] Invalid agent name: List valid agents
+  - [x] Invalid key name: List supported keys
+- [x] Add command history/logging
+  - [x] Log all control commands to separate file
+  - [x] Timestamp each command
+  - [x] Show last N commands with `history` command
+
+#### Task 7.4.2: Status Feedback System
+- [x] Enhance STATUS command output
+  - [x] Show current mode (RUNNING/PAUSED)
+  - [x] Show turn count and max turns
+  - [x] Show active/last agent
+  - [x] Show time elapsed
+  - [x] Show time since last activity
+- [x] Add visual indicators
+  - [x] Color coding (green=running, yellow=paused, red=error)
+  - [x] Progress bar (turns completed/total)
+  - [x] Agent status table (active/idle/error)
+- [x] Optional: Real-time status file
+  - [x] Write status to `/tmp/orchestrator_status.txt`
+  - [x] Update every 5 seconds
+  - [x] Allow external monitoring (tail -f)
+
+#### Task 7.4.3: Comprehensive Documentation
+- [x] Update MessageBoard with implementation notes
+- [x] Create `docs/Human_Control_Guide.md`
+  - [x] Overview of control system
+  - [x] Command reference with examples
+  - [x] Common use cases (permissions, guidance, debugging)
+  - [x] Troubleshooting section
+  - [x] Best practices
+- [x] Update README.md
+  - [x] Add "Human Intervention" section
+  - [x] Quick start examples
+  - [x] Link to detailed guide
+- [x] Add inline code comments
+  - [x] Document control flow
+  - [x] Explain design decisions
+  - [x] Provide usage examples
+
+### Phase 7.5: Advanced Features (Optional) ✅ DEFERRED
+
+**Objective**: Enhanced control capabilities for advanced use cases.
+
+#### Task 7.5.1: Auto-Pause Triggers
+- [ ] Implement configurable auto-pause conditions
+  - [ ] Pause on permission request detected
+  - [ ] Pause on error threshold exceeded
+  - [ ] Pause on specific keywords in responses
+  - [ ] Pause on agent timeout/failure
+- [ ] Add notification system
+  - [ ] Log auto-pause reason
+  - [ ] Optional: Send alert to monitoring system
+  - [ ] Optional: Play system sound
+- [ ] Add configuration section in config.yaml
+  - [ ] `auto_pause.enabled: true/false`
+  - [ ] `auto_pause.triggers: [...]`
+  - [ ] `auto_pause.notify: true/false`
+
+#### Task 7.5.2: Macro/Script Support
+- [ ] Support command sequences in single file
+  - [ ] Read from file: `LOAD_SCRIPT /path/to/script.txt`
+  - [ ] Execute line-by-line with delays
+  - [ ] Support comments and blank lines
+- [ ] Add control flow
+  - [ ] Conditional execution based on status
+  - [ ] Loop support for repeated actions
+  - [ ] Variables for agent names, prompts
+- [ ] Error handling for scripts
+  - [ ] Abort on error vs continue
+  - [ ] Rollback on failure
+  - [ ] Logging of script execution
+
+#### Task 7.5.3: Remote Control API
+- [ ] HTTP API for remote control (optional)
+  - [ ] REST endpoints for commands
+  - [ ] Authentication/authorization
+  - [ ] WebSocket for real-time status
+- [ ] Web UI dashboard (optional)
+  - [ ] Real-time conversation view
+  - [ ] Control panel for commands
+  - [ ] Agent status monitoring
+  - [ ] Log viewing interface
+
+### Phase 7 Success Criteria
+
+- [ ] Control pipe established and commands processed reliably
+- [ ] PAUSE/RESUME stops and restarts orchestration correctly
+- [ ] TEXT command injects prompts to specified agents
+- [ ] KEY command sends keystrokes for UI navigation
+- [ ] Shell wrapper script makes control intuitive
+- [ ] Permission dialog navigation demonstrated
+- [ ] Mid-discussion guidance injection demonstrated
+- [ ] No impact on orchestration when not in use (non-blocking)
+- [ ] All control events logged to audit trail
+- [ ] Comprehensive documentation and examples provided
+- [ ] Integration tests validate all command types
+- [ ] Auto-pause triggers work (if implemented)
+
+**Start Date**: November 2, 2025 (design phase complete)
+**Target Completion**: November 22, 2025

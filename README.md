@@ -145,23 +145,28 @@ PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
 
 ### Advanced Options
 
-Control session behavior, startup timing, and CLI flags:
+Control session behavior, startup timing, agent-specific instructions, and CLI flags:
 
 ```bash
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
+  "Design a REST API for a task management system" \
   --auto-start \
   --startup-timeout 60 \
   --max-turns 10 \
-  --history-size 50 \
+  --group-system-prompt "Initial briefing for all agents." \
   --claude-session my-claude \
-  --claude-executable "safe_claude --dangerously-skip-permissions" \
-  --claude-startup-timeout 15 \
+  --claude-executable "claude --dangerously-skip-permissions" \
+  --claude-cwd /path/to/project \
+  --claude-system-prompt-file /path/to/claude_instructions.md \
   --gemini-session my-gemini \
-  --gemini-executable "safe_gemini --yolo --screenReader" \
-  --gemini-startup-timeout 20 \
-  --log-file logs/custom-discussion.log \
-  "Design a REST API for a task management system"
+  --gemini-executable "gemini --yolo" \
+  --log-file logs/custom-discussion.log
 ```
+
+**Additional Flags:**
+- `--group-system-prompt <text>`: A text prompt sent to all participating agents at the beginning of the session.
+- `--<agent>-system-prompt-file <path>`: Instructs a specific agent to read a file at the start of the session (e.g., `--claude-system-prompt-file CLAUDE.md`).
+- `--<agent>-cwd <path>`: Sets the working directory for a specific agent's session.
 
 ### Manual Intervention During Discussions
 
@@ -178,6 +183,34 @@ tmux attach -t claude     # Full control (automation pauses)
 ```
 
 The orchestrator detects attached clients and queues commands until you detach.
+
+### Human Intervention & Control
+
+Enable the control channel in `config.yaml` (see `control_channel.enabled`) to pause automation, send
+guidance, or answer permission dialogs without attaching to tmux manually. The companion guide
+[`docs/Human_Control_Guide.md`](docs/Human_Control_Guide.md) covers commands, workflows, and troubleshooting.
+
+Quick start via the helper script:
+
+```bash
+# Pause/resume orchestration
+scripts/orchestrator_control.sh pause
+scripts/orchestrator_control.sh resume
+
+# Inject guidance
+scripts/orchestrator_control.sh say gemini "Focus on fixing the failing tests."
+
+# Send keystrokes (e.g., permissions dialog)
+scripts/orchestrator_control.sh key qwen Down Down Enter
+
+# Review recent manual interventions
+scripts/orchestrator_control.sh history 20
+```
+
+The script default pipe is `/tmp/orchestrator_control`; override with `--pipe` or the `ORCHESTRATOR_CONTROL_PIPE` environment variable. All commands are logged to `logs/control_channel_history.log` (override with `ORCHESTRATOR_CONTROL_HISTORY`). Run `scripts/orchestrator_control.sh --help` for the full command reference.
+
+**Tip:** Use `tmux attach -r` for read-only observation. When you detach (Ctrl+B, then `d`) the orchestrator
+resumes automatically unless manually paused via the control channel.
 
 ## Configuration
 

@@ -29,6 +29,7 @@ from src.controllers import (
 from src.controllers.session_backend import SessionSpec
 from src.controllers.tmux_controller import SessionBackendError, SessionNotFoundError
 from src.orchestrator import ContextManager, DevelopmentTeamOrchestrator, MessageRouter
+from src.orchestrator.validation import PostCompletionValidator
 from src.utils.config_loader import get_config
 
 logger = logging.getLogger(__name__)
@@ -507,6 +508,17 @@ def main(argv: list[str]) -> int:
 
     conversation = result["conversation"]
     context_manager: ContextManager = result["context_manager"]
+    agent_dirs = {
+        name: getattr(controller, "working_dir", None)
+        for name, controller in controllers.items()
+    }
+
+    validator = PostCompletionValidator()
+    validation_result = validator.validate(
+        conversation,
+        agent_dirs,
+        context_manager=context_manager,
+    )
 
     print("\n=== Conversation Transcript ===")
     for turn in conversation:
@@ -516,6 +528,18 @@ def main(argv: list[str]) -> int:
     print("\n=== Shared Context Summary ===")
     summary = context_manager.summarize_conversation(context_manager.history)
     print(summary or "(no summary available)")
+
+    if validation_result is not None:
+        print("\n=== Post-Completion Validation ===")
+        warnings = validation_result.get("warnings", [])
+        issues = validation_result.get("issues", [])
+        if not warnings and not issues:
+            print("All configured post-completion checks passed.")
+        else:
+            for warning in warnings:
+                print(f"WARNING: {warning}")
+            for issue in issues:
+                print(f"ISSUE: {issue}")
 
     if args.log_file:
         log_path = Path(args.log_file)
@@ -529,6 +553,17 @@ def main(argv: list[str]) -> int:
         log_lines.extend(format_turn(turn) + "\n-" for turn in conversation)
         log_lines.append("\n=== Shared Context Summary ===")
         log_lines.append(summary or "(no summary available)")
+        if validation_result is not None:
+            log_lines.append("\n=== Post-Completion Validation ===")
+            warnings = validation_result.get("warnings", [])
+            issues = validation_result.get("issues", [])
+            if not warnings and not issues:
+                log_lines.append("All configured post-completion checks passed.")
+            else:
+                for warning in warnings:
+                    log_lines.append(f"WARNING: {warning}")
+                for issue in issues:
+                    log_lines.append(f"ISSUE: {issue}")
         log_path.write_text("\n".join(log_lines), encoding="utf-8")
         print(f"\n[log] Conversation written to {log_path}")
 

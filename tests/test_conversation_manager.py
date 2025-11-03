@@ -10,6 +10,7 @@ from src.orchestrator.conversation_manager import ConversationManager
 from src.orchestrator.message_router import MessageRouter
 from src.orchestrator.context_manager import ContextManager
 from src.orchestrator.orchestrator import DevelopmentTeamOrchestrator
+from src.utils.config_loader import reload_config
 
 
 class FakeConversationalController:
@@ -74,10 +75,10 @@ class FakeConversationalController:
 
 def test_conversation_manager_round_robin_dispatch() -> None:
     claude_controller = FakeConversationalController(
-        ["Here's an approach.", "Consensus: adopt plan A."]
+        ["Here's an approach.", "[[PROJECT_COMPLETE]] Consensus: adopt plan A."]
     )
     gemini_controller = FakeConversationalController(
-        ["Let's explore plan B to cover edge cases."]
+        ["Let's explore plan B to cover edge cases.", "[[PROJECT_COMPLETE]] Confirm plan A handles the edge cases."]
     )
 
     orchestrator = DevelopmentTeamOrchestrator(
@@ -85,16 +86,263 @@ def test_conversation_manager_round_robin_dispatch() -> None:
     )
     manager = ConversationManager(orchestrator, ["claude", "gemini"])
 
-    conversation = manager.facilitate_discussion("Design the API", max_turns=4)
+    conversation = manager.facilitate_discussion("Design the API", max_turns=6)
 
-    # Expect alternating turns until consensus is declared.
-    assert [turn["speaker"] for turn in conversation] == ["claude", "gemini", "claude"]
+    # Expect alternating turns until both explicit signals arrive.
+    assert [turn["speaker"] for turn in conversation] == ["claude", "gemini", "claude", "gemini"]
     assert manager.detect_consensus(conversation) is True
     assert conversation[-1]["metadata"]["consensus"] is True
 
     # Confirm prompts made it to the controllers.
     assert len(claude_controller.sent) == 2
-    assert len(gemini_controller.sent) == 1
+    assert len(gemini_controller.sent) == 2
+
+
+def test_hybrid_completion_detection_with_explicit_signal() -> None:
+    reload_config()
+    claude_controller = FakeConversationalController(
+        [
+            "Initial proposal for the project.",
+            "[[PROJECT_COMPLETE]] All deliverables satisfied.",
+        ]
+    )
+    gemini_controller = FakeConversationalController(
+        [
+            "Acknowledged. Verifying remaining items.",
+            "[[PROJECT_COMPLETE]] Confirming the project is complete.",
+        ]
+    )
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"claude": claude_controller, "gemini": gemini_controller}
+    )
+    manager = ConversationManager(orchestrator, ["claude", "gemini"])
+
+    conversation = manager.facilitate_discussion("Ship the feature", max_turns=6)
+
+    assert len(conversation) == 4
+    last_turn = conversation[-1]
+    assert last_turn["speaker"] == "gemini"
+    assert last_turn["metadata"]["consensus"] is True
+    assert "Hybrid completion" in last_turn["metadata"]["consensus_reason"]
+    tracking = last_turn["metadata"]["completion_tracking"]
+    assert tracking["agreeing_participants"] == ["claude", "gemini"]
+    assert tracking["consecutive_ok"] is True
+    assert tracking.get("all_explicit_met") is True
+
+
+def test_completion_reset_on_disagreement_phrase() -> None:
+    reload_config()
+    claude_controller = FakeConversationalController(
+        [
+            "[[PROJECT_COMPLETE]] Implementation is ready.",
+            "[[PROJECT_COMPLETE]] Final review complete.",
+        ]
+    )
+    gemini_controller = FakeConversationalController(
+        [
+            "We still need to update the documentation.",
+            "[[PROJECT_COMPLETE]] Documentation finished and verified.",
+        ]
+    )
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"claude": claude_controller, "gemini": gemini_controller}
+    )
+    manager = ConversationManager(orchestrator, ["claude", "gemini"])
+
+    conversation = manager.facilitate_discussion("Finalize docs", max_turns=6)
+
+    assert len(conversation) == 4
+    reset_turn = conversation[1]
+    assert "completion_reset" in reset_turn["metadata"]
+    assert reset_turn["metadata"]["completion_tracking"]["agreeing_participants"] == []
+    last_turn = conversation[-1]
+    assert last_turn["metadata"]["consensus"] is True
+    assert last_turn["metadata"]["completion_tracking"]["agreeing_participants"] == ["claude", "gemini"]
+
+
+def test_completion_requires_explicit_signal_when_configured() -> None:
+    reload_config()
+    gemini_controller = FakeConversationalController(
+        [
+            "Coordinating next steps while Qwen wraps up.",
+        ]
+    )
+    qwen_controller = FakeConversationalController(
+        [
+            "The project is complete and ready for review; handing off deliverables now.",
+        ]
+    )
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"gemini": gemini_controller, "qwen": qwen_controller}
+    )
+    manager = ConversationManager(orchestrator, ["gemini", "qwen"])
+
+    conversation = manager.facilitate_discussion("Finalize delivery", max_turns=2)
+
+    # Consensus should not trigger without explicit [[PROJECT_COMPLETE]] markers.
+    assert len(conversation) == 2
+    assert all(not turn.get("metadata", {}).get("consensus") for turn in conversation)
+
+    final_turn = conversation[-1]
+    metadata = final_turn.get("metadata", {})
+    tracking = metadata.get("completion_tracking") or {}
+    assert tracking.get("agreeing_participants") == []
+    assert tracking.get("all_explicit_met") is False
+    # Passive acknowledgment should be marked advisory and ignored for consensus math.
+    assert metadata.get("completion_signal") is True
+    assert metadata.get("completion_signal_type") == "passive"
+    assert metadata.get("completion_signal_advisory") is True
+    assert metadata.get("completion_signal_effective") is False
+    missing = metadata.get("completion_missing_explicit") or []
+    assert set(missing) == {"gemini", "qwen"}
+
+
+def test_keyword_alignment_does_not_trigger_consensus_when_explicit_required() -> None:
+    reload_config()
+    gemini_controller = FakeConversationalController(
+        [
+            "Spec drafted; awaiting implementation.",
+            "Code review indicates components remain aligned with the spec; additional changes needed.",
+        ]
+    )
+    qwen_controller = FakeConversationalController(
+        [
+            "Implementation ready for review; tests executed; all modules aligned with expectations.",
+        ]
+    )
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"gemini": gemini_controller, "qwen": qwen_controller}
+    )
+    manager = ConversationManager(orchestrator, ["gemini", "qwen"])
+
+    conversation = manager.facilitate_discussion("Ship aligned feature", max_turns=3)
+
+    assert len(conversation) == 3
+    assert all(not turn.get("metadata", {}).get("consensus") for turn in conversation)
+    final_metadata = conversation[-1].get("metadata", {})
+    missing = final_metadata.get("completion_missing_explicit") or []
+    assert set(missing) == {"gemini", "qwen"}
+
+
+def test_tool_loop_detection_triggers_warning_after_threshold() -> None:
+    reload_config()
+    claude_outputs = [
+        "\u2713  ReadFolder project/src\nListing complete.",
+        "\u2713  ReadFolder project/src\nStill listing.",
+        "\u2713  ReadFolder project/src\nReviewing contents.",
+        "\u2713  ReadFolder project/src\nNo changes detected.",
+    ]
+    gemini_outputs = [
+        "Acknowledged progress.",
+        "Continuing coordination.",
+        "Awaiting next update.",
+        "Ready for additional guidance.",
+    ]
+
+    claude_controller = FakeConversationalController(claude_outputs)
+    gemini_controller = FakeConversationalController(gemini_outputs)
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"claude": claude_controller, "gemini": gemini_controller}
+    )
+    context_manager = ContextManager(history_size=10)
+    manager = ConversationManager(
+        orchestrator,
+        ["claude", "gemini"],
+        context_manager=context_manager,
+    )
+
+    conversation = manager.facilitate_discussion("Audit project directory", max_turns=8)
+
+    claude_turns = [turn for turn in conversation if turn["speaker"] == "claude"]
+    assert len(claude_turns) == 4
+    final_turn = claude_turns[-1]
+    metadata = final_turn["metadata"]
+    assert metadata["loop_detected"] is True
+    loop_details = metadata["loop_detection"]
+    assert loop_details["stage"] == "warning"
+    assert loop_details["tool"] == "ReadFolder"
+    assert loop_details["threshold"] == 4
+    assert loop_details["streak"] == 4
+    assert loop_details["escalate"] is False
+    assert context_manager.loops, "Loop event should be recorded in context manager"
+    assert context_manager.loops[-1]["reason"].startswith("ReadFolder")
+
+
+def test_tool_loop_detection_escalates_on_next_turn() -> None:
+    reload_config()
+    claude_outputs = [
+        "\u2713  ReadFolder project/src\nListing complete.",
+        "\u2713  ReadFolder project/src\nStill listing.",
+        "\u2713  ReadFolder project/src\nReviewing contents.",
+        "\u2713  ReadFolder project/src\nNo changes detected.",
+        "\u2713  ReadFolder project/src\nRepeating inspection.",
+    ]
+    gemini_outputs = [
+        "Acknowledged progress.",
+        "Continuing coordination.",
+        "Awaiting next update.",
+        "Ready for additional guidance.",
+        "Preparing follow-up.",
+    ]
+
+    claude_controller = FakeConversationalController(claude_outputs)
+    gemini_controller = FakeConversationalController(gemini_outputs)
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"claude": claude_controller, "gemini": gemini_controller}
+    )
+    context_manager = ContextManager(history_size=10)
+    manager = ConversationManager(
+        orchestrator,
+        ["claude", "gemini"],
+        context_manager=context_manager,
+    )
+
+    conversation = manager.facilitate_discussion("Audit project directory", max_turns=10)
+
+    claude_turns = [turn for turn in conversation if turn["speaker"] == "claude"]
+    assert len(claude_turns) == 5
+    final_turn = claude_turns[-1]
+    metadata = final_turn["metadata"]
+    assert metadata["loop_detected"] is True
+    loop_details = metadata["loop_detection"]
+    assert loop_details["stage"] == "escalation"
+    assert loop_details["escalate"] is True
+    assert loop_details["streak"] == 5
+    assert len(context_manager.loops) >= 2
+
+
+def test_tool_loop_detection_not_triggered_below_threshold() -> None:
+    reload_config()
+    claude_outputs = [
+        "\u2713  ReadFolder project/src\nListing complete.",
+        "\u2713  ReadFolder project/src\nStill listing.",
+        "\u2713  ReadFolder project/src\nReviewing contents.",
+    ]
+    gemini_outputs = [
+        "Acknowledged progress.",
+        "Continuing coordination.",
+        "Awaiting next update.",
+    ]
+
+    claude_controller = FakeConversationalController(claude_outputs)
+    gemini_controller = FakeConversationalController(gemini_outputs)
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"claude": claude_controller, "gemini": gemini_controller}
+    )
+    manager = ConversationManager(orchestrator, ["claude", "gemini"])
+
+    conversation = manager.facilitate_discussion("Audit project directory", max_turns=6)
+
+    for turn in conversation:
+        metadata = turn.get("metadata") or {}
+        assert "loop_detected" not in metadata
 
 
 def test_detect_conflict_on_disagreement_keyword() -> None:
@@ -131,10 +379,10 @@ def test_detect_conflict_ignores_code_block_keywords() -> None:
 
 def test_conversation_manager_records_history_in_context_manager() -> None:
     claude_controller = FakeConversationalController(
-        ["Initial thoughts.", "Consensus reached on plan A."]
+        ["Initial thoughts.", "[[PROJECT_COMPLETE]] Consensus reached on plan A."]
     )
     gemini_controller = FakeConversationalController(
-        ["Building on that idea."]
+        ["Building on that idea.", "[[PROJECT_COMPLETE]] Confirming plan A readiness."]
     )
 
     orchestrator = DevelopmentTeamOrchestrator(
@@ -147,16 +395,21 @@ def test_conversation_manager_records_history_in_context_manager() -> None:
         context_manager=context_manager,
     )
 
-    conversation = manager.facilitate_discussion("Choose the rollout strategy", max_turns=5)
+    conversation = manager.facilitate_discussion("Choose the rollout strategy", max_turns=6)
 
-    assert len(conversation) == 3
-    assert len(context_manager.history) == 3
+    assert len(conversation) == 4
+    assert len(context_manager.history) == 4
     assert context_manager.consensus_events, "Consensus event should be recorded"
 
+    history_responses = [turn.get("response") for turn in context_manager.history]
+    assert any("Consensus reached on plan A" in (resp or "") for resp in history_responses)
+    assert any("Confirming plan A readiness" in (resp or "") for resp in history_responses)
+
     prompt = context_manager.build_prompt("gemini", "Provide final summary", include_history=True)
-    assert "Recent context" in prompt
-    assert "claude: Consensus reached on plan A." in prompt
     assert "gemini: Building on that idea." not in prompt
+
+    peer_prompt = context_manager.build_prompt("claude", "Provide final summary", include_history=True)
+    assert "gemini: [[PROJECT_COMPLETE]] Confirming plan A readiness." in peer_prompt
 
 
 def test_conflict_notification_updates_context_manager() -> None:
@@ -270,10 +523,10 @@ def test_orchestrator_start_discussion_with_codex_participant() -> None:
 
 def test_message_router_adds_partner_updates_to_prompt() -> None:
     claude_controller = FakeConversationalController(
-        ["Initial proposal.", "Consensus reached."]
+        ["Initial proposal.", "[[PROJECT_COMPLETE]] Consensus reached."]
     )
     gemini_controller = FakeConversationalController(
-        ["Follow-up analysis."]
+        ["Follow-up analysis.", "[[PROJECT_COMPLETE]] Ready to proceed."]
     )
 
     orchestrator = DevelopmentTeamOrchestrator(
@@ -286,9 +539,9 @@ def test_message_router_adds_partner_updates_to_prompt() -> None:
         message_router=router,
     )
 
-    conversation = manager.facilitate_discussion("Evaluate design trade-offs", max_turns=4)
+    conversation = manager.facilitate_discussion("Evaluate design trade-offs", max_turns=6)
 
-    assert len(conversation) == 3
+    assert len(conversation) == 4
     assert "Initial proposal." in gemini_controller.sent[0]
     assert "Follow-up analysis." in claude_controller.sent[-1]
 
@@ -350,10 +603,10 @@ def test_determine_next_speaker_retry_after_queue() -> None:
 
 def test_orchestrator_start_discussion_with_router() -> None:
     claude_controller = FakeConversationalController(
-        ["Draft outline.", "Consensus achieved."]
+        ["Draft outline.", "[[PROJECT_COMPLETE]] Consensus achieved."]
     )
     gemini_controller = FakeConversationalController(
-        ["Refined analysis."]
+        ["Refined analysis.", "[[PROJECT_COMPLETE]] Validated."]
     )
 
     orchestrator = DevelopmentTeamOrchestrator(
@@ -369,12 +622,30 @@ def test_orchestrator_start_discussion_with_router() -> None:
     context_manager = result["context_manager"]
     message_router = result["message_router"]
 
-    assert len(conversation) == 3
+    assert len(conversation) == 4
     assert conversation[-1]["metadata"]["consensus"] is True
-    assert len(context_manager.history) == 3
+    assert len(context_manager.history) == 4
     prompt = message_router.prepare_prompt(
         recipient="gemini",
         topic="Plan implementation",
         base_prompt="[Reminder]",
     )
     assert "[Reminder]" in prompt
+
+
+def test_validation_warnings_do_not_trigger_retry() -> None:
+    controller = FakeConversationalController(["Short reply."])
+    orchestrator = DevelopmentTeamOrchestrator({"claude": controller})
+    manager = ConversationManager(orchestrator, ["claude"])
+
+    conversation = manager.facilitate_discussion("Check warning behavior", max_turns=1)
+
+    assert len(conversation) == 1
+    turn = conversation[0]
+    assert "validation" in turn
+    assert turn["validation"]["valid"] is True
+    assert any(issue.startswith("response_too_short") for issue in turn["validation"]["issues"])
+    metadata = turn.get("metadata") or {}
+    assert "validation_failed" not in metadata
+    # Controller should only receive a single command since we accepted the warning.
+    assert len(controller.sent) == 1

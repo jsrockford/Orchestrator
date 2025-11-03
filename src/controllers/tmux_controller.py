@@ -10,7 +10,7 @@ import time
 import shutil
 import re
 from collections import deque
-from typing import Optional, List, Dict, Any, Mapping, Sequence, Deque, Tuple
+from typing import Optional, List, Dict, Any, Mapping, Sequence, Deque, Tuple, Callable
 
 from .session_backend import (
     SessionBackend,
@@ -38,6 +38,144 @@ from ..utils.auto_restart import AutoRestarter, RestartPolicy
 ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 
+class _InteractiveCommandGuard:
+    """Detect and interrupt interactive shell commands that stall automation."""
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float,
+        require_spinner: bool,
+        spinner_patterns: Sequence[str],
+        allow_patterns: Sequence[str],
+        cooldown_seconds: float,
+        time_provider: Callable[[], float] = time.time,
+    ) -> None:
+        self._timeout: float = max(0.0, float(timeout_seconds))
+        self._require_spinner: bool = bool(require_spinner)
+        self._spinner_patterns: List[str] = [pattern for pattern in spinner_patterns if pattern]
+        self._spinner_patterns_lower: List[str] = [pattern.lower() for pattern in self._spinner_patterns]
+        self._allow_patterns: List[str] = [pattern.lower() for pattern in allow_patterns if pattern]
+        self._cooldown: float = max(0.0, float(cooldown_seconds))
+        self._time: Callable[[], float] = time_provider
+
+        self._active_key: Optional[str] = None
+        self._active_display: Optional[str] = None
+        self._detected_at: Optional[float] = None
+        self._spinner_seen: bool = False
+        self._cooldown_until: float = 0.0
+
+    def reset(self) -> None:
+        """Clear the recorded interactive command state."""
+        self._active_key = None
+        self._active_display = None
+        self._detected_at = None
+        self._spinner_seen = False
+
+    def update(self, tail_lines: Sequence[str]) -> Optional[str]:
+        """Return the active command to interrupt, if any."""
+        if not tail_lines:
+            return None
+
+        now = self._time()
+        start_candidate: Optional[str] = None
+        start_display: Optional[str] = None
+        completions: List[str] = []
+        spinner_present = False
+
+        for raw_line in tail_lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            normalized_lower = line.lower()
+            if self._spinner_patterns:
+                if any(pattern in line for pattern in self._spinner_patterns):
+                    spinner_present = True
+                elif any(pattern in normalized_lower for pattern in self._spinner_patterns_lower):
+                    spinner_present = True
+
+            if line.startswith("⊷") and "Shell" in line:
+                candidate_key = self._normalize_key(line)
+                if candidate_key and not self._is_allowed(candidate_key):
+                    start_candidate = candidate_key
+                    start_display = self._extract_display(line)
+            elif line and line[0] in {"✓", "✗"} and "Shell" in line:
+                completion_key = self._normalize_key(line)
+                if completion_key:
+                    completions.append(completion_key)
+
+        if start_candidate:
+            if self._active_key is None or not self._commands_match(self._active_key, start_candidate):
+                self._active_key = start_candidate
+                self._active_display = start_display or start_candidate
+                self._detected_at = now
+                self._spinner_seen = spinner_present
+            else:
+                if self._detected_at is None:
+                    self._detected_at = now
+                if spinner_present:
+                    self._spinner_seen = True
+        elif spinner_present and self._active_key is not None:
+            self._spinner_seen = True
+
+        if self._active_key is None:
+            return None
+
+        # Clear state when completion markers surface.
+        for completion in completions:
+            if self._commands_match(self._active_key, completion):
+                self.reset()
+                return None
+
+        if self._require_spinner and not self._spinner_seen:
+            return None
+
+        detected_at = self._detected_at or now
+        elapsed = now - detected_at
+
+        if elapsed < self._timeout:
+            return None
+
+        if now < self._cooldown_until:
+            return None
+
+        command = self._active_display or self._active_key
+        self.reset()
+        self._cooldown_until = now + self._cooldown
+        return command
+
+    def _normalize_key(self, line: str) -> str:
+        text = line.strip()
+        if not text:
+            return ""
+        if text[0] in {"⊷", "✓", "✗"}:
+            text = text[1:].strip()
+        text = text.replace("…", "")
+        if " (" in text:
+            text = text.split(" (", 1)[0]
+        text = " ".join(text.split())
+        return text.lower()
+
+    def _extract_display(self, line: str) -> str:
+        text = line.strip()
+        if text and text[0] in {"⊷", "✓", "✗"}:
+            text = text[1:].strip()
+        return text
+
+    def _commands_match(self, existing: str, candidate: str) -> bool:
+        if not existing or not candidate:
+            return False
+        if existing == candidate:
+            return True
+        return existing.startswith(candidate) or candidate.startswith(existing)
+
+    def _is_allowed(self, command_key: str) -> bool:
+        if not self._allow_patterns:
+            return False
+        return any(pattern in command_key for pattern in self._allow_patterns)
+
+
 class TmuxController(SessionBackend):
     """
     Controls AI CLI tools running in tmux sessions.
@@ -45,6 +183,20 @@ class TmuxController(SessionBackend):
     AI-agnostic controller that works with any interactive CLI tool.
     AI-specific behaviors are configured via parameters.
     """
+
+    _SEND_KEY_ALIASES = {
+        "escape": "Escape",
+        "esc": "Escape",
+        "enter": "Enter",
+        "return": "Enter",
+        "up": "Up",
+        "down": "Down",
+        "left": "Left",
+        "right": "Right",
+        "tab": "Tab",
+        "space": "Space",
+        "spacebar": "Space",
+    }
 
     def __init__(
         self,
@@ -136,6 +288,35 @@ class TmuxController(SessionBackend):
         if self._strip_ansi_for_markers:
             self.logger.debug("ANSI stripping enabled for indicator detection")
         self._pause_on_manual_clients = bool(self.config.get('pause_on_manual_clients', True))
+
+        guard_cfg = self.config.get('interactive_command_guard') or {}
+        self._interactive_guard: Optional[_InteractiveCommandGuard] = None
+        self._interactive_guard_send_ctrl_c: bool = False
+        self._interactive_guard_log_level: str = str(guard_cfg.get('log_level', 'warning') or 'warning').lower()
+        if guard_cfg.get('enabled'):
+            timeout_seconds = float(guard_cfg.get('timeout_seconds', 10.0) or 10.0)
+            require_spinner = bool(guard_cfg.get('require_spinner', True))
+            spinner_patterns = guard_cfg.get('spinner_patterns') or []
+            if isinstance(spinner_patterns, str):
+                spinner_patterns = [spinner_patterns]
+            allow_patterns = guard_cfg.get('allow_patterns') or []
+            if isinstance(allow_patterns, str):
+                allow_patterns = [allow_patterns]
+            cooldown_seconds = float(guard_cfg.get('cooldown_seconds', 3.0) or 3.0)
+            self._interactive_guard = _InteractiveCommandGuard(
+                timeout_seconds=timeout_seconds,
+                require_spinner=require_spinner,
+                spinner_patterns=[str(pattern) for pattern in spinner_patterns if str(pattern).strip()],
+                allow_patterns=[str(pattern) for pattern in allow_patterns if str(pattern).strip()],
+                cooldown_seconds=cooldown_seconds,
+            )
+            self._interactive_guard_send_ctrl_c = bool(guard_cfg.get('send_ctrl_c', True))
+            self.logger.debug(
+                "Interactive command guard enabled (timeout=%.1fs, cooldown=%.1fs, require_spinner=%s)",
+                timeout_seconds,
+                cooldown_seconds,
+                require_spinner,
+            )
 
         # Verify environment on initialization
         self._verify_environment()
@@ -600,6 +781,59 @@ class TmuxController(SessionBackend):
         except TmuxError as e:
             raise SessionBackendError(f"Failed to send Enter: {e}") from e
 
+    def send_key(self, key_name: str) -> None:
+        """
+        Send a single keystroke to the tmux session.
+
+        Supported keys include Escape/Esc, Enter/Return, arrow keys, Tab, and Space.
+
+        Raises:
+            ValueError: If ``key_name`` is empty.
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the key is unsupported or tmux rejects the command.
+        """
+        if not key_name or not key_name.strip():
+            raise ValueError("Key name must be provided")
+
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        tmux_key = self._normalize_send_key(key_name)
+        if tmux_key is None:
+            raise SessionBackendError(f"Unsupported key '{key_name}'")
+
+        try:
+            result = self._run_tmux_command(
+                ["send-keys", "-t", self.session_name, tmux_key]
+            )
+        except TmuxError as exc:
+            raise SessionBackendError(f"Failed to send key '{key_name}': {exc}") from exc
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise SessionBackendError(
+                f"tmux send-keys failed for '{tmux_key}': {stderr or 'unknown error'}"
+            )
+
+        self.logger.debug("Sent key '%s' as tmux '%s'", key_name, tmux_key)
+
+    def _normalize_send_key(self, key_name: str) -> Optional[str]:
+        normalized = key_name.strip()
+        if not normalized:
+            return None
+
+        lower = normalized.lower()
+        if lower in self._SEND_KEY_ALIASES:
+            return self._SEND_KEY_ALIASES[lower]
+
+        if len(normalized) == 1:
+            return normalized
+
+        if "-" in normalized:
+            return normalized
+
+        return None
+
     def send_ctrl_c(self) -> None:
         """
         Interrupt the current operation (Ctrl+C equivalent).
@@ -1053,6 +1287,40 @@ class TmuxController(SessionBackend):
         if self.debug_wait_logging:
             self.logger.debug(message, *args)
 
+    def _apply_interactive_guard(self, tail_lines: Sequence[str]) -> bool:
+        if self._interactive_guard is None:
+            return False
+
+        try:
+            command = self._interactive_guard.update(tail_lines)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("Interactive guard update failed: %s", exc)
+            return False
+
+        if not command:
+            return False
+
+        log_message = (
+            "Interactive command guard interrupting stalled shell command: %s"
+            % command
+        )
+        log_level = self._interactive_guard_log_level
+        if log_level == "error":
+            self.logger.error(log_message)
+        elif log_level == "info":
+            self.logger.info(log_message)
+        elif log_level == "debug":
+            self.logger.debug(log_message)
+        else:
+            self.logger.warning(log_message)
+
+        if self._interactive_guard_send_ctrl_c:
+            try:
+                self.send_ctrl_c()
+            except Exception as exc:  # noqa: BLE001
+                self.logger.error("Interactive guard failed to send Ctrl+C: %s", exc)
+        return True
+
     def _is_response_ready(self, tail_lines: Sequence[str]) -> bool:
         if not tail_lines:
             return False
@@ -1145,6 +1413,12 @@ class TmuxController(SessionBackend):
             current_output = self.capture_output()
             tail_lines = self._tail_lines(current_output)
             sanitized_tail_lines = [self._indicator_text(line) for line in tail_lines]
+
+            if self._apply_interactive_guard(sanitized_tail_lines):
+                stable_count = 0
+                previous_output = current_output
+                time.sleep(check_interval)
+                continue
 
             if sanitized_tail_lines and self.loading_indicators:
                 tail_window = sanitized_tail_lines[-6:] if len(sanitized_tail_lines) > 6 else sanitized_tail_lines

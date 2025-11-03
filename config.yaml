@@ -159,8 +159,27 @@ qwen:
   # Response marker and executable
   response_marker: "▸"
   executable: "qwen"
-  executable_args: []
+  executable_args:
+    - "--yolo"
   pause_on_manual_clients: false
+  interactive_command_guard:
+    enabled: true
+    timeout_seconds: 10
+    require_spinner: true
+    spinner_patterns:
+      - "Figuring out how to make this more witty"
+      - "⠸"
+      - "⠴"
+      - "⠼"
+      - "⠧"
+    allow_patterns:
+      - "pytest"
+      - "python -m pytest"
+      - "python -m unittest"
+      - "coverage run"
+    cooldown_seconds: 4
+    send_ctrl_c: true
+    log_level: "warning"
 
 tmux:
   # Session configuration
@@ -184,10 +203,103 @@ tmux:
 logging:
   # Logging configuration
   level: "DEBUG"          # DEBUG, INFO, WARNING, ERROR
-  file: "logs/poc.log"   # Log file path
+  file: "logs/tmux.log"   # Log file path
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   max_bytes: 10485760    # 10MB
   backup_count: 3        # Number of backup files to keep
+
+response_validation:
+  noise_log: "logs/filtered_patterns.log"
+  error_log: "logs/response_errors.log"
+  max_retries: 2
+  retry_backoff_seconds:
+    - 0.6
+    - 1.2
+  ignore_patterns:
+    - "CLI update available"
+    - "Attempting to automatically update"
+    - "Installed with npm"
+    - "npm install"
+  error_patterns:
+    - "Failed to login"
+    - "Authentication failed"
+    - "Invalid API key"
+    - "Rate limit exceeded"
+    - "Too many requests"
+    - "Connection timeout"
+    - "Network error"
+    - "UNABLE_TO_GET_ISSUER_CERT"
+    - "API error"
+    - "API Error"
+    - "Context length exceeded"
+    - "Maximum tokens exceeded"
+    - "FatalTurnLimitedError"
+    - "MODULE_NOT_FOUND"
+    - "Operation not permitted"
+    - "Permission denied"
+  min_response_length: 20
+  require_response_marker: true
+
+completion_detection:
+  enabled: true
+  debug_logging: false
+  mode: "hybrid"  # Options: disabled, explicit, passive, hybrid
+  explicit_signal: "[[PROJECT_COMPLETE]]"
+  fallback_phrases:
+    - "project is complete"
+    - "project is now complete"
+    - "all objectives have been met"
+    - "no further actionable steps"
+    - "successfully completed"
+  cooldown_turns: 0            # Minimum turns before detection becomes active
+  reset_on_disagreement: true  # Reset signals if an agent indicates more work is needed
+  disagreement_phrases:
+    - "not complete"
+    - "more work needed"
+    - "still need to"
+    - "haven't finished"
+    - "additional tasks remain"
+  consensus:
+    threshold: 0.66          # Percentage of participants who must agree
+    recency_window: 2        # Only count signals from the last N turns
+    require_consecutive: true  # Signals must appear in consecutive turns
+  require_explicit_from_all: true  # All participants must send explicit signal before consensus
+
+control_channel:
+  enabled: true
+  pipe_path: "/tmp/orchestrator_control"
+  status:
+    colorize: true
+    file_colorize: false
+    write_file: true
+    file_path: "/tmp/orchestrator_status.txt"
+    refresh_seconds: 5
+    progress_bar_width: 24
+
+loop_detection:
+  enabled: true
+  tool_loops:
+    enabled: true
+    repeat_threshold: 4          # Number of identical tool calls before flagging a loop
+    history_window: 6            # How many recent turns to track per participant
+    escalate_on_repeat: true     # Escalate if the next turn repeats the same loop
+    ignore_tools: []             # Tool names to ignore (case-insensitive)
+
+post_completion_validation:
+  enabled: true
+  require_test_mentions: true
+  mention_keywords:
+    - "test"
+    - "tests"
+    - "pytest"
+    - "unit test"
+    - "integration test"
+  test_file_globs:
+    - "test_*.py"
+    - "tests/test_*.py"
+  execute_tests: false
+  test_command: "python -m pytest"
+  command_timeout: 120
 
 worktree:
   # Git worktree configuration for multi-instance testing
