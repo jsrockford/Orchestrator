@@ -76,6 +76,7 @@ class ConversationManager:
         tmux_cfg = get_config().get_section("tmux") or {}
         self._capture_tail_limit: int = int(tmux_cfg.get("capture_lines", 500) or 500)
         self._fallback_notices: Set[str] = set()
+        self._delimiter_warnings: Set[str] = set()
         self._run_started_at: Optional[float] = None
         self._last_activity_at: Optional[float] = None
         self._active_max_turns: Optional[int] = None
@@ -1192,6 +1193,7 @@ class ConversationManager:
                     raw_text = "\n".join(delta)
                     parsed = parser.split_prompt_and_response(raw_text)
                     if parsed.response or parsed.cleaned_output.strip():
+                        self._note_delimiter_usage(controller_name, parsed)
                         return parsed
                     return None
                 return None
@@ -1218,6 +1220,7 @@ class ConversationManager:
             parser = self._output_parsers.setdefault(controller_name, OutputParser())
             parsed = parser.split_prompt_and_response(raw_output)
             if parsed.response or parsed.cleaned_output.strip():
+                self._note_delimiter_usage(controller_name, parsed)
                 return parsed
             return None
 
@@ -1228,6 +1231,17 @@ class ConversationManager:
             )
             self._fallback_notices.add(controller_name)
         return None
+
+    def _note_delimiter_usage(self, controller_name: str, parsed: ParsedOutput) -> None:
+        if parsed.used_response_delimiter:
+            return
+        if controller_name in self._delimiter_warnings:
+            return
+        self.logger.warning(
+            "Controller '%s' response lacked <<<RESPONSE_START>>> delimiters; using heuristic fallback parsing.",
+            controller_name,
+        )
+        self._delimiter_warnings.add(controller_name)
 
     # ------------------------------------------------------------------ #
     # Control channel helpers

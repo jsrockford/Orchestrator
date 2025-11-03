@@ -181,3 +181,24 @@ This approach balances simplicity with effectiveness. The key is making the fall
 
 Ready to implement when you give the go-ahead, Don.
 --------
+Codex:  Yes, I’m on board with Claude’s delimiter-first proposal. It attacks the core problem—separating
+  the agents’ “thinking” from the actionable prompt—without invasive changes to the controllers.
+  Adding a <<<RESPONSE_START>>>…<<<RESPONSE_END>>> contract in each agent’s instruction file and
+  teaching output_parser to honor it keeps the solution localized, observable in logs, and easy to
+  roll back. As long as we keep the current heuristics as a fallback when delimiters are missing, we
+  won’t strand the pipeline if one model slips.
+
+  A couple of implementation notes I’d layer on:
+
+  - Scope the parser change so it can handle multiple or malformed delimiter blocks gracefully and
+    emit a clear warning when extraction fails (logger.warning with session/model context). That
+    will help us police compliance early.
+  - Wire the extraction into the main routing path in conversation_manager/message_router before
+    existing cleanup so we don’t double-strip content.
+  - Add a focused regression test (probably in test_output_parser.py) that covers compliant,
+    missing, and nested delimiter cases.
+
+  Once that lands and proves stable, we can move on to the KEY command responsiveness issue.
+--------
+Codex: Implemented delimiter-aware parsing in OutputParser so delimited final responses override heuristic cleanup, added controller-side warning when delimiters are missing, and covered the happy and fallback paths with new pytest cases (tests/test_output_parser_cleanup.py, tests/test_response_validation.py). All targeted tests pass locally via `venv/bin/python -m pytest tests/test_output_parser_cleanup.py tests/test_response_validation.py`. 
+-------

@@ -132,3 +132,32 @@ def test_split_prompt_and_response_keeps_multiline_response(parser):
     assert parsed.prompt == 'qwen, draft a short agenda for the sync.'
     assert parsed.response.splitlines()[0] == "Here's a quick agenda:"
     assert '2. Confirm deployment timeline' in parsed.response
+
+
+def test_extract_delimited_response_returns_inner_block(parser):
+    raw = """
+system preamble
+<<<RESPONSE_START>>>
+Final answer payload.
+<<<RESPONSE_END>>>
+"""
+    extracted = parser.extract_delimited_response(raw)
+
+    assert extracted == "Final answer payload."
+
+
+def test_split_prompt_and_response_prefers_delimited_section(parser):
+    snippet = """
+> Provide the production summary.
+
+● Here's a working draft, refining as we go.
+  Internal reasoning: checking metrics.
+<<<RESPONSE_START>>>
+Production is green across all regions; no action needed.
+<<<RESPONSE_END>>>
+"""
+    parsed = parser.split_prompt_and_response(snippet)
+
+    assert parsed.used_response_delimiter is True
+    assert parsed.response == "Production is green across all regions; no action needed."
+    assert '<<<RESPONSE_START>>>' not in parsed.cleaned_output

@@ -19,6 +19,7 @@ class ParsedOutput:
     response: Optional[str]
     cleaned_output: str
     raw_output: Optional[str] = None
+    used_response_delimiter: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,9 @@ class OutputParser:
 
     PROMPT_MARKERS = ('>', '›')
     RESPONSE_MARKERS = ('●', '✦', '•')
+    RESPONSE_DELIMITER_PATTERN = re.compile(
+        r'<<<RESPONSE_START>>>(.*?)<<<RESPONSE_END>>>', re.DOTALL | re.IGNORECASE
+    )
 
     def clean_output(self, text: str, strip_ui: bool = True, strip_trailing_prompts: bool = False) -> str:
         """
@@ -122,6 +126,23 @@ class OutputParser:
             cleaned_lines = self._trim_trailing_prompts(cleaned_lines)
 
         return '\n'.join(cleaned_lines).rstrip('\n')
+
+    def extract_delimited_response(self, text: str) -> Optional[str]:
+        """
+        Extract content wrapped in explicit response delimiters.
+
+        Args:
+            text: Raw text that may contain response delimiters.
+
+        Returns:
+            Extracted response content or None when delimiters are absent.
+        """
+        if not text:
+            return None
+        match = self.RESPONSE_DELIMITER_PATTERN.search(text)
+        if not match:
+            return None
+        return self._normalize_delimited_content(match.group(1))
 
     def _normalize_line(self, line: str) -> Optional[str]:
         """Normalize or drop a single line of CLI output."""
@@ -213,6 +234,7 @@ class OutputParser:
             List of dictionaries with 'question' and 'response' keys
         """
         text = self.strip_ansi(text)
+        text = self._strip_response_delimiters(text)
         lines = text.split('\n')
 
         pairs = []
@@ -394,21 +416,45 @@ class OutputParser:
         """
         raw = text or ""
         cleaned = self.clean_output(raw, strip_ui=strip_ui, strip_trailing_prompts=strip_trailing_prompts)
+        used_delimiter = False
+        delimited_response: Optional[str] = None
+        if raw:
+            match = self.RESPONSE_DELIMITER_PATTERN.search(raw)
+            if match:
+                used_delimiter = True
+                delimited_response = self._normalize_delimited_content(match.group(1))
+        if not used_delimiter and cleaned:
+            match = self.RESPONSE_DELIMITER_PATTERN.search(cleaned)
+            if match:
+                used_delimiter = True
+                delimited_response = self._normalize_delimited_content(match.group(1))
+        cleaned = self._strip_response_delimiters(cleaned)
         cleaned = cleaned.rstrip('\n')
 
         if not cleaned:
-            return ParsedOutput(prompt=None, response=None, cleaned_output="", raw_output=raw or None)
+            return ParsedOutput(
+                prompt=None,
+                response=None,
+                cleaned_output="",
+                raw_output=raw or None,
+                used_response_delimiter=used_delimiter,
+            )
 
         pairs = self.extract_responses(cleaned)
         if pairs:
             last = pairs[-1]
             prompt_text = (last.get('question') or "").strip() or None
             response_text = (last.get('response') or "").strip() or None
+            if delimited_response is not None:
+                response_text = delimited_response or ""
+                if response_text == "":
+                    response_text = None
             return ParsedOutput(
                 prompt=prompt_text,
                 response=response_text,
                 cleaned_output=cleaned,
                 raw_output=raw or None,
+                used_response_delimiter=used_delimiter,
             )
 
         # Fallback: identify the first prompt line (e.g., "> Prompt") and treat
@@ -425,11 +471,14 @@ class OutputParser:
 
         if prompt_candidate is None:
             response_body = cleaned.strip() or None
+            if delimited_response is not None:
+                response_body = delimited_response or None
             return ParsedOutput(
                 prompt=None,
                 response=response_body,
                 cleaned_output=cleaned,
                 raw_output=raw or None,
+                used_response_delimiter=used_delimiter,
             )
 
         remainder = []
@@ -445,11 +494,14 @@ class OutputParser:
             remainder.append(stripped)
 
         response_body = "\n".join(remainder).strip() or None
+        if delimited_response is not None:
+            response_body = delimited_response or None
         return ParsedOutput(
             prompt=prompt_candidate,
             response=response_body,
             cleaned_output=cleaned,
             raw_output=raw or None,
+            used_response_delimiter=used_delimiter,
         )
 
     def validate_response(self, parsed_output: Optional[ParsedOutput], ai_name: str) -> ValidationResult:
@@ -596,3 +648,18 @@ class OutputParser:
             formatted.append("")  # Blank line between pairs
 
         return '\n'.join(formatted).strip()
+
+    def _strip_response_delimiters(self, text: str) -> str:
+        """Remove response delimiters while preserving the content."""
+        if not text:
+            return text
+
+        def _replace(match: re.Match) -> str:
+            return self._normalize_delimited_content(match.group(1))
+
+        return self.RESPONSE_DELIMITER_PATTERN.sub(_replace, text)
+
+    @staticmethod
+    def _normalize_delimited_content(content: str) -> str:
+        """Normalize the inner content extracted from delimiters."""
+        return content.strip()
