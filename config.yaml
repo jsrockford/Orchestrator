@@ -265,6 +265,17 @@ completion_detection:
     require_consecutive: true  # Signals must appear in consecutive turns
   require_explicit_from_all: true  # All participants must send explicit signal before consensus
 
+control_channel:
+  enabled: true
+  pipe_path: "/tmp/orchestrator_control"
+  status:
+    colorize: true
+    file_colorize: false
+    write_file: true
+    file_path: "/tmp/orchestrator_status.txt"
+    refresh_seconds: 5
+    progress_bar_width: 24
+
 loop_detection:
   enabled: true
   tool_loops:

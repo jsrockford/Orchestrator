@@ -184,6 +184,34 @@ tmux attach -t claude     # Full control (automation pauses)
 
 The orchestrator detects attached clients and queues commands until you detach.
 
+### Human Intervention & Control
+
+Enable the control channel in `config.yaml` (see `control_channel.enabled`) to pause automation, send
+guidance, or answer permission dialogs without attaching to tmux manually. The companion guide
+[`docs/Human_Control_Guide.md`](docs/Human_Control_Guide.md) covers commands, workflows, and troubleshooting.
+
+Quick start via the helper script:
+
+```bash
+# Pause/resume orchestration
+scripts/orchestrator_control.sh pause
+scripts/orchestrator_control.sh resume
+
+# Inject guidance
+scripts/orchestrator_control.sh say gemini "Focus on fixing the failing tests."
+
+# Send keystrokes (e.g., permissions dialog)
+scripts/orchestrator_control.sh key qwen Down Down Enter
+
+# Review recent manual interventions
+scripts/orchestrator_control.sh history 20
+```
+
+The script default pipe is `/tmp/orchestrator_control`; override with `--pipe` or the `ORCHESTRATOR_CONTROL_PIPE` environment variable. All commands are logged to `logs/control_channel_history.log` (override with `ORCHESTRATOR_CONTROL_HISTORY`). Run `scripts/orchestrator_control.sh --help` for the full command reference.
+
+**Tip:** Use `tmux attach -r` for read-only observation. When you detach (Ctrl+B, then `d`) the orchestrator
+resumes automatically unless manually paused via the control channel.
+
 ## Configuration
 
 Edit `config.yaml` to customize behavior:

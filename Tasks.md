@@ -667,195 +667,191 @@
 
 **Design Approach**: Named pipe (FIFO) control channel with phased capability rollout per team consensus (Claude, Gemini, Codex agreement on MessageBoard).
 
-### Phase 7.1: Control Channel Infrastructure ✅ PLANNED
+### Phase 7.1: Control Channel Infrastructure ✅ IN PROGRESS
 
 **Objective**: Establish the foundational control pipe mechanism and basic command processing.
 
-#### Task 7.1.1: Named Pipe Setup
-- [ ] Create `src/orchestrator/control_channel.py` module
-- [ ] Implement `ControlChannel` class
-  - [ ] `__init__(pipe_path="/tmp/orchestrator_control")` - Initialize control channel
-  - [ ] `setup_pipe()` - Create FIFO if doesn't exist, open in non-blocking mode
-  - [ ] `check_for_commands()` - Non-blocking read using `select.select()`
-  - [ ] `cleanup()` - Remove pipe on shutdown
-- [ ] Add error handling
-  - [ ] Pipe already exists (remove and recreate)
-  - [ ] Pipe blocked/broken (recreate)
-  - [ ] Invalid command format (log and ignore)
-- [ ] Add command parsing
-  - [ ] Split command into type and arguments
-  - [ ] Validate command format
-  - [ ] Return structured command object
+#### Task 7.1.1: Named Pipe Setup ✅ DONE
+- [x] Create `src/orchestrator/control_channel.py` module
+- [x] Implement `ControlChannel` class
+  - [x] `__init__(pipe_path="/tmp/orchestrator_control")` - Initialize control channel
+  - [x] `setup_pipe()` - Create FIFO if doesn't exist, open in non-blocking mode
+  - [x] `check_for_commands()` - Non-blocking read using `select.select()`
+  - [x] `cleanup()` - Remove pipe on shutdown
+- [x] Add error handling
+  - [x] Pipe already exists (remove and recreate)
+  - [x] Pipe blocked/broken (recreate)
+  - [x] Invalid command format (log and ignore)
+- [x] Add command parsing
+  - [x] Split command into type and arguments
+  - [x] Validate command format
+  - [x] Return structured command object
 
-#### Task 7.1.2: Pause/Resume Mechanism
-- [ ] Update `ConversationManager.__init__()`
-  - [ ] Initialize `ControlChannel` instance
-  - [ ] Add `human_control_mode` flag (default: False)
-  - [ ] Add `_current_agent` tracking attribute
-- [ ] Implement `_check_control_commands()` method
-  - [ ] Call `control_channel.check_for_commands()` non-blocking
-  - [ ] Delegate to `_handle_control_command()`
-- [ ] Implement `_handle_control_command(command)` method
-  - [ ] Handle `PAUSE` command: set flag, send ESC to current agent, log event
-  - [ ] Handle `RESUME` command: clear flag, log event
-  - [ ] Handle `STATUS` command: report current state, turn count, active agent
-- [ ] Implement `_send_escape(agent_name)` helper
-  - [ ] Map agent name to controller instance
-  - [ ] Call `controller.send_key("Escape")`
-  - [ ] Log interrupt event
-- [ ] Update `ConversationManager.run()` main loop
-  - [ ] Call `_check_control_commands()` before each turn
-  - [ ] Add pause wait loop: `while self.human_control_mode: sleep(0.5); check_commands()`
-  - [ ] Track `self._current_agent = next_speaker` before dispatch
+#### Task 7.1.2: Pause/Resume Mechanism ✅ DONE
+- [x] Update `ConversationManager.__init__()`
+  - [x] Initialize `ControlChannel` instance
+  - [x] Add `human_control_mode` flag (default: False)
+  - [x] Add `_current_agent` tracking attribute
+- [x] Implement `_check_control_commands()` method
+  - [x] Call `control_channel.check_for_commands()` non-blocking
+  - [x] Delegate to `_handle_control_command()`
+- [x] Implement `_handle_control_command(command)` method
+  - [x] Handle `PAUSE` command: set flag, send ESC to current agent, log event
+  - [x] Handle `RESUME` command: clear flag, log event
+  - [x] Handle `STATUS` command: report current state, turn count, active agent
+- [x] Implement `_send_escape(agent_name)` helper
+  - [x] Map agent name to controller instance
+  - [x] Call `controller.send_key("Escape")`
+  - [x] Log interrupt event
+- [x] Update `ConversationManager.facilitate_discussion()` main loop
+  - [x] Call `_check_control_commands()` before each turn
+  - [x] Add pause wait loop: `while self.human_control_mode: sleep(0.5); check_commands()`
+  - [x] Track `self._current_agent = next_speaker` before dispatch
 
-#### Task 7.1.3: TmuxController Keyboard Support
-- [ ] Implement `TmuxController.send_key(key_name)` method
-  - [ ] Execute `tmux send-keys -t {session} {key_name}`
-  - [ ] Support standard keys: Escape, Enter, Up, Down, Left, Right, Tab, Space
-  - [ ] Add debug logging
-  - [ ] Handle errors (session not found, invalid key)
-- [ ] Add unit tests
-  - [ ] Test sending each supported key
-  - [ ] Verify correct tmux command format
-  - [ ] Test error handling for invalid sessions
+#### Task 7.1.3: TmuxController Keyboard Support ✅ DONE
+- [x] Implement `TmuxController.send_key(key_name)` method
+  - [x] Execute `tmux send-keys -t {session} {key_name}`
+  - [x] Support standard keys: Escape, Enter, Up, Down, Left, Right, Tab, Space
+  - [x] Add debug logging
+  - [x] Handle errors (session not found, invalid key)
+- [x] Add unit tests
+  - [x] Test sending supported keys and alias mapping
+  - [x] Verify correct tmux command format
+  - [x] Test error handling for invalid sessions and tmux failures
 
-#### Task 7.1.4: Basic Command Testing
-- [ ] Create `tests/test_control_channel.py`
-  - [ ] Test pipe creation and cleanup
-  - [ ] Test non-blocking command reading
-  - [ ] Test command parsing (valid and invalid formats)
-  - [ ] Test concurrent access (multiple readers/writers)
-- [ ] Create `tests/test_pause_resume.py`
-  - [ ] Test PAUSE command sets flag and sends ESC
-  - [ ] Test RESUME command clears flag
-  - [ ] Test orchestration waits during pause
-  - [ ] Test commands checked before each turn
-- [ ] Create integration test with real orchestration
-  - [ ] Start 2-AI discussion
-  - [ ] Send PAUSE mid-turn
-  - [ ] Verify orchestration stops
-  - [ ] Send RESUME
-  - [ ] Verify orchestration continues
+#### Task 7.1.4: Basic Command Testing ✅ DONE
+- [x] Create `tests/test_control_channel.py`
+  - [x] Test pipe creation and cleanup
+  - [x] Test non-blocking command reading
+  - [x] Test command parsing (valid and invalid formats)
+  - [x] Test concurrent access (multiple writers)
+- [x] Create `tests/test_pause_resume.py`
+  - [x] Test PAUSE command sets flag and sends ESC
+  - [x] Test RESUME command clears flag
+  - [x] Test orchestration waits during pause
+  - [x] Test commands checked before each turn
+- [x] Create integration test with orchestration stub
+  - [x] Start 2-AI discussion
+  - [x] Send PAUSE mid-turn
+  - [x] Verify orchestration stops
+  - [x] Send RESUME
+  - [x] Verify orchestration continues
 
 ### Phase 7.2: Prompt Injection ✅ PLANNED
 
 **Objective**: Allow human to inject custom prompts to specific agents while paused.
 
-#### Task 7.2.1: TEXT Command Implementation
-- [ ] Extend `_handle_control_command()` with TEXT handler
-  - [ ] Parse format: `TEXT <target>: <prompt_text>`
-  - [ ] Validate target agent name (gemini, qwen, claude, codex, both, all)
-  - [ ] Extract prompt text (handle multi-line, special characters)
-- [ ] Implement `_send_text_to_agent(target, text)` method
-  - [ ] Map target to controller(s): single agent, "both" (first 2), "all" (all agents)
-  - [ ] Call `controller.send_command(text)`
-  - [ ] Log injection event with agent and text preview (first 50 chars)
+#### Task 7.2.1: TEXT Command Implementation ✅ DONE
+- [x] Extend `_handle_control_command()` with TEXT handler
+  - [x] Parse format: `TEXT <target>: <prompt_text>`
+  - [x] Validate target agent name (gemini, qwen, claude, codex, both, all)
+  - [x] Extract prompt text (handles whitespace and special characters)
+- [x] Implement `_send_text_to_agent(target, text)` method
+  - [x] Map target to controller(s): single agent, "both" (first 2), "all" (all participants)
+  - [x] Call orchestrator `dispatch_command` (with controller fallback)
+  - [x] Log injection event with participant list and prompt length
 - [ ] Add injection queue (optional enhancement)
   - [ ] Store injected prompts in queue
   - [ ] Process after RESUME command
   - [ ] Alternative: require RESUME after each injection
 
-#### Task 7.2.2: Injection Testing
-- [ ] Unit tests for TEXT command parsing
-  - [ ] Single-line prompts
-  - [ ] Multi-line prompts (with newlines)
-  - [ ] Special characters (quotes, apostrophes)
-  - [ ] Different target formats (single, both, all)
-- [ ] Integration test for prompt injection
-  - [ ] Start discussion, PAUSE
-  - [ ] Send TEXT command to one agent
-  - [ ] Verify agent receives and responds to prompt
-  - [ ] Send TEXT to multiple agents
-  - [ ] Verify both respond independently
-  - [ ] RESUME and verify orchestration continues
+#### Task 7.2.2: Injection Testing ✅ DONE
+- [x] Unit tests for TEXT command parsing
+  - [x] Single-line prompts
+  - [x] Multi-line prompts (with newlines)
+  - [x] Special characters (quotes, apostrophes, hyphens)
+  - [x] Different target formats (single, both, all)
+- [x] Integration test for prompt injection
+  - [x] Start discussion, PAUSE
+  - [x] Send TEXT command to one agent
+  - [x] Verify agent receives prompt via orchestrator dispatch
+  - [x] Send TEXT to multiple agents
+  - [x] Verify both receive prompts while paused
+  - [x] RESUME and verify pause state clears
 
-### Phase 7.3: Raw Keystroke Control ✅ PLANNED
+### Phase 7.3: Raw Keystroke Control ✅ IN PROGRESS
 
 **Objective**: Enable direct keyboard control for handling permission dialogs and UI navigation.
 
-#### Task 7.3.1: KEY Command Implementation
-- [ ] Extend `_handle_control_command()` with KEY handler
-  - [ ] Parse format: `KEY <target>: <key_name>`
-  - [ ] Validate target agent (gemini, qwen, claude, codex, both, all)
-  - [ ] Validate key name against supported keys
-- [ ] Implement `_send_key_to_agent(target, key)` method
-  - [ ] Map friendly names to tmux key names (Up→Up, Enter→Enter, etc.)
-  - [ ] Support target expansion (single, both, all)
-  - [ ] Call `controller.send_key(tmux_key)` for each target
-  - [ ] Log keystroke event
-- [ ] Add key mapping dictionary
-  - [ ] Arrow keys: Up, Down, Left, Right
-  - [ ] Control keys: Enter, Escape, Tab, Space, Backspace, Delete
-  - [ ] Function keys: F1-F12 (if needed)
-  - [ ] Modifiers: Ctrl-C, Ctrl-D (if needed)
+#### Task 7.3.1: KEY Command Implementation ✅ DONE
+- [x] Extend `_handle_control_command()` with KEY handler
+  - [x] Parse format: `KEY <target> <key_1> <key_2> ...`
+  - [x] Validate target agent (gemini, qwen, claude, codex, both, all)
+  - [x] Handle missing keys gracefully
+- [x] Implement `_send_keys_to_agent(target, keys)` helper
+  - [x] Map friendly names via TmuxController alias table
+  - [x] Support target expansion (single, both, all)
+  - [x] Call `controller.send_key()` for each key (fallback to `send_keys`)
+  - [x] Log keystroke successes/failures
+- [x] Verified alias coverage through existing TmuxController tests
 
-#### Task 7.3.2: Keystroke Testing
-- [ ] Unit tests for KEY command
-  - [ ] Test each supported key type
-  - [ ] Test different target formats
-  - [ ] Test invalid key names
-  - [ ] Test rapid key sequences
-- [ ] Integration test for permission dialog simulation
-  - [ ] Trigger permission request (if possible in test env)
-  - [ ] Send PAUSE
-  - [ ] Send KEY commands: Down, Down, Enter
-  - [ ] Verify correct navigation
-  - [ ] RESUME and continue
+#### Task 7.3.2: Keystroke Testing ✅ DONE
+- [x] Unit tests for KEY command
+  - [x] Test each supported key type
+  - [x] Test different target formats
+  - [x] Test invalid key names (ensure errors handled)
+  - [x] Test rapid key sequences
+- [x] Integration-style pause test
+  - [x] Simulate human PAUSE state
+  - [x] Send KEY commands: Down, Down, Enter
+  - [x] Verify keys recorded per agent
+  - [x] Send RESUME and ensure discussion can continue
+  - [ ] Pending: real permission dialog capture (manual follow-up)
 
 ### Phase 7.4: User Experience Enhancements ✅ PLANNED
 
 **Objective**: Make the control system easy and intuitive to use.
 
-#### Task 7.4.1: Shell Wrapper Script
-- [ ] Create `scripts/orchestrator_control.sh`
-  - [ ] Command: `pause` - Send PAUSE to pipe
-  - [ ] Command: `resume` - Send RESUME to pipe
-  - [ ] Command: `status` - Send STATUS to pipe
-  - [ ] Command: `say <agent> <text>` - Send TEXT command
-  - [ ] Command: `key <agent> <key>` - Send KEY command
-  - [ ] Add help text and usage examples
-  - [ ] Make executable (chmod +x)
-- [ ] Add user-friendly error messages
-  - [ ] Pipe not found: "Orchestrator not running"
-  - [ ] Invalid agent name: List valid agents
-  - [ ] Invalid key name: List supported keys
-- [ ] Add command history/logging
-  - [ ] Log all control commands to separate file
-  - [ ] Timestamp each command
-  - [ ] Show last N commands with `history` command
+#### Task 7.4.1: Shell Wrapper Script ✅ DONE
+- [x] Create `scripts/orchestrator_control.sh`
+  - [x] Command: `pause` - Send PAUSE to pipe
+  - [x] Command: `resume` - Send RESUME to pipe
+  - [x] Command: `status` - Send STATUS to pipe
+  - [x] Command: `say <agent> <text>` - Send TEXT command
+  - [x] Command: `key <agent> <key>` - Send KEY command
+  - [x] Add help text and usage examples
+  - [x] Make executable (chmod +x)
+- [x] Add user-friendly error messages
+  - [x] Pipe not found: "Orchestrator not running"
+  - [x] Invalid agent name: List valid agents
+  - [x] Invalid key name: List supported keys
+- [x] Add command history/logging
+  - [x] Log all control commands to separate file
+  - [x] Timestamp each command
+  - [x] Show last N commands with `history` command
 
 #### Task 7.4.2: Status Feedback System
-- [ ] Enhance STATUS command output
-  - [ ] Show current mode (RUNNING/PAUSED)
-  - [ ] Show turn count and max turns
-  - [ ] Show active/last agent
-  - [ ] Show time elapsed
-  - [ ] Show time since last activity
-- [ ] Add visual indicators
-  - [ ] Color coding (green=running, yellow=paused, red=error)
-  - [ ] Progress bar (turns completed/total)
-  - [ ] Agent status table (active/idle/error)
-- [ ] Optional: Real-time status file
-  - [ ] Write status to `/tmp/orchestrator_status.txt`
-  - [ ] Update every 5 seconds
-  - [ ] Allow external monitoring (tail -f)
+- [x] Enhance STATUS command output
+  - [x] Show current mode (RUNNING/PAUSED)
+  - [x] Show turn count and max turns
+  - [x] Show active/last agent
+  - [x] Show time elapsed
+  - [x] Show time since last activity
+- [x] Add visual indicators
+  - [x] Color coding (green=running, yellow=paused, red=error)
+  - [x] Progress bar (turns completed/total)
+  - [x] Agent status table (active/idle/error)
+- [x] Optional: Real-time status file
+  - [x] Write status to `/tmp/orchestrator_status.txt`
+  - [x] Update every 5 seconds
+  - [x] Allow external monitoring (tail -f)
 
 #### Task 7.4.3: Comprehensive Documentation
-- [ ] Update MessageBoard with implementation notes
-- [ ] Create `docs/Human_Control_Guide.md`
-  - [ ] Overview of control system
-  - [ ] Command reference with examples
-  - [ ] Common use cases (permissions, guidance, debugging)
-  - [ ] Troubleshooting section
-  - [ ] Best practices
-- [ ] Update README.md
-  - [ ] Add "Human Intervention" section
-  - [ ] Quick start examples
-  - [ ] Link to detailed guide
-- [ ] Add inline code comments
-  - [ ] Document control flow
-  - [ ] Explain design decisions
-  - [ ] Provide usage examples
+- [x] Update MessageBoard with implementation notes
+- [x] Create `docs/Human_Control_Guide.md`
+  - [x] Overview of control system
+  - [x] Command reference with examples
+  - [x] Common use cases (permissions, guidance, debugging)
+  - [x] Troubleshooting section
+  - [x] Best practices
+- [x] Update README.md
+  - [x] Add "Human Intervention" section
+  - [x] Quick start examples
+  - [x] Link to detailed guide
+- [x] Add inline code comments
+  - [x] Document control flow
+  - [x] Explain design decisions
+  - [x] Provide usage examples
 
 ### Phase 7.5: Advanced Features (Optional) ✅ DEFERRED
 

@@ -184,6 +184,20 @@ class TmuxController(SessionBackend):
     AI-specific behaviors are configured via parameters.
     """
 
+    _SEND_KEY_ALIASES = {
+        "escape": "Escape",
+        "esc": "Escape",
+        "enter": "Enter",
+        "return": "Enter",
+        "up": "Up",
+        "down": "Down",
+        "left": "Left",
+        "right": "Right",
+        "tab": "Tab",
+        "space": "Space",
+        "spacebar": "Space",
+    }
+
     def __init__(
         self,
         session_name: str,
@@ -766,6 +780,59 @@ class TmuxController(SessionBackend):
                 self._trigger_fallback_submit_if_needed()
         except TmuxError as e:
             raise SessionBackendError(f"Failed to send Enter: {e}") from e
+
+    def send_key(self, key_name: str) -> None:
+        """
+        Send a single keystroke to the tmux session.
+
+        Supported keys include Escape/Esc, Enter/Return, arrow keys, Tab, and Space.
+
+        Raises:
+            ValueError: If ``key_name`` is empty.
+            SessionNotFoundError: If the session does not exist.
+            SessionBackendError: If the key is unsupported or tmux rejects the command.
+        """
+        if not key_name or not key_name.strip():
+            raise ValueError("Key name must be provided")
+
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        tmux_key = self._normalize_send_key(key_name)
+        if tmux_key is None:
+            raise SessionBackendError(f"Unsupported key '{key_name}'")
+
+        try:
+            result = self._run_tmux_command(
+                ["send-keys", "-t", self.session_name, tmux_key]
+            )
+        except TmuxError as exc:
+            raise SessionBackendError(f"Failed to send key '{key_name}': {exc}") from exc
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise SessionBackendError(
+                f"tmux send-keys failed for '{tmux_key}': {stderr or 'unknown error'}"
+            )
+
+        self.logger.debug("Sent key '%s' as tmux '%s'", key_name, tmux_key)
+
+    def _normalize_send_key(self, key_name: str) -> Optional[str]:
+        normalized = key_name.strip()
+        if not normalized:
+            return None
+
+        lower = normalized.lower()
+        if lower in self._SEND_KEY_ALIASES:
+            return self._SEND_KEY_ALIASES[lower]
+
+        if len(normalized) == 1:
+            return normalized
+
+        if "-" in normalized:
+            return normalized
+
+        return None
 
     def send_ctrl_c(self) -> None:
         """
