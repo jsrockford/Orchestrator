@@ -77,6 +77,8 @@ class ConversationManager:
         self._capture_tail_limit: int = int(tmux_cfg.get("capture_lines", 500) or 500)
         self._fallback_notices: Set[str] = set()
         self._delimiter_warnings: Set[str] = set()
+        self._pending_interrupt: bool = False
+        self._manual_pause_context: Optional[Dict[str, Any]] = None
         self._run_started_at: Optional[float] = None
         self._last_activity_at: Optional[float] = None
         self._active_max_turns: Optional[int] = None
@@ -260,6 +262,51 @@ class ConversationManager:
                 time.sleep(0.5)
                 self._check_control_commands()
 
+            if not self.human_control_mode and self._manual_pause_context:
+                manual_result = self._complete_manual_pause(conversation)
+                self._refresh_status_snapshot(force=True)
+                if manual_result:
+                    turn_record = manual_result.get("turn_record")
+                    topic = manual_result.get("topic") or (turn_record.get("topic") if turn_record else "")
+                    if manual_result.get("is_queued") and turn_record:
+                        self.logger.info(
+                            "Turn %s queued because controller '%s' is paused; awaiting resume",
+                            turn_record.get("turn"),
+                            turn_record.get("speaker"),
+                        )
+                        continue
+                    if manual_result.get("consensus") and turn_record:
+                        reason = turn_record.get("metadata", {}).get("consensus_reason")
+                        if reason:
+                            self.logger.info(
+                                "Consensus detected after turn %s on '%s': %s",
+                                turn_record.get("turn"),
+                                topic,
+                                reason,
+                            )
+                        else:
+                            self.logger.info(
+                                "Consensus detected after turn %s on '%s'",
+                                turn_record.get("turn"),
+                                topic,
+                            )
+                        self._notify_context_manager("consensus", turn_record)
+                        continue
+                    if manual_result.get("conflict") and turn_record:
+                        conflict_reason = manual_result.get("conflict_reason")
+                        self.logger.warning(
+                            "Conflict detected after turn %s on '%s': %s",
+                            turn_record.get("turn"),
+                            topic,
+                            conflict_reason,
+                        )
+                        self._notify_context_manager(
+                            "conflict",
+                            turn_record,
+                            reason=conflict_reason,
+                        )
+                        continue
+
             speaker = self.determine_next_speaker(conversation)
             if speaker is None:
                 self.logger.debug("No eligible speaker; stopping discussion on '%s'", topic)
@@ -319,6 +366,16 @@ class ConversationManager:
                     continue
 
                 if self.human_control_mode:
+                    if speaker:
+                        context = self._ensure_manual_pause_context(speaker)
+                        if pre_snapshot is not None:
+                            context.setdefault("pre_snapshot", pre_snapshot)
+                        context["prompt"] = prompt
+                        context["topic"] = topic
+                        context["dispatch_summary"] = dispatch_summary
+                        context["retries_used"] = retries_used
+                        context["max_retries"] = max_retries
+                        context["queued"] = is_queued
                     # Paused during dispatch; restart loop after resume.
                     self.logger.info(
                         "Control channel pause activated during dispatch; deferring turn for '%s'",
@@ -1243,6 +1300,170 @@ class ConversationManager:
         )
         self._delimiter_warnings.add(controller_name)
 
+    def _ensure_manual_pause_context(self, agent_name: str) -> Dict[str, Any]:
+        context = self._manual_pause_context or {}
+        if context.get("agent") != agent_name:
+            context = {"agent": agent_name, "turn": self._turn_counter}
+
+        if "pre_snapshot" not in context or context.get("pre_snapshot") is None:
+            snapshot = self._capture_snapshot(agent_name)
+            if snapshot is not None:
+                context["pre_snapshot"] = snapshot
+
+        self._manual_pause_context = context
+        return context
+
+    def _complete_manual_pause(self, conversation: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        context = self._manual_pause_context
+        if not context:
+            return None
+
+        agent_name = context.get("agent")
+        if not agent_name:
+            self._manual_pause_context = None
+            return None
+
+        controllers = getattr(self.orchestrator, "controllers", {})
+        controller = controllers.get(agent_name) if isinstance(controllers, dict) else None
+        if controller is None:
+            self.logger.warning(
+                "Manual resume skipped; controller '%s' unavailable for captured output",
+                agent_name,
+            )
+            self._manual_pause_context = None
+            return None
+
+        pre_snapshot = context.get("pre_snapshot") or []
+        post_snapshot_lines: List[str] = []
+        snapshot = self._capture_snapshot(agent_name)
+        if snapshot is not None:
+            post_snapshot_lines = snapshot
+
+        delta = self._compute_delta(pre_snapshot, post_snapshot_lines, self._capture_tail_limit)
+        raw_text = "\n".join(delta) if delta else ""
+        parser = self._output_parsers.setdefault(agent_name, OutputParser())
+        parsed_output = parser.split_prompt_and_response(raw_text)
+        self._note_delimiter_usage(agent_name, parsed_output)
+        validation_result = parser.validate_response(parsed_output, agent_name)
+        response_text = None
+        if validation_result and validation_result.response_text is not None:
+            response_text = validation_result.response_text
+        elif parsed_output:
+            response_text = parsed_output.response
+
+        topic = context.get("topic") or "manual-intervention"
+        prompt = context.get("prompt")
+        dispatch_summary = context.get("dispatch_summary") or {}
+        retries_used = context.get("retries_used", 0)
+        max_retries = context.get("max_retries", 0)
+        is_queued = bool(dispatch_summary.get("queued"))
+
+        turn_index = context.get("turn", self._turn_counter)
+        self._turn_counter = turn_index
+
+        turn_record = {
+            "turn": self._turn_counter,
+            "speaker": agent_name,
+            "topic": topic,
+            "prompt": prompt,
+            "dispatch": dispatch_summary,
+            "response": response_text,
+        }
+        if parsed_output:
+            turn_record["response_prompt"] = parsed_output.prompt
+            if validation_result:
+                turn_record["response_transcript"] = validation_result.cleaned_output
+            else:
+                turn_record["response_transcript"] = parsed_output.cleaned_output
+
+        if validation_result:
+            turn_record["validation"] = {
+                "valid": validation_result.valid,
+                "issues": list(validation_result.issues),
+                "attempts": 1,
+                "retries_used": retries_used,
+            }
+            if validation_result.ignored_patterns:
+                turn_record["validation"]["ignored_patterns"] = list(validation_result.ignored_patterns)
+
+        conversation.append(turn_record)
+        self._turn_counter += 1
+
+        self._store_turn(turn_record)
+        self._record_turn_activity(agent_name, turn_record)
+
+        metadata = turn_record.setdefault("metadata", {})
+        loop_info = self._update_loop_state(conversation)
+        if loop_info:
+            metadata["loop_detected"] = True
+            metadata["loop_detection"] = loop_info
+            if loop_info.get("escalate"):
+                metadata["loop_escalated"] = True
+            if loop_info.get("stage"):
+                metadata.setdefault("loop_stage", loop_info["stage"])
+
+        completion_reached = self._update_completion_state(conversation)
+        detect_fallback = False
+        if not completion_reached:
+            detect_fallback = self.detect_consensus(conversation)
+        consensus = completion_reached or detect_fallback
+        if self._completion_debug_enabled:
+            self._log_completion_debug(
+                "consensus evaluation: turn=%s completion=%s detect=%s final=%s",
+                turn_record.get("turn"),
+                completion_reached,
+                detect_fallback,
+                consensus,
+            )
+        conflict, reason = self.detect_conflict(conversation)
+
+        if is_queued:
+            metadata["queued"] = True
+        if validation_result and not validation_result.valid:
+            metadata["validation_failed"] = True
+            metadata["validation_issues"] = list(validation_result.issues)
+            metadata["retries_exhausted"] = bool(
+                validation_result.should_retry and retries_used >= max_retries
+            )
+
+        if loop_info:
+            self._notify_context_manager(
+                "loop",
+                turn_record,
+                reason=loop_info.get("command_text") or loop_info.get("normalized_command"),
+            )
+        if consensus:
+            metadata["consensus"] = True
+            if self._completion_last_reason:
+                metadata.setdefault("consensus_reason", self._completion_last_reason)
+        if conflict:
+            metadata["conflict"] = True
+            if reason:
+                metadata["conflict_reason"] = reason
+
+        self._record_with_context_manager(turn_record)
+        self._route_message(turn_record, topic, dispatched=not is_queued)
+
+        try:
+            self.orchestrator.tick()
+        except AttributeError:
+            self.logger.debug("Orchestrator tick unavailable; skipping background flush")
+
+        self._manual_pause_context = None
+        self._pending_interrupt = False
+        self.logger.info(
+            "Manual response captured for '%s'; automation resuming with next participant",
+            agent_name,
+        )
+        return {
+            "turn_record": turn_record,
+            "consensus": consensus,
+            "conflict": conflict,
+            "conflict_reason": reason,
+            "is_queued": is_queued,
+            "topic": topic,
+        }
+
     # ------------------------------------------------------------------ #
     # Control channel helpers
     # ------------------------------------------------------------------ #
@@ -1264,16 +1485,59 @@ class ConversationManager:
             self._status_error = None
 
     def _check_control_commands(self) -> None:
+        self._drain_control_commands(during_wait=False)
+
+    def _control_interrupt_requested(self) -> bool:
+        if self._pending_interrupt:
+            return True
+
+        interrupted = self._drain_control_commands(during_wait=True)
+        if interrupted:
+            self._pending_interrupt = True
+            self.logger.debug(
+                "Control channel interrupt acknowledged during wait (agent=%s)",
+                self._current_agent,
+            )
+        return interrupted
+
+    def _drain_control_commands(self, *, during_wait: bool) -> bool:
         if not self._control_enabled or self.control_channel is None:
-            return
+            return False
 
         commands = self.control_channel.check_for_commands()
         if not commands:
-            return
+            return False
 
-        # Commands are evaluated between turns so human overrides take effect before the next agent runs.
+        interrupt_requested = False
+
         for command in commands:
+            verb = (command.name or "").upper()
             self._handle_control_command(command)
+            if during_wait and self._should_interrupt_for_command(command, verb):
+                interrupt_requested = True
+
+        if during_wait and self.human_control_mode:
+            interrupt_requested = True
+
+        return interrupt_requested
+
+    def _should_interrupt_for_command(self, command: ControlCommand, verb: str) -> bool:
+        if verb == "PAUSE":
+            return True
+        if verb == "TEXT":
+            return True
+        if verb == "KEY":
+            args = list(command.args or [])
+            if len(args) < 2:
+                return False
+            keys = [arg.strip().lower() for arg in args[1:] if arg]
+            if "escape" not in keys:
+                return False
+            if self._current_agent is None:
+                return False
+            targets = self._resolve_targets(args[0])
+            return bool(targets and self._current_agent in targets)
+        return False
 
     def _handle_control_command(self, command: ControlCommand) -> None:
         # Each verb maps to a dedicated handler; validation errors are fed back into STATUS output.
@@ -1725,6 +1989,7 @@ class ConversationManager:
             tuple(keys),
             ", ".join(targets),
         )
+        normalized_keys = [key.strip().lower() for key in keys if key]
         failures: List[str] = []
         for resolved in targets:
             if not self._send_keys_to_agent(resolved, keys):
@@ -1738,7 +2003,24 @@ class ConversationManager:
             )
             self._set_status_error(f"KEY dispatch failed for: {joined}")
         else:
-            self._set_status_error(None)
+            should_pause = (
+                "escape" in normalized_keys
+                and self._current_agent is not None
+                and self._current_agent in targets
+            )
+            if should_pause:
+                pause_context = self._ensure_manual_pause_context(self._current_agent)
+                pause_context.setdefault("topic", None)
+                if not self.human_control_mode:
+                    self.human_control_mode = True
+                    self.logger.info(
+                        "Control channel: KEY Escape triggered manual pause (active agent=%s)",
+                        self._current_agent,
+                    )
+                self._pending_interrupt = True
+                self._set_status_error("Manual control active (Escape); send RESUME to continue")
+            else:
+                self._set_status_error(None)
 
     def _send_keys_to_agent(self, agent_name: str, keys: Sequence[str]) -> bool:
         if not keys:
@@ -1827,14 +2109,33 @@ class ConversationManager:
     def _wait_for_controller(self, controller_name: str, controller: Any) -> None:
         waiter = getattr(controller, "wait_for_ready", None)
         if callable(waiter):
+            ready = None
+            interrupt_triggered = False
             try:
-                waiter()
+                if self._control_enabled and self.control_channel is not None:
+                    try:
+                        ready = waiter(interrupt_callback=self._control_interrupt_requested)
+                    except TypeError:
+                        ready = waiter()
+                else:
+                    ready = waiter()
             except Exception:  # noqa: BLE001
                 self.logger.debug(
                     "Controller '%s' wait_for_ready failed",
                     controller_name,
                     exc_info=True,
                 )
+            finally:
+                interrupt_triggered = bool(self._pending_interrupt)
+                self._pending_interrupt = False
+
+            if ready is False and interrupt_triggered:
+                self.logger.info(
+                    "Controller '%s' wait_for_ready interrupted via control channel",
+                    controller_name,
+                )
+        else:
+            self._pending_interrupt = False
 
     @staticmethod
     def _compute_delta(

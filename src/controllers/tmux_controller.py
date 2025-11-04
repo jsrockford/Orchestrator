@@ -1287,6 +1287,44 @@ class TmuxController(SessionBackend):
         if self.debug_wait_logging:
             self.logger.debug(message, *args)
 
+    def _invoke_interrupt_callback(self, interrupt_callback: Optional[Callable[[], bool]]) -> bool:
+        if interrupt_callback is None:
+            return False
+        try:
+            return bool(interrupt_callback())
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("wait_for_ready interrupt callback failed: %s", exc, exc_info=True)
+            return False
+
+    def _sleep_with_interrupt(
+        self,
+        interval: Optional[float],
+        interrupt_callback: Optional[Callable[[], bool]],
+    ) -> bool:
+        """
+        Sleep for ``interval`` seconds in short slices while polling the interrupt callback.
+
+        Returns:
+            True when the interrupt callback requests an early exit, otherwise False.
+        """
+        if interval is None or interval <= 0:
+            return self._invoke_interrupt_callback(interrupt_callback)
+
+        deadline = time.time() + interval
+        slice_length = min(interval, 0.1)
+
+        while True:
+            if self._invoke_interrupt_callback(interrupt_callback):
+                return True
+
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+
+            time.sleep(min(slice_length, remaining))
+
+        return False
+
     def _apply_interactive_guard(self, tail_lines: Sequence[str]) -> bool:
         if self._interactive_guard is None:
             return False
@@ -1358,7 +1396,13 @@ class TmuxController(SessionBackend):
                 return idx
         return limit
 
-    def wait_for_ready(self, timeout: Optional[int] = None, check_interval: Optional[float] = None) -> bool:
+    def wait_for_ready(
+        self,
+        timeout: Optional[int] = None,
+        check_interval: Optional[float] = None,
+        *,
+        interrupt_callback: Optional[Callable[[], bool]] = None,
+    ) -> bool:
         """
         Wait until AI is ready for next input.
 
@@ -1368,9 +1412,11 @@ class TmuxController(SessionBackend):
         Args:
             timeout: Maximum seconds to wait (uses config if not specified)
             check_interval: Seconds between checks (uses config if not specified)
+            interrupt_callback: Optional callable polled during waits; when it
+                returns ``True`` the wait terminates early.
 
         Returns:
-            True if ready detected, False if timeout
+            True if ready detected, False if timeout or interrupted.
         """
         if not self.session_exists():
             return False
@@ -1396,6 +1442,10 @@ class TmuxController(SessionBackend):
         )
 
         while (time.time() - start_time) < timeout:
+            if self._invoke_interrupt_callback(interrupt_callback):
+                self.logger.info("wait_for_ready interrupted for session '%s'", self.session_name)
+                return False
+
             elapsed = time.time() - start_time
             if (
                 not half_timeout_warning_emitted
@@ -1417,7 +1467,9 @@ class TmuxController(SessionBackend):
             if self._apply_interactive_guard(sanitized_tail_lines):
                 stable_count = 0
                 previous_output = current_output
-                time.sleep(check_interval)
+                if self._sleep_with_interrupt(check_interval, interrupt_callback):
+                    self._log_wait_debug("Interrupted during interactive guard cooldown")
+                    return False
                 continue
 
             if sanitized_tail_lines and self.loading_indicators:
@@ -1438,7 +1490,9 @@ class TmuxController(SessionBackend):
                     self._log_wait_debug("Loading indicator detected; waiting for completion")
                     stable_count = 0
                     previous_output = current_output
-                    time.sleep(check_interval)
+                    if self._sleep_with_interrupt(check_interval, interrupt_callback):
+                        self._log_wait_debug("Interrupted while loading indicator active")
+                        return False
                     continue
                 if saw_loading_indicator and not loading_present:
                     if loading_cleared_time is None:
@@ -1456,7 +1510,9 @@ class TmuxController(SessionBackend):
                             cleared_elapsed,
                         )
                         previous_output = current_output
-                        time.sleep(check_interval)
+                        if self._sleep_with_interrupt(check_interval, interrupt_callback):
+                            self._log_wait_debug("Interrupted during loading settle period")
+                            return False
                         continue
                     ready_gate_released = True
                     self._log_wait_debug(
@@ -1498,7 +1554,9 @@ class TmuxController(SessionBackend):
                 stable_count = 0  # Reset if output changed
 
             previous_output = current_output
-            time.sleep(check_interval)
+            if self._sleep_with_interrupt(check_interval, interrupt_callback):
+                self._log_wait_debug("Interrupted during steady-state sleep")
+                return False
 
         elapsed_total = time.time() - start_time
         self._log_wait_debug("wait_for_ready timed out after %.2fs", elapsed_total)

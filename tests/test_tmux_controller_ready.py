@@ -19,6 +19,7 @@ def _make_controller(monkeypatch, outputs: List[str]) -> TmuxController:
         "ready_indicators": ["context left"],
         "loading_indicators": ["◦"],
         "response_complete_markers": ["› "],
+        "loading_indicator_settle_time": 0.0,
     }
 
     exe_parts = get_config().get_executable_parts("claude")
@@ -83,3 +84,25 @@ def test_wait_for_ready_ignores_old_marker(monkeypatch):
     )
 
     assert controller.wait_for_ready(timeout=0.1, check_interval=0.0) is False
+
+
+def test_wait_for_ready_interrupts_on_callback(monkeypatch):
+    controller = _make_controller(
+        monkeypatch,
+        [
+            "◦ Working for 10s\n",
+            "◦ Working for 10s\n",
+            "◦ Still working\n",
+        ],
+    )
+
+    calls = {"count": 0}
+
+    def interrupt():
+        calls["count"] += 1
+        return calls["count"] >= 3
+
+    result = controller.wait_for_ready(timeout=0.5, check_interval=0.0, interrupt_callback=interrupt)
+
+    assert result is False
+    assert calls["count"] >= 3
