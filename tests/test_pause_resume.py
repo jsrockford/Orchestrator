@@ -200,6 +200,78 @@ def test_facilitate_discussion_pauses_and_resumes(monkeypatch, patched_manager):
     assert len(conversation) == 2
 
 
+def test_control_interrupt_requested_handles_escape(monkeypatch, patched_manager):
+    manager, orchestrator = patched_manager
+
+    control_stub = ControlStub([["KEY gemini Escape"]])
+    manager.control_channel = control_stub
+    manager._control_enabled = True  # noqa: SLF001
+    manager._current_agent = "gemini"  # noqa: SLF001
+
+    assert manager._control_interrupt_requested() is True  # noqa: SLF001
+    assert orchestrator.controllers["gemini"].keys == ["Escape"]
+    assert manager._pending_interrupt is True  # noqa: SLF001
+    assert manager._manual_pause_context["agent"] == "gemini"  # noqa: SLF001
+    assert manager.human_control_mode is True
+    assert manager._status_error == "Manual control active (Escape); send RESUME to continue"  # noqa: SLF001
+
+    # No new commands, but pending flag keeps the interrupt latched.
+    assert manager._control_interrupt_requested() is True  # noqa: SLF001
+
+    manager._pending_interrupt = False  # noqa: SLF001
+    assert manager._control_interrupt_requested() is False  # noqa: SLF001
+
+
+def test_complete_manual_pause_records_turn(monkeypatch, patched_manager):
+    manager, orchestrator = patched_manager
+    manager._control_enabled = True  # noqa: SLF001
+
+    conversation = []
+    manager._turn_counter = 5  # noqa: SLF001
+    manager._manual_pause_context = {
+        "agent": "gemini",
+        "pre_snapshot": ["header"],
+        "topic": "manual-topic",
+        "prompt": "Do the manual work",
+        "dispatch_summary": {"queued": False},
+        "retries_used": 0,
+        "max_retries": 2,
+        "turn": manager._turn_counter,
+    }
+
+    response_snapshot = [
+        "header",
+        "<<<RESPONSE_START>>>",
+        "Manual response",
+        "<<<RESPONSE_END>>>",
+    ]
+
+    monkeypatch.setattr(
+        ConversationManager,
+        "_capture_snapshot",
+        lambda self, agent: list(response_snapshot),
+    )
+
+    from src.utils.output_parser import OutputParser as RealOutputParser
+
+    monkeypatch.setattr(
+        "src.orchestrator.conversation_manager.OutputParser",
+        lambda: RealOutputParser(),
+    )
+
+    result = manager._complete_manual_pause(conversation)
+
+    assert result is not None
+    record = result["turn_record"]
+    assert record["response"] == "Manual response"
+    assert record["speaker"] == "gemini"
+    assert manager._manual_pause_context is None  # noqa: SLF001
+    assert manager._pending_interrupt is False  # noqa: SLF001
+    assert len(conversation) == 1
+    assert conversation[0]["turn"] == 5
+    assert conversation[0]["validation"]["valid"] is True
+
+
 def test_text_command_dispatches_to_single_agent(monkeypatch, patched_manager):
     manager, orchestrator = patched_manager
     manager.human_control_mode = True
