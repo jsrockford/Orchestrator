@@ -44,6 +44,11 @@ function App() {
     }
   };
 
+  const handleStopProject = () => {
+    setProjectState('idle');
+    // In the future, this will also trigger a backend call
+  };
+
   const handleEditInstructions = (modelName: string) => {
     setEditingModelName(modelName);
     setIsEditModalOpen(true);
@@ -69,23 +74,38 @@ function App() {
           Orchestrator
         </h1>
         <div className="flex justify-center items-center gap-8 mt-4">
-          <SessionModelSelector
-            allModels={allConversations.map(c => c.title)}
-            activeModels={activeModels}
-            onActiveModelsChange={setActiveModels}
-          />
-          <button
-            onClick={handleStartProject}
-            disabled={activeModels.length === 0 || projectState !== 'idle'}
-            className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          <div className={`${projectState === 'running' ? 'opacity-50 pointer-events-none' : ''}`}>
+            <SessionModelSelector
+              allModels={allConversations.map(c => c.title)}
+              activeModels={activeModels}
+              onActiveModelsChange={setActiveModels}
+            />
+          </div>
+          {projectState === 'idle' ? (
+            <button
+              onClick={handleStartProject}
+              disabled={activeModels.length === 0}
+              className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Project
+            </button>
+          ) : (
+            <button
+              onClick={handleStopProject}
+              className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-all duration-200"
+            >
+              Stop Project
+            </button>
+          )}
+          <button 
+            onClick={() => setIsSettingsModalOpen(true)} 
+            className={`text-gray-400 hover:text-white ${projectState === 'running' ? 'opacity-50 cursor-not-allowed' : ''}`}
+            disabled={projectState === 'running'}
           >
-            Start Project
-          </button>
-          <button onClick={() => setIsSettingsModalOpen(true)} className="text-gray-400 hover:text-white">
             <Settings size={24} />
           </button>
         </div>
-        <div className="text-center mt-2 text-sm text-gray-500">
+        <div className={`text-center mt-2 text-sm text-gray-500 ${projectState === 'running' ? 'opacity-50' : ''}`}>
           Project Directory: {projectDirectory}
         </div>
       </header>
