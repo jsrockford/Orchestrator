@@ -57,8 +57,8 @@ function App() {
   // For demonstration, let's assign some statuses
   const getStatusForCoder = (title: string) => {
     if (projectState === 'idle') return 'ready';
-    if (title === 'Claude') return 'processing';
-    if (title === 'Codex') return 'error';
+    // In a real scenario, these statuses would come from the backend
+    // For now, let's keep them all 'ready' when running unless explicitly changed
     return 'ready';
   };
 
