@@ -33,7 +33,13 @@ const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({ isOpen, onC
           return;
         }
         setCurrentPath(data.path);
-        setContents(data.contents);
+        // Sort contents alphabetically, directories first
+        const sortedContents = data.contents.sort((a: FileSystemItem, b: FileSystemItem) => {
+          if (a.is_dir && !b.is_dir) return -1;
+          if (!a.is_dir && b.is_dir) return 1;
+          return a.name.localeCompare(b.name);
+        });
+        setContents(sortedContents);
       })
       .catch(err => console.error("Error browsing path:", err));
   };
