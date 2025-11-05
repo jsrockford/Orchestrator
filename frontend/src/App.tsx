@@ -139,6 +139,7 @@ function App() {
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
         modelName={editingModelName}
+        projectDirectory={projectDirectory}
       />
 
       <ProjectSettingsModal

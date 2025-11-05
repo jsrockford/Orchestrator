@@ -17,6 +17,7 @@ app.add_middleware(
 
 class InstructionFile(BaseModel):
     content: str
+    project_directory: str | None = None
 
 class DirectoryPath(BaseModel):
     path: str
@@ -35,25 +36,27 @@ INSTRUCTION_FILES = {
 }
 
 @app.get("/api/instructions/{model_name}")
-async def get_instruction_file(model_name: str):
+async def get_instruction_file(model_name: str, project_directory: str | None = None):
     if model_name not in INSTRUCTION_FILES:
         raise HTTPException(status_code=404, detail="Model not found")
 
-    file_path = os.path.join(os.path.dirname(__file__), "..", INSTRUCTION_FILES[model_name])
+    base_path = project_directory if project_directory else os.path.join(os.path.dirname(__file__), "..")
+    file_path = os.path.join(base_path, INSTRUCTION_FILES[model_name])
 
     try:
         with open(file_path, "r") as f:
             content = f.read()
         return {"content": content}
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Instruction file not found")
+        return {"content": ""}
 
 @app.post("/api/instructions/{model_name}")
 async def save_instruction_file(model_name: str, instruction_file: InstructionFile):
     if model_name not in INSTRUCTION_FILES:
         raise HTTPException(status_code=404, detail="Model not found")
 
-    file_path = os.path.join(os.path.dirname(__file__), "..", INSTRUCTION_FILES[model_name])
+    base_path = instruction_file.project_directory if instruction_file.project_directory else os.path.join(os.path.dirname(__file__), "..")
+    file_path = os.path.join(base_path, INSTRUCTION_FILES[model_name])
 
     try:
         with open(file_path, "w") as f:

@@ -4,28 +4,29 @@ interface EditInstructionsModalProps {
   modelName: string;
   isOpen: boolean;
   onClose: () => void;
+  projectDirectory: string;
 }
 
-const EditInstructionsModal: React.FC<EditInstructionsModalProps> = ({ modelName, isOpen, onClose }) => {
+const EditInstructionsModal: React.FC<EditInstructionsModalProps> = ({ modelName, isOpen, onClose, projectDirectory }) => {
   const [content, setContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen && modelName) {
       setIsLoading(true);
-      fetch(`http://localhost:8000/api/instructions/${modelName}`)
+      fetch(`http://localhost:8000/api/instructions/${modelName}?project_directory=${encodeURIComponent(projectDirectory)}`)
         .then(res => res.json())
         .then(data => setContent(data.content))
         .catch(err => console.error("Error fetching instructions:", err))
         .finally(() => setIsLoading(false));
     }
-  }, [isOpen, modelName]);
+  }, [isOpen, modelName, projectDirectory]);
 
   const handleSave = () => {
     fetch(`http://localhost:8000/api/instructions/${modelName}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, project_directory: projectDirectory }),
     })
       .then(res => {
         if (res.ok) {
