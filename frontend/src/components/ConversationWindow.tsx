@@ -63,6 +63,11 @@ const handleRequest = async (req, res) => {
             title="Escape"
           />
           <ControlButton
+            icon="Rsm"
+            onClick={() => onControlAction(conversation.id, 'resume')}
+            title="Resume"
+          />
+          <ControlButton
             icon={<ArrowUp size={16} />}
             onClick={() => onControlAction(conversation.id, 'up')}
             title="Up Key"
