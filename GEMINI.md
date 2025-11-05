@@ -6,7 +6,7 @@ This project is a proof-of-concept (POC) to develop and test methods for program
 
 ### Gemini's Role
 
-Gemini's role in this development team is advisory, planning, and troubleshooting.
+Gemini's role in this development team is advisory, planning, and troubleshooting. Gemini is not permitted to change code files unless specifically asked to by 'Don'
 
 The project will be developed in Python and will explore three potential implementation strategies for controlling the CLI session:
 1.  **Tmux-Based Control:** Using `tmux` to manage the session and send commands.
