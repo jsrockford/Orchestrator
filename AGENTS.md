@@ -22,6 +22,7 @@ Follow PEP 8 defaults: four-space indentation, snake_case functions, CapWords cl
 
 ## Testing Guidelines
 Add integration tests at the repository root (`test_*.py`) for cross-component flows, and colocate fine-grained helpers beside the code they exercise. Name tests after the scenario and expected outcome (e.g., `test_wait_for_ready_times_out_cleanly`). Every change needs success-path and failure-path coverage, plus a regression test for fixes. Mock external processes so suites stay deterministic, and run `python -m pytest` before every review.
+When you need to exercise an ad-hoc Python check, drop a throwaway script or targeted pytest into `tests/` and run it from there instead of firing inline snippets that can hang the shell; delete or mark it once the investigation is done.
 
 ## Collaboration & Communication Protocol
 Use `CodexConcerns.md` as the shared message board for multi-agent coordination. Preface every contribution with your agent name (e.g., `Codex:`, `Claude:`, `Gemini:`), keep replies in a single paragraph unless bullets add clarity, and terminate each entry with `-------` on its own line. Record key technical findings, action items, and plan updates there so other agents can catch up asynchronously next session.

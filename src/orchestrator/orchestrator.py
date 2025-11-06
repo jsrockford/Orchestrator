@@ -10,8 +10,13 @@ top of a stable contract.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from collections import deque
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import uvicorn
 
 from ..utils.logger import get_logger
 
@@ -45,11 +50,106 @@ class DevelopmentTeamOrchestrator:
         self._debug_prompts: bool = False
         self._debug_prompt_chars: int = 200
         self.controller_metadata: Dict[str, Dict[str, Any]] = {}
+        self.api_host: Optional[str] = None
+        self.api_port: Optional[int] = None
+        self._api_app: Any = None
+        self._api_server: Optional[uvicorn.Server] = None
+        self._api_thread: Optional[threading.Thread] = None
 
         if controllers:
             for name, controller in controllers.items():
                 meta = metadata.get(name) if isinstance(metadata, dict) else None
                 self.register_controller(name, controller, metadata=meta)
+
+    # ------------------------------------------------------------------ #
+    # API server management
+    # ------------------------------------------------------------------ #
+
+    def start_api_server(
+        self,
+        *,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        log_level: str = "info",
+        access_log: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Launch the embedded FastAPI server in a background thread.
+
+        Returns:
+            Dict describing the server configuration (host, port).
+        """
+        if self._api_thread and self._api_thread.is_alive():
+            raise RuntimeError("API server is already running")
+
+        from .web_api import create_app  # local import to avoid cycle
+
+        app = create_app(self)
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=int(port),
+            log_level=log_level,
+            access_log=access_log,
+            loop="asyncio",
+        )
+        server = uvicorn.Server(config)
+
+        def _run_server() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(server.serve())
+            finally:
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except RuntimeError:
+                    pass
+                asyncio.set_event_loop(None)
+                loop.close()
+
+        thread = threading.Thread(
+            target=_run_server,
+            name="orchestrator-api",
+            daemon=True,
+        )
+        thread.start()
+
+        # Wait briefly for server startup for predictable integration tests
+        deadline = time.time() + 5.0
+        while not getattr(server, "started", False) and thread.is_alive() and time.time() < deadline:
+            time.sleep(0.05)
+
+        self.api_host = host
+        self.api_port = int(port)
+        self._api_app = app
+        self._api_server = server
+        self._api_thread = thread
+        return {"host": host, "port": port}
+
+    def stop_api_server(self, *, wait: bool = True, timeout: float = 5.0) -> bool:
+        """Stop the embedded FastAPI server if it is running."""
+        server = self._api_server
+        thread = self._api_thread
+        if server is None:
+            return False
+
+        server.should_exit = True
+        server.force_exit = True
+
+        if wait and thread:
+            thread.join(timeout)
+
+        self._api_server = None
+        self._api_thread = None
+        self._api_app = None
+        self.api_host = None
+        self.api_port = None
+        return True
+
+    def api_server_running(self) -> bool:
+        """Return True if the API server thread is active."""
+        return bool(self._api_thread and self._api_thread.is_alive())
 
     # ------------------------------------------------------------------ #
     # Controller registration & status helpers

@@ -6,7 +6,7 @@ interface Message {
   content: string;
 }
 
-interface Conversation {
+export interface Conversation {
   id: number;
   title: string;
   messages: Message[];
@@ -14,7 +14,7 @@ interface Conversation {
 
 interface ConversationWindowProps {
   conversation: Conversation;
-  onControlAction: (coderId: number, action: string) => void;
+  onControlAction: (modelName: string, action: string) => void;
   status: 'ready' | 'processing' | 'error';
   projectState: 'idle' | 'running' | 'paused';
   onEditInstructions: (modelName: string) => void;
@@ -59,31 +59,31 @@ const handleRequest = async (req, res) => {
         <div className="flex gap-2">
           <ControlButton
             icon="Esc"
-            onClick={() => onControlAction(conversation.id, 'escape')}
+            onClick={() => onControlAction(conversation.title, 'escape')}
             title="Escape"
           />
           <ControlButton
             icon="Rsm"
-            onClick={() => onControlAction(conversation.id, 'resume')}
+            onClick={() => onControlAction(conversation.title, 'resume')}
             title="Resume"
           />
           <ControlButton
             icon={<ArrowUp size={16} />}
-            onClick={() => onControlAction(conversation.id, 'up')}
+            onClick={() => onControlAction(conversation.title, 'up')}
             title="Up Key"
           />
           <ControlButton
             icon={<ArrowDown size={16} />}
-            onClick={() => onControlAction(conversation.id, 'down')}
+            onClick={() => onControlAction(conversation.title, 'down')}
             title="Down Key"
           />
           <ControlButton
             icon="↵"
-            onClick={() => onControlAction(conversation.id, 'enter')}
+            onClick={() => onControlAction(conversation.title, 'enter')}
             title="Enter Key"
           />
           <button
-            onClick={() => onControlAction(conversation.id, 'close')}
+            onClick={() => onControlAction(conversation.title, 'close')}
             className="text-gray-400 hover:text-red-400 transition-colors"
           >
             <X size={14} />

@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Settings } from 'lucide-react';
-import ConversationWindow from './components/ConversationWindow';
+import ConversationWindow, { type Conversation } from './components/ConversationWindow';
 import PromptInput from './components/PromptInput';
 import SessionModelSelector from './components/SessionModelSelector';
 import EditInstructionsModal from './components/EditInstructionsModal';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 
+const DEFAULT_API_BASE = 'http://localhost:8000';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE).replace(/\/$/, '');
+
 function App() {
-  const [allConversations] = useState([
+  const [allConversations] = useState<Conversation[]>([
     { id: 1, title: 'Claude', messages: [] },
     { id: 2, title: 'Codex', messages: [] },
     { id: 3, title: 'Gemini', messages: [] },
@@ -33,8 +36,74 @@ function App() {
     console.log('Sending prompt to coders:', coderIds, prompt);
   };
 
-  const handleControlAction = (coderId: number, action: string) => {
-    console.log(`Action ${action} triggered for AI Coder ${coderId}`);
+  const postControl = async (path: string) => {
+    const url = (() => {
+      if (/^https?:\/\//.test(path)) {
+        return path;
+      }
+      const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+      return `${API_BASE_URL}${normalizedPath}`;
+    })();
+
+    const response = await fetch(url, { method: 'POST' });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const data = await response.json();
+        if (data?.detail) {
+          detail = data.detail;
+        }
+      } catch {
+        // ignore JSON parsing errors and fall back to status text
+      }
+      throw new Error(detail);
+    }
+    return response.json().catch(() => ({}));
+  };
+
+  const postKey = (modelSlug: string, key: string) => {
+    const encodedKey = encodeURIComponent(key);
+    return postControl(`/api/control/${modelSlug}/key/${encodedKey}`);
+  };
+
+  const handleControlAction = async (modelName: string, action: string) => {
+    const modelSlug = modelName.trim().toLowerCase();
+    try {
+      switch (action) {
+        case 'escape': {
+          await postKey(modelSlug, 'Escape');
+          await postControl('/api/control/pause');
+          setProjectState('paused');
+          break;
+        }
+        case 'resume': {
+          await postControl('/api/control/resume');
+          setProjectState('running');
+          break;
+        }
+        case 'up': {
+          await postKey(modelSlug, 'Up');
+          break;
+        }
+        case 'down': {
+          await postKey(modelSlug, 'Down');
+          break;
+        }
+        case 'enter': {
+          await postKey(modelSlug, 'Enter');
+          break;
+        }
+        case 'close': {
+          console.warn(`Close action requested for ${modelName} but no handler is implemented yet.`);
+          break;
+        }
+        default: {
+          console.warn(`Unhandled control action: ${action} for ${modelName}`);
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to send ${action} for ${modelName}:`, error);
+    }
   };
 
   const handleStartProject = () => {

@@ -37,7 +37,15 @@ for the target resolver and command handlers.
 
 ## Shell Wrapper (`orchestrator_control.sh`)
 
-Use the helper script to avoid manual pipe management:
+Use the helper script to avoid manual pipe management. The script provides the following commands:
+
+- `pause`: Pause orchestration after the current turn.
+- `resume`: Resume orchestration.
+- `status`: Request a status snapshot from the orchestrator.
+- `say <agent> <text...>`: Inject a text prompt for a specific agent.
+- `key <agent> <key...>`: Send a sequence of raw keys to an agent. Supported keys include `Escape`, `Enter`, `Up`, `Down`, `Left`, `Right`, `Tab`, `Space`, and control characters like `C-c`.
+- `history [N]`: Show the last N (default 10) commands sent through the control channel.
+- `help`: Display the full command reference.
 
 ```bash
 # Pause and resume orchestration
@@ -60,6 +68,14 @@ Key options:
 - `--pipe <path>`: Override the FIFO path (default `/tmp/orchestrator_control`).
 - `--status-file <path>`: Override the status snapshot location (default `/tmp/orchestrator_status.txt`).
 - `--help`: Show the full command reference and exit.
+
+## Environment Variables
+
+The shell wrapper's behavior can also be configured using environment variables, which are overridden by command-line flags.
+
+- `ORCHESTRATOR_CONTROL_PIPE`: Sets the path to the control channel FIFO.
+- `ORCHESTRATOR_CONTROL_HISTORY`: Sets the path to the command history log file (default `logs/control_channel_history.log`).
+- `ORCHESTRATOR_STATUS_FILE`: Sets the path where the status snapshot is written.
 
 ## Common Use Cases
 
