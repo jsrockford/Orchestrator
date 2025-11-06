@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional
 
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
     from .orchestrator import DevelopmentTeamOrchestrator
 
 DEFAULT_CONTROL_FIFO = Path("/tmp/orchestrator_control")
+DEFAULT_CONTROL_HISTORY = Path("logs/control_channel_history.log")
+CONTROL_HISTORY_ENV_VAR = "ORCHESTRATOR_CONTROL_HISTORY"
 logger = get_logger("orchestrator.web_api")
 
 
@@ -95,6 +98,7 @@ async def write_fifo_message(
     fifo_path: Path = DEFAULT_CONTROL_FIFO,
     retries: int = 3,
     delay_seconds: float = 0.1,
+    history_path: Optional[Path] = None,
 ) -> None:
     """
     Write a control message to the orchestrator FIFO with retry logic.
@@ -112,6 +116,7 @@ async def write_fifo_message(
             with fifo_path.open("w", encoding="utf-8") as fifo:
                 fifo.write(payload)
                 fifo.flush()
+            append_control_history(payload.rstrip("\n"), history_path=history_path)
             logger.debug("Wrote command to control FIFO=%s message=%r", fifo_path, payload)
             return
         except FileNotFoundError as exc:
@@ -139,6 +144,32 @@ async def write_fifo_message(
                 detail=f"Unable to write to control FIFO after {retries} attempts",
             )
         await asyncio.sleep(delay_seconds)
+
+
+def append_control_history(message: str, *, history_path: Optional[Path] = None) -> None:
+    """Persist control commands to the shared history log for auditability."""
+    env_override = os.environ.get(CONTROL_HISTORY_ENV_VAR)
+    target_path: Optional[Path]
+    if history_path is not None:
+        target_path = history_path
+    elif env_override:
+        target_path = Path(env_override).expanduser()
+    else:
+        target_path = DEFAULT_CONTROL_HISTORY
+
+    if target_path is None:
+        return
+
+    target_path = target_path.expanduser()
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"{timestamp} | {message}"
+        with target_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"{entry}\n")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Unable to append control history to %s: %s", target_path, exc)
 
 
 def format_key_command(model_name: str, key_name: str) -> str:

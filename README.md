@@ -145,39 +145,45 @@ qwen:
 
 ## Usage
 
-### Web UI (Recommended)
+### Running the Application (Web UI)
 
-Start the integrated API server and web UI for visual monitoring and control:
+To run the full application with the web interface, you need to start both the backend API server and the frontend development server.
 
-```bash
-# Terminal 1: Start the orchestrator with embedded API server
-source venv/bin/activate
-python scripts/run_api_server.py --host 0.0.0.0 --port 8000 --start-sessions
+#### Backend (API Server)
 
-# Terminal 2: Start the frontend dev server (development mode)
-cd frontend
-npm run dev
-```
+The backend is an integrated FastAPI server that runs as part of the main orchestrator application. Use the provided scripts to manage it.
 
-Then open your browser to `http://localhost:5173` to access the web interface.
+- **To Start the Backend:**
+  ```bash
+  # From the project root
+  ./backend/start_backend.sh
+  ```
+  This will start the server in the background. Logs are saved to `backend/logs/backend.log`.
 
-**Web UI Features:**
-- Real-time monitoring of all AI session outputs
-- Control buttons for each session (Pause, Resume, Arrow keys, Enter)
-- Edit AI instruction files directly from the browser
-- Project settings and file browsing
-- Multi-model selection and management
+- **To Stop the Backend:**
+  ```bash
+  # From the project root
+  ./backend/stop_backend.sh
+  ```
 
-**Production deployment:**
-```bash
-# Build frontend production assets
-cd frontend
-npm run build
+#### Frontend (Web UI)
 
-# Serve via integrated API server (serves static files)
-python scripts/run_api_server.py --host 0.0.0.0 --port 8000
-# Access at http://localhost:8000
-```
+The frontend is a React application built with Vite.
+
+- **To Start the Frontend:**
+  ```bash
+  # From the project root
+  ./frontend/start-dev.sh
+  ```
+  This will open a new terminal window for the Vite development server.
+
+- **To Stop the Frontend:**
+  ```bash
+  # From the project root
+  ./frontend/stop-dev.sh
+  ```
+
+Once both servers are running, you can access the web interface by opening your browser to `http://localhost:5173` (the port may vary if 5173 is in use).
 
 ### CLI Mode: Automated Discussion
 

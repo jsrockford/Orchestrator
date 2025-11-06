@@ -52,61 +52,67 @@ This document tracks the implementation of the web UI integration with the exist
 
 ### Backend Tasks
 
-- [ ] **Task 1.1**: Add control endpoint infrastructure to `src/orchestrator/web_api.py`
-  - [ ] Add helper function `write_to_control_channel(command: str)` that writes to `/tmp/orchestrator_control` FIFO
-  - [ ] Add error handling for FIFO not found/blocked (return 503 Service Unavailable)
-  - [ ] Add retry logic for FIFO write failures (3 attempts with 100ms delay)
-  - [ ] Test FIFO write with orchestrator_control.sh running
+- [x] **Task 1.1**: Add control endpoint infrastructure to `src/orchestrator/web_api.py`
+  - [x] Add helper function `write_to_control_channel(command: str)` that writes to `/tmp/orchestrator_control` FIFO
+  - [x] Add error handling for FIFO not found/blocked (return 503 Service Unavailable)
+  - [x] Add retry logic for FIFO write failures (3 attempts with 100ms delay)
+  - [x] Test FIFO write with orchestrator_control.sh running
 
-- [ ] **Task 1.2**: Implement REST endpoints for control actions in `web_api.py`
-  - [ ] `POST /api/control/pause` - Send PAUSE to control channel
-  - [ ] `POST /api/control/resume` - Send RESUME to control channel
-  - [ ] `POST /api/control/{model_name}/key/{key_name}` - Send KEY command (e.g., Up, Down, Enter, Escape)
-  - [ ] `GET /api/control/status` - Query orchestrator state (read from orchestrator.conversation_manager or status file)
-  - [ ] Add request validation (valid model names, valid key names)
-  - [ ] Add error responses (404 for invalid model, 503 for FIFO unavailable)
+- [x] **Task 1.2**: Implement REST endpoints for control actions in `web_api.py`
+  - [x] `POST /api/control/pause` - Send PAUSE to control channel
+  - [x] `POST /api/control/resume` - Send RESUME to control channel
+  - [x] `POST /api/control/{model_name}/key/{key_name}` - Send KEY command (e.g., Up, Down, Enter, Escape)
+  - [x] `GET /api/control/status` - Query orchestrator state (read from orchestrator.conversation_manager or status file)
+  - [x] Add request validation (valid model names, valid key names)
+  - [x] Add error responses (404 for invalid model, 503 for FIFO unavailable)
+  - [x] Added instruction file endpoints (GET/POST `/api/instructions/{model_name}`)
+  - [x] Added filesystem endpoints (POST `/api/fs/browse`, POST `/api/fs/create-folder`)
 
-- [ ] **Task 1.3**: Write pytest tests for control endpoints
-  - [ ] Test pause endpoint sends "PAUSE" to mock FIFO
-  - [ ] Test resume endpoint sends "RESUME" to mock FIFO
-  - [ ] Test key endpoint formats command correctly: "KEY {model} {key}"
-  - [ ] Test error handling: invalid model name returns 404
-  - [ ] Test error handling: FIFO unavailable returns 503
-  - [ ] Run tests: `pytest tests/test_web_api.py -v`
+- [x] **Task 1.3**: Write pytest tests for control endpoints
+  - [x] Test pause endpoint sends "PAUSE" to mock FIFO
+  - [x] Test resume endpoint sends "RESUME" to mock FIFO
+  - [x] Test key endpoint formats command correctly: "KEY {model} {key}"
+  - [x] Test error handling: invalid model name returns 404
+  - [x] Test error handling: FIFO unavailable returns 503
+  - [x] Run tests: `pytest tests/test_web_api.py -v`
 
-- [ ] **Task 1.4**: Integration test with live orchestrator
-  - [ ] Start orchestrator with control channel active
-  - [ ] Start integrated API server
-  - [ ] Test pause endpoint with curl/Postman
-  - [ ] Test resume endpoint
-  - [ ] Test key commands for each model
-  - [ ] Verify commands appear in control channel logs
-  - [ ] Monitor `/tmp/orchestrator_control` FIFO with `tail -f logs/control_channel_history.log`
+- [x] **Task 1.4**: Integration test with live orchestrator
+  - [x] Start orchestrator with control channel active
+  - [x] Start integrated API server
+  - [x] Test pause endpoint with curl/Postman (tested via UI, not formally via curl)
+  - [x] Test resume endpoint (tested via UI, not formally via curl)
+  - [ ] Test key commands for each model (tested via UI for some models)
+  - [x] Verify commands appear in control channel logs
+  - [x] Monitor `/tmp/orchestrator_control` FIFO with `tail -f logs/control_channel_history.log`
+  - [x] Verified all 9 endpoints appear in `/docs`
+  - [x] Tested instruction file GET/POST endpoints (via UI)
+  - [x] Tested filesystem browse and create-folder endpoints (via UI)
 
 ### Frontend Tasks
 
-- [ ] **Task 1.5**: Update `ConversationWindow.tsx` to call control endpoints
-  - [ ] Modify `handleControlAction` to make API calls instead of console.log
-  - [ ] Map button actions to endpoint URLs:
-    - [ ] Esc → `POST /api/control/pause`
-    - [ ] Rsm → `POST /api/control/resume`
-    - [ ] Up → `POST /api/control/{model}/key/Up`
-    - [ ] Down → `POST /api/control/{model}/key/Down`
-    - [ ] Enter → `POST /api/control/{model}/key/Enter`
-  - [ ] Add error handling and user feedback (toast notifications or console warnings)
-  - [ ] Pass model name from conversation prop to API calls
+- [x] **Task 1.5**: Update `ConversationWindow.tsx` to call control endpoints
+  - [x] Modify `handleControlAction` to make API calls instead of console.log
+  - [x] Map button actions to endpoint URLs:
+    - [x] Esc → `POST /api/control/pause`
+    - [x] Rsm → `POST /api/control/resume`
+    - [x] Up → `POST /api/control/{model}/key/Up`
+    - [x] Down → `POST /api/control/{model}/key/Down`
+    - [x] Enter → `POST /api/control/{model}/key/Enter`
+  - [x] Add error handling (try/catch blocks in App.tsx)
+  - [ ] Add user feedback (toast notifications or UI error messages - currently only console warnings)
+  - [x] Pass model name from conversation prop to API calls
 
 - [ ] **Task 1.6**: Update `App.tsx` for global controls
-  - [ ] Wire Start/Stop Project buttons to orchestrator lifecycle (if applicable)
-  - [ ] Add visual feedback for button presses
-  - [ ] Handle disabled states appropriately
+  - [ ] Wire Start/Stop Project buttons to orchestrator lifecycle (currently only updates local state, see App.tsx:112,118 comments)
+  - [x] Add visual feedback for button presses
+  - [x] Handle disabled states appropriately
 
 - [ ] **Task 1.7**: Test control flow end-to-end
-  - [ ] Start orchestrator with integrated API server
-  - [ ] Start frontend dev server
-  - [ ] Click each button in UI, verify corresponding action in tmux sessions
-  - [ ] Test with multiple models active
-  - [ ] Verify control channel history log shows correct commands
+  - [x] Start orchestrator with integrated API server
+  - [x] Start frontend dev server
+  - [ ] Click each button in UI, verify corresponding action in tmux sessions (partially tested)
+  - [ ] Test with multiple models active (not fully verified)
+  - [ ] Verify control channel history log shows correct commands (not formally verified)
 
 ---
 
