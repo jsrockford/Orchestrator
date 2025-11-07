@@ -723,7 +723,7 @@ function App() {
         </div>
       </main>
 
-      {projectState === 'running' && (
+      {projectState !== 'idle' && (
         <PromptInput
           coders={activeConversations}
           selectedCoders={selectedCoders}

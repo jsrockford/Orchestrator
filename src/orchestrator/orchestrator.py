@@ -11,6 +11,7 @@ top of a stable contract.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 from collections import deque
@@ -63,6 +64,16 @@ class DevelopmentTeamOrchestrator:
         self.discussion_manager: Any | None = None
         self.should_stop_discussion: bool = False
         self.discussion_error: Optional[str] = None
+        self._discussion_log_level_override: Optional[int] = None
+        self._discussion_logger_levels: Dict[str, int] = {}
+        self._discussion_logger_names: Tuple[str, ...] = (
+            "orchestrator.development_team",
+            "orchestrator.conversation",
+            "orchestrator.web_api",
+            "orchestrator.message_router",
+            "orchestrator.control_channel",
+            "orchestrator.context",
+        )
 
         if controllers:
             for name, controller in controllers.items():
@@ -500,6 +511,41 @@ class DevelopmentTeamOrchestrator:
         if name not in self.controllers:
             raise KeyError(f"Unknown controller '{name}'")
         return self.controllers[name]
+
+    def apply_discussion_log_level(self, level_name: Optional[str]) -> Optional[int]:
+        """
+        Override orchestrator-related loggers for the duration of a discussion.
+        """
+        if not level_name:
+            self._discussion_log_level_override = None
+            return None
+
+        level_str = str(level_name).strip().upper()
+        level = getattr(logging, level_str, None)
+        if not isinstance(level, int):
+            self.logger.warning("Invalid discussion log level '%s'", level_name)
+            return None
+
+        self._discussion_log_level_override = level
+        for logger_name in self._discussion_logger_names:
+            logger = logging.getLogger(logger_name)
+            if not logger.handlers:
+                get_logger(logger_name)
+            if logger_name not in self._discussion_logger_levels:
+                self._discussion_logger_levels[logger_name] = logger.level
+            logger.setLevel(level)
+        return level
+
+    def reset_discussion_log_level(self) -> None:
+        """Restore logger levels after a discussion completes."""
+        if not self._discussion_logger_levels:
+            self._discussion_log_level_override = None
+            return
+
+        for logger_name, original_level in self._discussion_logger_levels.items():
+            logging.getLogger(logger_name).setLevel(original_level)
+        self._discussion_logger_levels.clear()
+        self._discussion_log_level_override = None
 
     def _queue_command(
         self,

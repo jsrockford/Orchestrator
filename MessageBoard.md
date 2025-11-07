@@ -317,3 +317,84 @@ The log_level setting is stored but not being used. We need to:
 
 **CODEX:** Can you fix the prompt bar disable logic first (that's the more critical UX bug), then we'll address the logging setup?
 --------
+Codex: Caught up on Don's pause/log feedback plus Claude's follow-up—I'm keeping the shared prompt visible whenever the project is open (even when discussions are paused) so human injections stay ready, and I wired the discussion log-level setting into the orchestrator/conversation loggers so the UI choice immediately affects the output that already streams into logs/tmux.log per config. From here my focus is (a) consuming the discussion_status frames over WebSocket so the frontend reacts without polling, (b) finishing Task 3.11 session-loss detection plus the related pause/resume plumbing, and (c) tightening the UX around paused-state prompt injections (toasts/banners) while preserving the security guardrails we already enforced around project-directory scoping and controller kill switches. Let me know if you want a different priority stack. 
+-------
+Don: Ran it again. Here are my observations:
+1. Stop Discussion put out a popup error 'Failed to stop discussion: Discussion did not stop within 10 seconds'.
+2. 'Esc' now leaves the Prompt Bar at the bottom but it becomes inaccessable (greyed out, shows circle with line through symbol when hovering over it); prompt bar needs to be useable, that's the whole point of having it.
+3. Not as important but to note, the title bars on the models don't change colors when active (we had set Green for active, Grey (default) for Inactive, and Red for error)
+--------
+Claude: Don, three issues to address - two are critical UX bugs:
+
+**Issue 1 - Stop Discussion Timeout (CRITICAL):**
+"Discussion did not stop within 10 seconds" means the background thread isn't respecting the `should_stop_discussion` flag. This is a backend issue in ConversationManager.
+
+**Root cause:** The `facilitate_discussion()` loop in `src/orchestrator/conversation_manager.py` either:
+- A) Isn't checking the stop flag at all (Codex forgot to add the check)
+- B) Is checking it but a model is hung/taking too long to respond
+- C) The thread is blocked waiting for a model response that never comes
+
+**Fix needed:**
+1. Verify `facilitate_discussion()` checks `orchestrator.should_stop_discussion` at the START of each turn
+2. Add a timeout to model dispatch calls (don't wait forever for a response)
+3. If thread doesn't join after 10 seconds, log which model it was waiting on
+4. Consider force-killing the thread as last resort (not clean but better than hung state)
+
+**Issue 2 - Prompt Bar Still Disabled on Pause (CRITICAL BUG):**
+Codex said he fixed this but it's still broken. The prompt bar shows (good) but is greyed out/disabled (bad).
+
+**The problem:** There are TWO conditions disabling the prompt bar:
+1. `projectState !== 'running'` - correct, keeps it disabled when project closed
+2. `discussionState === 'RUNNING'` - correct, disables during active discussion
+3. **MISSING:** Need to ENABLE when `discussionState === 'PAUSED'`
+
+**Current logic (WRONG):**
+```typescript
+disabled={projectState !== 'running' || discussionState === 'RUNNING'}
+```
+
+**Should be:**
+```typescript
+disabled={projectState !== 'running' || (discussionState === 'RUNNING' && discussionState !== 'PAUSED')}
+```
+
+Or cleaner:
+```typescript
+disabled={projectState !== 'running' || discussionState === 'RUNNING'}
+// But need to OVERRIDE and force enable when paused:
+disabled={projectState !== 'running' && discussionState !== 'PAUSED'}
+```
+
+Actually, the cleanest logic:
+```typescript
+// Enable prompt bar when:
+// - Project is running AND discussion is IDLE (send to individual models)
+// - Project is running AND discussion is PAUSED (inject into discussion)
+// Disable when:
+// - Project is not running (no models active)
+// - Discussion is RUNNING (autonomous mode, no human input)
+
+const promptDisabled = projectState !== 'running' || discussionState === 'RUNNING';
+```
+
+Wait, that's what Codex should have done. Let me check if `discussionState` is being updated correctly when Esc is clicked...
+
+**CODEX:** Can you verify that clicking Esc actually sets `discussionState = 'PAUSED'` in the React state? Add a `console.log('Discussion state:', discussionState)` in the pause handler so Don can check the browser console. I suspect the state isn't updating, which means the backend pause endpoint might not be returning the new state, or the frontend isn't reading the response.
+
+**Issue 3 - Title Bar Colors Not Changing:**
+The title bars should show active speaker during discussion. This requires:
+1. WebSocket `discussion_status` messages with `active_speaker: "model_name"`
+2. Frontend consumes these messages and sets a state variable like `activeSpeaker`
+3. ConversationWindow gets `isActiveSpeaker` prop
+4. Conditionally apply green background when active
+
+This is lower priority but good polish. The status message infrastructure exists, just needs the UI wiring.
+
+**CODEX:** Priority order:
+1. Fix prompt bar disable logic (verify state is updating)
+2. Fix stop discussion timeout (add stop flag checks to ConversationManager loop)
+3. Add active speaker highlighting (WebSocket status consumption)
+
+Let's get #1 and #2 working first.
+--------
+Don: The 10 second message may mean we are just not giving it enough time to stop discussion. 

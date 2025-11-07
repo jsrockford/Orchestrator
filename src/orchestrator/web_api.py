@@ -738,6 +738,8 @@ def register_discussion_routes(app: FastAPI) -> None:
         topic = config.get("discussion_topic") or "General discussion"
         max_turns = int(config.get("max_turns") or 10)
         include_history = bool(config.get("include_history", True))
+        log_level_override = config.get("log_level")
+        orchestrator.apply_discussion_log_level(log_level_override)
 
         orchestrator.should_stop_discussion = False
         orchestrator.discussion_state = "RUNNING"
@@ -758,6 +760,7 @@ def register_discussion_routes(app: FastAPI) -> None:
                 orchestrator.should_stop_discussion = False
                 orchestrator.discussion_state = "IDLE"
                 orchestrator.discussion_thread = None
+                orchestrator.reset_discussion_log_level()
 
         thread = threading.Thread(target=_discussion_worker, name="orchestrated-discussion", daemon=True)
         orchestrator.discussion_thread = thread
