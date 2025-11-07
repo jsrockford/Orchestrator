@@ -308,6 +308,51 @@ function App() {
           await postKey(modelSlug, 'Enter');
           break;
         }
+        case 'kill': {
+          const confirmed = window.confirm(
+            `KILL ${modelName}?\n\nThis will immediately terminate the session for ${modelName}.\n\nAre you sure?`
+          );
+          if (!confirmed) {
+            break;
+          }
+
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/control/stop-sessions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ models: [modelSlug] })
+            });
+
+            if (!response.ok) {
+              throw new Error(`Failed to kill ${modelName}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            console.log(`Kill response for ${modelName}:`, data);
+
+            // Close the WebSocket for this model
+            closeSocket(modelName, 'idle');
+
+            // If no models are running anymore, update project state
+            if (data.stopped?.includes(modelSlug)) {
+              alert(`${modelName} has been terminated.`);
+
+              // Check if any other models are still running
+              const stillRunning = activeModels.some(m =>
+                m.toLowerCase() !== modelSlug &&
+                socketsRef.current[m]
+              );
+
+              if (!stillRunning) {
+                setProjectState('idle');
+              }
+            }
+          } catch (error) {
+            console.error(`Failed to kill ${modelName}:`, error);
+            alert(`Failed to kill ${modelName}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          break;
+        }
         case 'close': {
           console.warn(`Close action requested for ${modelName} but no handler is implemented yet.`);
           break;

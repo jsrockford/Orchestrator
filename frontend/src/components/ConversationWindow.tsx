@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
-import { ArrowUp, ArrowDown, X, FilePenLine } from 'lucide-react';
+import { ArrowUp, ArrowDown, X, FilePenLine, Skull } from 'lucide-react';
 import ControlButton from './ControlButton';
 
 interface Message {
@@ -135,6 +135,14 @@ function ConversationWindow({
             onClick={() => onControlAction(conversation.title, 'enter')}
             title="Enter Key"
           />
+          <button
+            onClick={() => onControlAction(conversation.title, 'kill')}
+            className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+            title="KILL - Emergency Stop"
+            disabled={projectState === 'idle'}
+          >
+            <Skull size={16} />
+          </button>
           <button
             onClick={() => onControlAction(conversation.title, 'close')}
             className="text-gray-400 hover:text-red-400 transition-colors"

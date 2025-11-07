@@ -214,6 +214,77 @@ def resolve_project_directory(path_str: str) -> Path:
     return path
 
 
+SECURITY_MARKER = "<!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->"
+
+
+def get_security_warning_section(project_dir: str) -> str:
+    """Generate the security warning section for instruction files."""
+    return f"""{SECURITY_MARKER}
+## CRITICAL: Project Directory Security
+
+**Your working directory**: {project_dir}
+
+**YOU MUST**:
+- Only create, modify, or delete files within: {project_dir}
+- Use relative paths (./file.txt) or absolute paths starting with {project_dir}
+- If asked to work outside this directory, politely decline and explain the restriction
+
+**FORBIDDEN PATHS**:
+- /etc/ (system configuration)
+- /home/other_user/ (other users' files)
+- ../../ (parent directory traversal)
+- /tmp/ (temporary system files)
+- Any path outside your working directory
+
+**Example**:
+✅ ALLOWED: `./src/main.py`, `docs/README.md`, `{project_dir}/config.json`
+❌ FORBIDDEN: `/etc/passwd`, `../../other_project/`, `/home/dgray/Projects/Orchestrator/`
+
+{SECURITY_MARKER}
+
+"""
+
+
+def ensure_instruction_file_security(project_dir: Path, model_name: str) -> None:
+    """
+    Ensure instruction file exists with security warnings in the project directory.
+
+    Args:
+        project_dir: The project directory path
+        model_name: The model name (e.g., "claude", "gemini")
+    """
+    instruction_file = INSTRUCTION_FILES.get(model_name.capitalize())
+    if not instruction_file:
+        logger.warning("No instruction file mapping for model '%s'", model_name)
+        return
+
+    file_path = project_dir / instruction_file
+    security_section = get_security_warning_section(str(project_dir))
+
+    try:
+        if file_path.exists():
+            # Read existing content
+            content = file_path.read_text(encoding='utf-8')
+
+            # Check if security marker already present
+            if SECURITY_MARKER in content:
+                logger.debug("Security warnings already present in %s", file_path)
+                return
+
+            # Prepend security warnings
+            new_content = security_section + "\n" + content
+            file_path.write_text(new_content, encoding='utf-8')
+            logger.info("Prepended security warnings to existing %s", file_path)
+        else:
+            # Create new file with security warnings
+            file_path.write_text(security_section, encoding='utf-8')
+            logger.info("Created new instruction file %s with security warnings", file_path)
+
+    except Exception as exc:
+        logger.error("Failed to update instruction file %s: %s", file_path, exc)
+        # Don't raise - this is not critical enough to fail session startup
+
+
 def controller_session_active(controller: Any) -> bool:
     """Return True if the controller reports an active session."""
     exists_fn = getattr(controller, "session_exists", None)
@@ -419,6 +490,9 @@ def register_control_routes(app: FastAPI) -> None:
                 continue
 
             try:
+                # Ensure instruction file has security warnings
+                ensure_instruction_file_security(project_dir, model_name)
+
                 start_fn()
                 if callable(wait_fn):
                     wait_fn()

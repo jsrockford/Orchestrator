@@ -324,90 +324,202 @@ This is straightforward to implement - should I proceed?
 --------
 Don: yes, it would be nice to get a notification in the ui on errors. the loading indicator could be the title bar of the selected model changing color. yes, the prompt bar can be disabled when no models are runnin.
 --------
-Gemini: Good morning. I am fully up to speed. Don, your proposed solution to use a "Start Project" button to launch the AI models with the correct working directory is the correct approach. It is architecturally sound and leverages the existing framework's capabilities, as Claude has already pointed out.
+Gemini: Don, your concerns are valid. Relying on instruction files alone is insufficient, and we must be mindful of performance. I agree that visibility and direct control are paramount.
 
-I would like to add a few points to consider for the implementation:
+Here is my refined recommendation, which builds on Claude's options and your suggestions:
 
-1.  **Frontend State Management**: The frontend needs to be robust in managing the state of the "Start Project" button. It should be disabled after being clicked, and only re-enabled when the sessions are confirmed to be running or if an error occurs. We should also provide clear feedback to the user during the startup process (e.g., a loading indicator).
-2.  **Backend Robustness**: The new `POST /api/control/start-sessions` endpoint should be idempotent if possible. If the user clicks the "Start Project" button multiple times, the backend should gracefully handle the repeated requests, for example by checking if the sessions are already running for the given models and project directory.
-3.  **Error Handling**: We need to consider the failure modes. What happens if one of the AI models fails to start? The backend should report the status of each model back to the frontend, so the user can see which models are running and which have failed.
-4.  **Security**: While setting the working directory is a huge step forward, we should still consider it a "soft" security measure. A sufficiently motivated or misguided AI could still potentially write files outside of its intended directory. For this POC, the current approach is sufficient, but for a production system, we would want to explore more robust sandboxing options as Claude initially suggested.
+**A New Layered Approach: Control, Visibility, and Guidance**
 
-I concur with Claude's implementation plan. Creating a new API endpoint is the right way to go. I am ready to provide any assistance needed, whether it's refining the API design, reviewing the implementation, or helping to troubleshoot any issues that arise.
+1.  **Immediate - Implement a "Kill Switch" (Your Idea):** This is the most direct way to ensure safety. We can add a "Kill" button to each model's title bar in the UI. When clicked, it would call the existing `POST /api/control/stop-sessions` endpoint for that specific model. This provides an immediate, manual override in case of emergency.
+
+2.  **Short-Term - Efficient "Monitor and Alert" (Refined Option 3):** To address your performance concerns, we can implement monitoring *without adding new polling*. The backend already polls for the WebSocket stream. We can enhance this existing process:
+    *   **Backend:** In the WebSocket handler in `web_api.py`, before broadcasting the output, perform a quick regex check for dangerous commands (`rm -rf /`, `mv .* /dev/null`, etc.) or file access outside the project directory (`cd ..`, `../`, etc.). This is a very lightweight operation.
+    *   If a violation is detected, the backend will inject a special message into the WebSocket stream, like `{"type": "security_alert", "model": "Claude", "details": "Attempted to access /etc/passwd"}`.
+    *   **Frontend:** When the UI receives this `security_alert`, it can trigger a highly visible, non-intrusive notification (like a toast alert) and change the title bar of the offending model to red.
+
+3.  **Medium-Term - Hardened API Endpoints (Expanded Option 2):** We should still harden our API. We can expand on Claude's idea by creating a dedicated set of secure-by-default file operation endpoints (e.g., `/api/fs/read`, `/api/fs/write`, `/api/fs/list`). We then instruct the AIs to *prefer* these endpoints over raw shell commands for file access. This gives us a centralized and enforceable security model for common file operations.
+
+4.  **Baseline - Instruction Files (Option 1):** As a final layer, we should still include the security rules in the instruction files. It costs nothing and acts as a first-line deterrent.
+
+**Why this approach is better:**
+
+*   **Addresses Performance:** It reuses the existing WebSocket polling, adding negligible overhead.
+*   **Prioritizes User Control:** The Kill Switch provides immediate power to the user.
+*   **Provides Visibility:** The alerts tell you *what* happened, so you can decide whether to use the Kill Switch.
+*   **Layered Security:** It combines proactive instructions, reactive alerts, and hardened API endpoints for a more robust solution without the complexity of `chroot`.
+
+I believe this plan provides the best balance of safety, performance, and implementation effort. What are your thoughts on this refined approach?
 
 --------
-Don: Gemini brings up valid points that we should address. First I want to get the prompt and send keys working then we can revisit these issues.
+Don: I appreciate all the input and great ideas you guys are coming up with. As we digging deeper into the security implications and solution routes I realizing we are getting deeper into the weeds than I want to go. The added complication and the unforeseen technical problems that can arise from trying to guide the ai to our api paths and the likely errors we will see down the line, I'm inclined to employ some simple, albeit limited, security mitigations such as adding default messages to each instruction file telling the model not to work outside the project directory and employing a KILL switch on each model's title bar that I can hit in an emergency. With these in place we will have a couple extra layers of protection. As Claude pointed out, if the AI really wants to do damage or makes a mistake it will find a way. Are you on board or do you have concerns?
 --------
-Claude: Perfect! Clear requirements. Let me implement the prompt submission feature with:
+Gemini: Don, I am completely on board with your decision. It's a pragmatic choice that provides a tangible increase in safety without introducing the complexity that could derail our current momentum. Focusing on the instruction files and the Kill Switch is a smart, incremental approach for a POC.
 
-**Implementation Checklist:**
+I have no concerns with this direction. It aligns perfectly with the goal of building a functional prototype while being mindful of the development effort. We can always revisit more advanced security measures in the future if the need arises.
 
-1. ✅ Error notifications in UI (toast or banner)
-2. ✅ Loading indicator via title bar color change
-3. ✅ Disable prompt bar when `projectState === 'idle'`
+I am ready to support the implementation of these two features however I can.
 
-**I'll now implement:**
+--------
+Codex:  Fully aligned with the pragmatic path you outlined on the board: bake a clear "stay inside the project
+  directory" warning into each model's instruction file (so they're reminded every run) and add a per-
+  model Kill switch in the UI title bar that immediately calls our stop-session endpoint when you need to
+  yank control. That gives us two lightweight layers—preventive guidance and an emergency brake—without
+  derailing progress. We can always revisit heavier sandboxing later if the prototype needs it. Next step
+  would be implementing those two pieces; just say the word and I'll start.
+--------
+Claude: **I'm on board with this pragmatic approach, Don!** You've made the right call - let's implement the two simple layers without overengineering.
 
-**Backend:**
-- Add `POST /api/control/send-prompt` endpoint in `web_api.py`
-- Pydantic model for request validation
-- Per-model dispatch with error handling
+**Implementation Plan Summary:**
 
-**Frontend:**
-- Wire up `handleSendPrompt()` to call the endpoint
-- Add error notification display (simple alert or inline message)
-- Add loading state that changes conversation window title bar colors
-- Disable prompt input when no models running
+## 1. Instruction File Security Warnings (5 minutes)
 
-**Gemini's Points:**
-Noted for later - we'll address robustness, state management, and additional error handling after we get the basic flow working.
+When sessions start via `POST /api/control/start-sessions`, dynamically inject security rules into each model's instruction file:
 
-Starting implementation now. I'll update the MessageBoard when ready for testing.
+**Backend** (`web_api.py` in the start-sessions endpoint):
+- After creating each controller, update its instruction file
+- Add a security section with the project directory path
+- Clear, direct language: "NEVER work outside {project_directory}"
+
+**Template to inject:**
+```markdown
+## CRITICAL: Project Directory Security
+
+**Your working directory**: {project_directory}
+
+**YOU MUST**:
+- Only create, modify, or delete files within: {project_directory}
+- Use relative paths (./file.txt) or absolute paths starting with {project_directory}
+- If asked to work outside this directory, politely decline and explain the restriction
+
+**FORBIDDEN**: /etc/, /home/other_user/, ../../, /tmp/, ~/Projects/Orchestrator/
+```
+
+## 2. Kill Switch Button (15 minutes)
+
+**Frontend** (`ConversationWindow.tsx`):
+- Add a red "Kill" button to each model's title bar (next to existing buttons)
+- On click: Call `POST /api/control/stop-sessions` with `{models: [modelName]}`
+- Show confirmation dialog: "Kill {model}? This will immediately terminate the session."
+- Disable button after click
+- Visual: Red skull icon or stop sign
+
+**Backend**:
+- Endpoint already exists, just need to ensure it works for single model
+- Verify `stop-sessions` accepts `{models: ["claude"]}` (should already work)
+
+**This gives us:**
+- ✅ Preventive guidance (instruction files)
+- ✅ Emergency control (kill switch)
+- ✅ Simple, maintainable
+- ✅ No performance overhead
+- ✅ Can iterate later if needed
+
+**Ready to implement when you give the word, Don!** Should I start with the instruction file updates first, then add the kill switch?
+
+--------
+Don: I'm onboard. Please make the KILL button red (round if possible). If I understand correctly, a model instruction file will automatically be created in the project working directory for each active model with the default security instructions inserted at the top. There should be a test to see if it already exists so as not to overwrite a file in an ongoing project. With this in mind go ahead and begin implementation unless you have further questions.
+--------
+Claude: Perfect! That's exactly right. One clarification and then I'll start:
+
+**Marker Approach**: Yes, using a marker is the perfect solution and not complicated at all! I'll use:
+
+```markdown
+<!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->
+```
+
+**Logic**:
+1. Check if instruction file exists in project directory
+2. If exists, read it and check for the marker
+3. If marker present: skip (already has security warnings)
+4. If marker absent: prepend security section with marker
+5. If file doesn't exist: create new file with security warnings + marker
+
+This ensures we never duplicate the warnings, even across multiple start/stop cycles.
+
+Starting implementation now!
 
 --------
 Claude: **Implementation complete!** Ready for testing.
 
-**Changes Made:**
+## Changes Made:
 
-**Backend (`src/orchestrator/web_api.py`):**
-- ✅ Added `PromptRequest` Pydantic model (lines 54-58)
-- ✅ Added `POST /api/control/send-prompt` endpoint (lines 309-352)
-  - Accepts prompt text, list of models, and submit flag
-  - Calls `orchestrator.dispatch_command()` for each model
-  - Returns per-model results with success/failure status
-  - Logs errors appropriately
+### Backend (`src/orchestrator/web_api.py`):
 
-**Frontend (`frontend/src/App.tsx`):**
-- ✅ Updated `handleSendPrompt()` to call the backend API (lines 211-252)
-  - Maps coder IDs to model names
-  - Makes POST request to `/api/control/send-prompt`
-  - Shows error alerts for any failures
-  - Validates response and handles errors
-- ✅ Passed `disabled` prop to PromptInput component (line 486)
+**1. Security Warning System** (lines 217-286):
+- ✅ Added `SECURITY_MARKER` constant: `<!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->`
+- ✅ Created `get_security_warning_section()` to generate security warnings with project directory
+- ✅ Created `ensure_instruction_file_security()` function:
+  - Checks if instruction file exists in project directory
+  - Reads existing content and checks for marker
+  - If marker present: skips (avoids duplicates)
+  - If marker absent: prepends security section
+  - If file doesn't exist: creates new file with warnings
+  - Handles errors gracefully (logs but doesn't fail session startup)
 
-**Frontend (`frontend/src/components/PromptInput.tsx`):**
-- ✅ Added `disabled` prop to interface (line 14)
-- ✅ Disabled textarea when no models running (line 68)
-- ✅ Changed placeholder text when disabled (line 67)
-- ✅ Disabled Send button when disabled or empty prompt (line 53)
-- ✅ Added visual disabled styling (opacity + cursor)
+**2. Integration with start-sessions endpoint** (line 494):
+- ✅ Calls `ensure_instruction_file_security()` before starting each session
+- ✅ Security warnings injected for all models automatically
 
-**Features Implemented:**
-1. ✅ Error notifications via browser alerts
-2. ✅ Prompt bar disabled when `projectState === 'idle'`
-3. ✅ Multi-model prompt dispatch
-4. ✅ Per-model success/failure reporting
+**Security Warning Content**:
+```markdown
+## CRITICAL: Project Directory Security
 
-**Note on Loading Indicator:**
-I implemented error notifications but didn't add the title bar color change loading indicator yet. The prompts dispatch very quickly (<100ms typically), so a loading state may not be visible. We can add this enhancement if you'd like to see visual feedback, but I wanted to get the core functionality working first.
+**Your working directory**: {project_directory}
 
-**Testing Instructions:**
-1. Start backend: `python scripts/run_api_server.py`
-2. Start frontend: `cd frontend && npm run dev`
-3. Set project directory and start models via Start Project button
-4. Enter a prompt in the bottom bar and click Send
-5. Should see prompt delivered to selected models (visible in WebSocket output)
+**YOU MUST**:
+- Only create, modify, or delete files within: {project_directory}
+- Use relative paths or absolute paths starting with {project_directory}
+- If asked to work outside this directory, politely decline and explain
+
+**FORBIDDEN PATHS**: /etc/, /home/other_user/, ../../, /tmp/, etc.
+```
+
+### Frontend:
+
+**1. ConversationWindow.tsx**:
+- ✅ Added `Skull` icon import from lucide-react (line 2)
+- ✅ Added red round Kill button (lines 138-145):
+  - Round button with `w-8 h-8 rounded-full`
+  - Red background: `bg-red-600 hover:bg-red-700`
+  - Skull icon centered
+  - Disabled when `projectState === 'idle'`
+  - Positioned before the close (X) button
+
+**2. App.tsx** (lines 311-355):
+- ✅ Added 'kill' case to handleControlAction switch
+- ✅ Shows confirmation dialog before killing
+- ✅ Calls `POST /api/control/stop-sessions` with single model
+- ✅ Closes WebSocket for killed model
+- ✅ Updates project state if all models are killed
+- ✅ Shows success/error alerts
+
+## Features Implemented:
+
+1. ✅ **Automatic Security Warnings**: Instruction files get security warnings on session start
+2. ✅ **Marker-Based Deduplication**: Won't add duplicate warnings across restarts
+3. ✅ **Project Directory Specific**: Warnings include the actual project directory path
+4. ✅ **Red Round Kill Button**: Emergency stop button on each model's title bar
+5. ✅ **Confirmation Dialog**: User must confirm before killing a model
+6. ✅ **Graceful Cleanup**: WebSockets closed, state updated properly
+7. ✅ **Error Handling**: Both backend and frontend handle failures gracefully
+
+## Testing Instructions:
+
+1. Start backend and frontend
+2. Set project directory and start models via Start Project
+3. **Test Instruction Files**:
+   - Check project directory for CLAUDE.md, GEMINI.md, etc.
+   - Verify security warnings are at the top with markers
+   - Stop and restart project - verify warnings aren't duplicated
+4. **Test Kill Button**:
+   - Click red skull button on any model
+   - Confirm the dialog
+   - Verify model session terminates
+   - Check that other models keep running
+   - Kill all models - verify UI returns to idle state
 
 Ready for your testing, Don!
 
+--------
+Don: Excellent! Instruction file creation and security warning insertion works as advertised. Also tested reopening project to verify security warning only inserted once - works. Tested kill switch - works. Perfect!
 --------
