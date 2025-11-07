@@ -331,3 +331,92 @@ def test_stop_sessions_kills_and_unregisters(api_app, orchestrator) -> None:
 
     assert response["stopped"] == ["claude"]
     assert "claude" not in orchestrator.controllers
+
+
+def test_configure_discussion_stores_config(api_app, orchestrator) -> None:
+    app, get_endpoint = api_app
+    orchestrator.register_controller("codex", DummyController("codex"))
+
+    configure = get_endpoint("/api/discussion/configure", "POST")
+    payload = web_api.DiscussionConfig(participants=["claude", "codex"], starting_model="codex", max_turns=5)
+    response = run(configure(payload, app.state.orchestrator))
+
+    assert response["status"] == "configured"
+    assert orchestrator.discussion_config["participants"][0] == "codex"
+    assert orchestrator.discussion_config["max_turns"] == 5
+
+
+def test_start_discussion_spawns_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    controllers = {
+        "claude": DummyController("claude"),
+        "codex": DummyController("codex"),
+    }
+    orchestrator = DevelopmentTeamOrchestrator(controllers=controllers)
+    app = create_app(orchestrator)
+    orchestrator.project_state = "OPEN"
+
+    orchestrator.discussion_config = {
+        "participants": ["claude", "codex"],
+        "starting_model": "claude",
+        "max_turns": 3,
+        "discussion_topic": "demo",
+        "include_history": True,
+    }
+
+    called = {"count": 0}
+
+    def fake_start(topic, *, participants, max_turns, include_history, **kwargs):  # noqa: ANN001
+        called["count"] += 1
+        return {"conversation": [], "manager": None, "context_manager": None, "message_router": None}
+
+    monkeypatch.setattr(orchestrator, "start_discussion", fake_start)  # type: ignore[attr-defined]
+
+    def get_endpoint(path: str, method: str) -> Any:
+        for route in app.router.routes:
+            if getattr(route, "path", None) == path and method in getattr(route, "methods", []):
+                return route.endpoint
+        raise RuntimeError("not found")
+
+    start_endpoint = get_endpoint("/api/discussion/start", "POST")
+    response = run(start_endpoint(app.state.orchestrator))
+    assert response["status"] == "started"
+    assert called["count"] == 1
+    assert orchestrator.discussion_state == "IDLE"
+    assert orchestrator.discussion_thread is None
+
+
+def test_stop_discussion_handles_missing_thread(api_app) -> None:
+    app, get_endpoint = api_app
+    stop_endpoint = get_endpoint("/api/discussion/stop", "POST")
+    response = run(stop_endpoint(app.state.orchestrator))
+    assert response["already_stopped"] is True
+
+
+def test_discussion_status_endpoint(api_app) -> None:
+    app, get_endpoint = api_app
+    status_endpoint = get_endpoint("/api/discussion/status", "GET")
+    response = run(status_endpoint(app.state.orchestrator))
+    assert "project_state" in response
+    assert "discussion_state" in response
+
+
+def test_send_prompt_injects_when_paused(api_app) -> None:
+    app, get_endpoint = api_app
+    orchestrator = app.state.orchestrator
+
+    class FakeManager:
+        def __init__(self) -> None:
+            self.injected: List[str] = []
+
+        def inject_message(self, role: str, content: str, *, metadata=None) -> None:  # noqa: ANN001
+            self.injected.append(f"{role}:{content}")
+
+    orchestrator.discussion_manager = FakeManager()
+    orchestrator.discussion_state = "PAUSED"
+
+    send_prompt = get_endpoint("/api/control/send-prompt", "POST")
+    payload = web_api.PromptRequest(prompt="Hello team", models=["claude"])
+    response = run(send_prompt(payload, orchestrator))
+
+    assert response["results"]["discussion"]["injected"] is True
+    assert orchestrator.discussion_manager.injected == ["human:Hello team"]  # type: ignore[attr-defined]

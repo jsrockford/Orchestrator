@@ -56,6 +56,13 @@ class DevelopmentTeamOrchestrator:
         self._api_server: Optional[uvicorn.Server] = None
         self._api_thread: Optional[threading.Thread] = None
         self.active_project_directory: Optional[str] = None
+        self.project_state: str = "IDLE"
+        self.discussion_state: str = "IDLE"
+        self.discussion_config: Optional[Dict[str, Any]] = None
+        self.discussion_thread: Optional[threading.Thread] = None
+        self.discussion_manager: Any | None = None
+        self.should_stop_discussion: bool = False
+        self.discussion_error: Optional[str] = None
 
         if controllers:
             for name, controller in controllers.items():
@@ -447,12 +454,42 @@ class DevelopmentTeamOrchestrator:
             participant_metadata=participant_metadata or None,
             include_history=include_history,
         )
-        conversation = manager.facilitate_discussion(topic, max_turns=max_turns)
+        self.discussion_manager = manager
+        try:
+            conversation = manager.facilitate_discussion(topic, max_turns=max_turns)
+        finally:
+            if self.discussion_manager is manager:
+                self.discussion_manager = None
         return {
             "conversation": conversation,
             "manager": manager,
             "context_manager": ctx_manager,
             "message_router": msg_router,
+        }
+
+    def get_discussion_status_snapshot(self) -> Dict[str, Any]:
+        """
+        Return a high-level snapshot of the current discussion status.
+
+        Used by the API layer to report progress to the web UI.
+        """
+        manager = self.discussion_manager
+        manager_snapshot = {}
+        if manager is not None:
+            snapshot_provider = getattr(manager, "get_status_snapshot", None)
+            if callable(snapshot_provider):
+                try:
+                    manager_snapshot = snapshot_provider()
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("Conversation manager snapshot failed", exc_info=True)
+
+        return {
+            "project_state": self.project_state,
+            "discussion_state": self.discussion_state,
+            "active_project_directory": self.active_project_directory,
+            "manager": manager_snapshot or None,
+            "config": self.discussion_config,
+            "error": self.discussion_error,
         }
 
     # ------------------------------------------------------------------ #

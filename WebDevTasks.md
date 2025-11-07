@@ -202,28 +202,246 @@ This document tracks the implementation of the web UI integration with the exist
 
 ---
 
-## Phase 3: Enhancements & Polish (Optional)
+## Phase 3: Orchestrated Discussion Integration
+
+**Goal**: Enable autonomous multi-model collaboration through the web UI by integrating the existing orchestrator discussion logic.
+
+### Backend Tasks
+
+- [ ] **Task 3.1**: Add discussion state management to orchestrator
+  - [ ] Add `project_state: str` attribute to `DevelopmentTeamOrchestrator` (values: "IDLE", "OPEN")
+  - [ ] Add `discussion_state: str` attribute (values: "IDLE", "RUNNING", "PAUSED")
+  - [ ] Add `discussion_config: Dict[str, Any]` for storing settings
+  - [ ] Add `discussion_thread: Optional[threading.Thread]` reference
+  - [ ] Add `should_stop_discussion: bool` flag for graceful shutdown
+  - [ ] Add `discussion_manager: Optional[ConversationManager]` reference
+  - [ ] Initialize all new attributes in `__init__()`
+  - [ ] **CRITICAL**: Modify existing `POST /api/control/start-sessions` endpoint to set `project_state = "OPEN"` after sessions start
+  - [ ] **CRITICAL**: Modify existing `POST /api/control/stop-sessions` endpoint to set `project_state = "IDLE"` after sessions stop
+  - [ ] This ensures discussion validation guards in Task 3.3 can properly check project state
+
+- [ ] **Task 3.2**: Create discussion configuration endpoint
+  - [ ] Add Pydantic model `DiscussionConfig` with fields:
+    - [ ] `max_turns: int` (default: 10)
+    - [ ] `starting_model: str` (e.g., "claude", "gemini", "codex", "qwen")
+    - [ ] `participants: List[str]` (list of model names to include)
+    - [ ] `discussion_topic: Optional[str]` (initial prompt)
+    - [ ] `include_history: bool` (default: True)
+    - [ ] `log_level: Optional[str]` (DEBUG, INFO, WARNING)
+  - [ ] Add `POST /api/discussion/configure` endpoint
+  - [ ] Validate starting_model is in participants list
+  - [ ] Store config in `orchestrator.discussion_config`
+  - [ ] Return success confirmation
+
+- [ ] **Task 3.3**: Implement discussion start endpoint
+  - [ ] Add `POST /api/discussion/start` endpoint
+  - [ ] Add validation guards:
+    - [ ] Check `project_state == "OPEN"` (return 400 if not)
+    - [ ] Check at least 2 active controllers exist (return 400 if not)
+    - [ ] Check `discussion_state != "RUNNING"` (return 409 if already running)
+    - [ ] Check discussion_config exists (return 400 if not configured)
+  - [ ] Create background thread that calls `orchestrator.start_discussion()`
+  - [ ] Pass config values to start_discussion: topic, participants, max_turns, include_history
+  - [ ] Set `discussion_state = "RUNNING"` before starting thread
+  - [ ] Store thread reference in `orchestrator.discussion_thread`
+  - [ ] Return success with discussion metadata
+
+- [ ] **Task 3.4**: Implement discussion stop endpoint
+  - [ ] Add `POST /api/discussion/stop` endpoint
+  - [ ] Set `orchestrator.should_stop_discussion = True`
+  - [ ] Wait for thread join with timeout (e.g., 10 seconds)
+  - [ ] Set `discussion_state = "IDLE"` after thread completes
+  - [ ] Clean up thread reference
+  - [ ] Return success with final turn count
+
+- [ ] **Task 3.5**: Add discussion status endpoint
+  - [ ] Add `GET /api/discussion/status` endpoint
+  - [ ] Return dict with:
+    - [ ] `project_state: str`
+    - [ ] `discussion_state: str`
+    - [ ] `current_turn: int` (if discussion active)
+    - [ ] `active_speaker: str` (current model speaking)
+    - [ ] `total_turns: int` (turns completed)
+    - [ ] `config: Dict` (current discussion config)
+  - [ ] Handle case where discussion is not active
+
+- [ ] **Task 3.6**: Modify ConversationManager for graceful stop
+  - [ ] Modify `facilitate_discussion()` in `src/orchestrator/conversation_manager.py`
+  - [ ] Check `orchestrator.should_stop_discussion` at START of each turn iteration
+  - [ ] Break loop gracefully if flag is set
+  - [ ] Return partial conversation history if stopped early
+  - [ ] Log graceful stop event
+
+- [ ] **Task 3.7**: Add human interjection support to ConversationManager
+  - [ ] Add `inject_message(role: str, content: str)` method to ConversationManager
+  - [ ] Store injected messages in a queue
+  - [ ] Check queue at start of each turn
+  - [ ] Insert injected messages into conversation history
+  - [ ] Continue discussion with injected context
+
+- [ ] **Task 3.8**: Integrate pause/resume with discussion state
+  - [ ] Modify existing `POST /api/control/pause` endpoint
+  - [ ] If `discussion_state == "RUNNING"`, set to "PAUSED"
+  - [ ] Notify ConversationManager to hold before next turn
+  - [ ] Modify existing `POST /api/control/resume` endpoint
+  - [ ] If `discussion_state == "PAUSED"`, set to "RUNNING"
+  - [ ] Allow ConversationManager to continue
+
+- [ ] **Task 3.9**: Modify send-prompt endpoint for discussion injection
+  - [ ] Update `POST /api/control/send-prompt` endpoint
+  - [ ] Check if `discussion_state == "PAUSED"`
+  - [ ] If paused, call `discussion_manager.inject_message()` instead of individual model dispatch
+  - [ ] If not in discussion, use existing per-model dispatch logic
+  - [ ] Return appropriate success/error response
+
+- [ ] **Task 3.10**: Add discussion status to WebSocket streams
+  - [ ] Modify WebSocket endpoint `/ws/session/{model_name}`
+  - [ ] Add periodic discussion status messages (every 2-3 seconds when discussion active)
+  - [ ] Message format: `{"type": "discussion_status", "state": "RUNNING|PAUSED", "turn": N, "speaker": "model_name"}`
+  - [ ] Send to all connected WebSocket clients
+
+- [ ] **Task 3.11**: Add session loss detection
+  - [ ] In ConversationManager, check `controller.session_exists()` before dispatching
+  - [ ] If session lost, log error and set `discussion_state = "PAUSED"`
+  - [ ] Send error notification via WebSocket
+  - [ ] Allow user to kill lost model and resume with remaining participants
+
+### Frontend Tasks
+
+- [ ] **Task 3.12**: Rename existing project buttons
+  - [ ] Change "Start Project" button text to "Open Project"
+  - [ ] Change "Stop Project" button text to "Close Project"
+  - [ ] Update `projectState` terminology if needed (or keep as is)
+  - [ ] Test button functionality still works
+
+- [ ] **Task 3.13**: Add discussion settings to Settings modal
+  - [ ] Add to `frontend/src/components/SettingsModal.tsx`:
+    - [ ] Number input for `max_turns` (default: 10, min: 1, max: 100)
+    - [ ] Dropdown for `starting_model` (populated from active models)
+    - [ ] Textarea for `discussion_topic` (optional initial prompt)
+    - [ ] Checkbox for `include_history` (default: checked)
+    - [ ] Dropdown for `log_level` (DEBUG, INFO, WARNING, ERROR)
+  - [ ] Add state management for new settings
+  - [ ] Call `POST /api/discussion/configure` when settings saved
+  - [ ] Show success/error feedback
+
+- [ ] **Task 3.14**: Add Start/Stop Discussion buttons to UI
+  - [ ] Add to `frontend/src/App.tsx` header section (near Open/Close Project buttons)
+  - [ ] "Start Discussion" button (green, enabled only when project is open)
+  - [ ] "Stop Discussion" button (red, shown only when discussion is running)
+  - [ ] Disable other controls appropriately during discussion
+  - [ ] Add `discussionState` to React state
+
+- [ ] **Task 3.15**: Implement discussion control handlers
+  - [ ] Add `handleStartDiscussion()` function in App.tsx
+  - [ ] Check that project is open and at least 2 models active
+  - [ ] Call `POST /api/discussion/start`
+  - [ ] Handle errors (show toast/alert)
+  - [ ] Update `discussionState` on success
+  - [ ] Add `handleStopDiscussion()` function
+  - [ ] Call `POST /api/discussion/stop`
+  - [ ] Update `discussionState` on success
+
+- [ ] **Task 3.16**: Add discussion status polling
+  - [ ] Create `useEffect` hook to poll `GET /api/discussion/status` every 2 seconds
+  - [ ] Only poll when `projectState === 'running'`
+  - [ ] Update UI state with current turn, active speaker
+  - [ ] Display discussion metadata in UI (optional status bar)
+
+- [ ] **Task 3.17**: Handle WebSocket discussion status messages
+  - [ ] Modify WebSocket `onmessage` handler in ConversationWindow or App
+  - [ ] Detect `type: "discussion_status"` messages
+  - [ ] Update UI to show current speaker with visual highlight
+  - [ ] Update turn counter display
+  - [ ] Show pause state visually (yellow border? pause icon?)
+
+- [ ] **Task 3.18**: Add error handling and validation feedback
+  - [ ] Show error toast when start-discussion fails validation
+  - [ ] Display clear message: "Need at least 2 active models"
+  - [ ] Display clear message: "Project must be open first"
+  - [ ] Display clear message: "Discussion already running"
+  - [ ] Add loading states to buttons during API calls
+
+- [ ] **Task 3.19**: Visual indicators for discussion state
+  - [ ] Add status indicator to header (e.g., "Discussion: Running - Turn 5/10")
+  - [ ] Highlight active speaker's conversation window (colored border)
+  - [ ] Show pause icon when `discussion_state === "PAUSED"`
+  - [ ] Disable individual model send-prompt when discussion running
+  - [ ] Show explanatory tooltip: "Pause discussion to send individual prompts"
+
+### Testing Tasks
+
+- [ ] **Task 3.20**: Test discussion configuration
+  - [ ] Open settings modal, configure discussion settings
+  - [ ] Verify settings persist in backend
+  - [ ] Reload UI, verify settings are retained
+  - [ ] Test validation (invalid starting model, max_turns out of range)
+
+- [ ] **Task 3.21**: Test discussion start/stop flow
+  - [ ] Open project with 2+ models
+  - [ ] Configure discussion settings
+  - [ ] Click "Start Discussion" with initial topic
+  - [ ] Verify discussion begins, turn counter increments
+  - [ ] Click "Stop Discussion" mid-turn
+  - [ ] Verify graceful stop (current turn finishes)
+  - [ ] Check no errors in backend logs
+
+- [ ] **Task 3.22**: Test validation guards
+  - [ ] Try starting discussion without opening project (should fail)
+  - [ ] Try starting discussion with only 1 model active (should fail)
+  - [ ] Try starting discussion twice (should fail with 409)
+  - [ ] Verify error messages appear in UI
+
+- [ ] **Task 3.23**: Test pause/resume for human interjection
+  - [ ] Start discussion
+  - [ ] Click Esc to pause
+  - [ ] Verify discussion pauses (status shows PAUSED)
+  - [ ] Type prompt and send
+  - [ ] Verify prompt injected into discussion
+  - [ ] Click Rsm to resume
+  - [ ] Verify discussion continues with injected context
+
+- [ ] **Task 3.24**: Test session loss during discussion
+  - [ ] Start discussion with 3 models
+  - [ ] Manually kill one model's tmux session
+  - [ ] Verify discussion pauses automatically
+  - [ ] Verify error message shows which model lost
+  - [ ] Kill lost model via UI
+  - [ ] Resume discussion with remaining models
+
+- [ ] **Task 3.25**: Test full autonomous workflow
+  - [ ] Open project with all 4 models (Claude, Gemini, Codex, Qwen)
+  - [ ] Configure: max_turns=20, topic="Create a simple TODO app"
+  - [ ] Start discussion and let run autonomously
+  - [ ] Verify all models participate
+  - [ ] Verify output appears in respective windows
+  - [ ] Verify discussion completes or reaches max_turns
+  - [ ] Check conversation makes progress toward goal
+
+---
+
+## Phase 4: Enhancements & Polish (Optional)
 
 **Goal**: Improve reliability, performance, and user experience.
 
 ### Backend Enhancements
 
-- [ ] **Task 3.1**: Add REST endpoint for historical output
+- [ ] **Task 4.1**: Add REST endpoint for historical output
   - [ ] `GET /api/history/{model_name}?lines=1000` - Return last N lines of output
   - [ ] Use controller.capture_scrollback() to fetch data
   - [ ] Cache result to reduce tmux polling
 
-- [ ] **Task 3.2**: Implement persistent logging
+- [ ] **Task 4.2**: Implement persistent logging
   - [ ] Parallel log output to disk: `/var/log/orchestrator/{model_name}.log`
   - [ ] Add log rotation (size-based or time-based)
   - [ ] Serve logs via history endpoint as fallback
 
-- [ ] **Task 3.3**: Add authentication/authorization
+- [ ] **Task 4.3**: Add authentication/authorization
   - [ ] Add API key or session-based auth
   - [ ] Protect control endpoints from unauthorized access
   - [ ] Add rate limiting to prevent abuse
 
-- [ ] **Task 3.4**: Performance optimization
+- [ ] **Task 4.4**: Performance optimization
   - [ ] Benchmark capture_scrollback() performance with 4 concurrent sessions
   - [ ] Adjust polling interval based on activity level
   - [ ] Implement smart diffing (only poll when sessions are active)
@@ -231,22 +449,22 @@ This document tracks the implementation of the web UI integration with the exist
 
 ### Frontend Enhancements
 
-- [ ] **Task 3.5**: Add ANSI color/formatting support
+- [ ] **Task 4.5**: Add ANSI color/formatting support
   - [ ] Install ansi-to-html library or similar
   - [ ] Render colored output in conversation windows
   - [ ] Preserve formatting for code blocks and UI elements
 
-- [ ] **Task 3.6**: Add search/filter functionality
+- [ ] **Task 4.6**: Add search/filter functionality
   - [ ] Search within conversation history
   - [ ] Filter by message type or timestamp
   - [ ] Highlight search results
 
-- [ ] **Task 3.7**: Add conversation export
+- [ ] **Task 4.7**: Add conversation export
   - [ ] Export conversation to text file
   - [ ] Export to JSON with metadata
   - [ ] Copy to clipboard functionality
 
-- [ ] **Task 3.8**: Improve error handling and feedback
+- [ ] **Task 4.8**: Improve error handling and feedback
   - [ ] Toast notifications for errors
   - [ ] Reconnection status indicator
   - [ ] Session health status in UI

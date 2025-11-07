@@ -5,6 +5,7 @@ import PromptInput from './components/PromptInput';
 import SessionModelSelector from './components/SessionModelSelector';
 import EditInstructionsModal from './components/EditInstructionsModal';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
+import { DiscussionSettings, DiscussionState } from './types';
 
 const DEFAULT_API_BASE = 'http://localhost:8000';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE).replace(/\/$/, '');
@@ -37,6 +38,21 @@ function App() {
     () => Object.fromEntries(allConversations.map(c => [c.title, null]))
   );
   const [projectActionPending, setProjectActionPending] = useState(false);
+  const [discussionSettings, setDiscussionSettings] = useState<DiscussionSettings>({
+    maxTurns: 10,
+    startingModel: 'Claude',
+    discussionTopic: '',
+    includeHistory: true,
+    logLevel: 'INFO',
+  });
+  const [discussionState, setDiscussionState] = useState<DiscussionState>('idle');
+  const [discussionStatus, setDiscussionStatus] = useState<{ turn: number | null; speaker: string | null; topic: string | null }>({
+    turn: null,
+    speaker: null,
+    topic: null,
+  });
+  const [discussionActionPending, setDiscussionActionPending] = useState(false);
+  const [discussionError, setDiscussionError] = useState<string | null>(null);
 
   const socketsRef = useRef<Record<string, WebSocket>>({});
   const closingSocketsRef = useRef<Set<string>>(new Set());
@@ -50,6 +66,14 @@ function App() {
   useEffect(() => {
     activeModelsRef.current = activeModels;
   }, [activeModels]);
+
+  useEffect(() => {
+    if (projectState === 'idle') {
+      setDiscussionState('idle');
+      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      setDiscussionError(null);
+    }
+  }, [projectState]);
 
   const clampOutput = useCallback((text: string) => {
     if (text.length <= MAX_OUTPUT_CHARS) {
@@ -208,6 +232,46 @@ function App() {
     setSelectedCoders(activeIds);
   }, [activeModels, allConversations]);
 
+  useEffect(() => {
+    if (projectState === 'idle') {
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/discussion/status`);
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json();
+        if (cancelled || !data) {
+          return;
+        }
+        const normalizedState = String(data.discussion_state ?? 'idle').toLowerCase() as DiscussionState;
+        setDiscussionState(normalizedState);
+        setDiscussionStatus({
+          turn: data.manager?.turn_counter ?? null,
+          speaker: data.manager?.current_agent ?? null,
+          topic: data.config?.discussion_topic ?? null,
+        });
+        setDiscussionError(data.error ?? null);
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('Failed to fetch discussion status:', error);
+        }
+      }
+    };
+
+    fetchStatus();
+    const intervalId = window.setInterval(fetchStatus, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [projectState]);
+
   const handleSendPrompt = async (prompt: string, coderIds: number[]) => {
     const modelNames = coderIds
       .map(id => allConversations.find(c => c.id === id)?.title)
@@ -276,6 +340,44 @@ function App() {
     return response.json().catch(() => ({}));
   };
 
+  const configureDiscussion = async (override?: DiscussionSettings) => {
+    if (activeModels.length < 2) {
+      throw new Error('Select at least two models before configuring a discussion');
+    }
+
+    const settings = override ?? discussionSettings;
+    let startingModel = settings.startingModel;
+    if (!activeModels.includes(startingModel)) {
+      startingModel = activeModels[0];
+    }
+
+    const topicText = (settings.discussionTopic ?? '').trim();
+    const payload = {
+      max_turns: settings.maxTurns,
+      starting_model: startingModel.trim().toLowerCase(),
+      participants: activeModels.map(model => model.trim().toLowerCase()),
+      discussion_topic: topicText || null,
+      include_history: settings.includeHistory,
+      log_level: settings.logLevel ? settings.logLevel.toUpperCase() : null,
+    };
+
+    await postControl('/api/discussion/configure', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  };
+
+  const handleSaveSettings = async (directory: string, settings: DiscussionSettings) => {
+    setProjectDirectory(directory);
+    setDiscussionSettings(settings);
+    try {
+      await configureDiscussion(settings);
+    } catch (error) {
+      console.error('Failed to save discussion settings:', error);
+      throw error;
+    }
+  };
+
   const postKey = (modelSlug: string, key: string) => {
     const encodedKey = encodeURIComponent(key);
     return postControl(`/api/control/${modelSlug}/key/${encodedKey}`);
@@ -289,11 +391,17 @@ function App() {
           await postKey(modelSlug, 'Escape');
           await postControl('/api/control/pause');
           setProjectState('paused');
+          if (discussionState === 'running') {
+            setDiscussionState('paused');
+          }
           break;
         }
         case 'resume': {
           await postControl('/api/control/resume');
           setProjectState('running');
+          if (discussionState === 'paused') {
+            setDiscussionState('running');
+          }
           break;
         }
         case 'up': {
@@ -407,6 +515,9 @@ function App() {
       });
 
       setProjectState('running');
+      setDiscussionState('idle');
+      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      setDiscussionError(null);
     } catch (error) {
       console.error('Failed to start project:', error);
     } finally {
@@ -421,6 +532,16 @@ function App() {
 
     setProjectActionPending(true);
     try {
+      if (discussionState !== 'idle') {
+        try {
+          await postControl('/api/discussion/stop');
+        } catch (error) {
+          console.error('Failed to stop discussion before closing project:', error);
+        }
+        setDiscussionState('idle');
+        setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      }
+
       const payload = {
         models: activeModels.map(model => model.trim().toLowerCase()),
       };
@@ -433,7 +554,46 @@ function App() {
     } finally {
       closeAllSockets('idle');
       setProjectState('idle');
+      setDiscussionError(null);
       setProjectActionPending(false);
+    }
+  };
+
+  const handleStartDiscussion = async () => {
+    if (projectState !== 'running') {
+      alert('Open the project before starting a discussion.');
+      return;
+    }
+    if (activeModels.length < 2) {
+      alert('Select at least two models to start a discussion.');
+      return;
+    }
+    setDiscussionActionPending(true);
+    try {
+      await configureDiscussion();
+      await postControl('/api/discussion/start');
+      setDiscussionState('running');
+      setDiscussionError(null);
+    } catch (error) {
+      console.error('Failed to start discussion:', error);
+      alert(`Failed to start discussion: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setDiscussionActionPending(false);
+    }
+  };
+
+  const handleStopDiscussion = async () => {
+    setDiscussionActionPending(true);
+    try {
+      await postControl('/api/discussion/stop');
+    } catch (error) {
+      console.error('Failed to stop discussion:', error);
+      alert(`Failed to stop discussion: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setDiscussionState('idle');
+      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      setDiscussionError(null);
+      setDiscussionActionPending(false);
     }
   };
 
@@ -459,47 +619,88 @@ function App() {
     return 'ready';
   };
 
+  const discussionSummary = (() => {
+    if (discussionState === 'idle') {
+      return 'Discussion idle';
+    }
+
+    const parts: string[] = [
+      discussionState === 'running' ? 'Discussion running' : 'Discussion paused',
+    ];
+    if (discussionStatus.turn !== null) {
+      parts.push(`Turn ${discussionStatus.turn}`);
+    }
+    if (discussionStatus.speaker) {
+      parts.push(`Speaker: ${discussionStatus.speaker}`);
+    }
+    if (discussionStatus.topic) {
+      parts.push(`Topic: ${discussionStatus.topic}`);
+    }
+    return parts.join(' • ');
+  })();
+
   return (
     <div className="min-h-screen bg-[#1e1e1e] text-gray-100 flex flex-col">
       <header className="py-8 text-center border-b border-gray-700">
         <h1 className="text-5xl font-bold text-white tracking-tight">
           Orchestrator
         </h1>
-        <div className="flex justify-center items-center gap-8 mt-4">
-          <div className={`${projectState === 'running' ? 'opacity-50 pointer-events-none' : ''}`}>
-            <SessionModelSelector
-              allModels={allConversations.map(c => c.title)}
-              activeModels={activeModels}
-              onActiveModelsChange={setActiveModels}
-            />
+        <div className="mt-4 flex flex-col items-center gap-4">
+          <div className="flex flex-wrap justify-center items-center gap-4">
+            <div className={`${projectState === 'running' ? 'opacity-50 pointer-events-none' : ''}`}>
+              <SessionModelSelector
+                allModels={allConversations.map(c => c.title)}
+                activeModels={activeModels}
+                onActiveModelsChange={setActiveModels}
+              />
+            </div>
+            {projectState === 'idle' ? (
+              <button
+                onClick={handleStartProject}
+                disabled={activeModels.length === 0 || projectActionPending}
+                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {projectActionPending ? 'Opening...' : 'Open Project'}
+              </button>
+            ) : (
+              <button
+                onClick={handleStopProject}
+                disabled={projectActionPending}
+                className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {projectActionPending ? 'Closing...' : 'Close Project'}
+              </button>
+            )}
+            {discussionState === 'idle' ? (
+              <button
+                onClick={handleStartDiscussion}
+                disabled={projectState !== 'running' || activeModels.length < 2 || discussionActionPending}
+                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {discussionActionPending ? 'Starting...' : 'Start Discussion'}
+              </button>
+            ) : (
+              <button
+                onClick={handleStopDiscussion}
+                disabled={discussionActionPending}
+                className="px-6 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {discussionActionPending ? 'Stopping...' : 'Stop Discussion'}
+              </button>
+            )}
+            <button 
+              onClick={() => setIsSettingsModalOpen(true)} 
+              className={`text-gray-400 hover:text-white ${projectState === 'running' ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={projectState === 'running'}
+            >
+              <Settings size={24} />
+            </button>
           </div>
-          {projectState === 'idle' ? (
-            <button
-              onClick={handleStartProject}
-              disabled={activeModels.length === 0 || projectActionPending}
-              className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {projectActionPending ? 'Starting...' : 'Start Project'}
-            </button>
-          ) : (
-            <button
-              onClick={handleStopProject}
-              disabled={projectActionPending}
-              className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {projectActionPending ? 'Stopping...' : 'Stop Project'}
-            </button>
-          )}
-          <button 
-            onClick={() => setIsSettingsModalOpen(true)} 
-            className={`text-gray-400 hover:text-white ${projectState === 'running' ? 'opacity-50 cursor-not-allowed' : ''}`}
-            disabled={projectState === 'running'}
-          >
-            <Settings size={24} />
-          </button>
-        </div>
-        <div className={`text-center mt-2 text-sm text-gray-500 ${projectState === 'running' ? 'opacity-50' : ''}`}>
-          Project Directory: {projectDirectory}
+          <div className="text-sm text-gray-400 space-y-1">
+            <div>Project Directory: {projectDirectory}</div>
+            <div>{discussionSummary}</div>
+            {discussionError && <div className="text-red-400">Discussion error: {discussionError}</div>}
+          </div>
         </div>
       </header>
 
@@ -528,7 +729,7 @@ function App() {
           selectedCoders={selectedCoders}
           onSelectedCodersChange={setSelectedCoders}
           onSendPrompt={handleSendPrompt}
-          disabled={projectState === 'idle'}
+          disabled={projectState === 'idle' || discussionState === 'running'}
         />
       )}
 
@@ -543,7 +744,9 @@ function App() {
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
         projectDirectory={projectDirectory}
-        onProjectDirectoryChange={setProjectDirectory}
+        discussionSettings={discussionSettings}
+        availableModels={allConversations.map(c => c.title)}
+        onSave={handleSaveSettings}
       />
     </div>
   );

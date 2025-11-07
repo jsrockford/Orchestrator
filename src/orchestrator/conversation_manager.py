@@ -216,6 +216,7 @@ class ConversationManager:
 
         self.human_control_mode: bool = False
         self._current_agent: Optional[str] = None
+        self._injected_messages: Deque[Dict[str, Any]] = deque()
 
         if self.context_manager is not None:
             registrar = getattr(self.context_manager, "register_participant", None)
@@ -255,6 +256,11 @@ class ConversationManager:
 
         conversation: List[Dict[str, Any]] = []
         for _ in range(max_turns):
+            if getattr(self.orchestrator, "should_stop_discussion", False):
+                self.logger.info("Stop requested; ending discussion on '%s'", topic)
+                break
+
+            self._flush_injected_messages(conversation, topic)
             self._refresh_status_snapshot()
             self._check_control_commands()
             while self.human_control_mode:
@@ -513,6 +519,46 @@ class ConversationManager:
                 self._refresh_status_snapshot()
 
         return conversation
+
+    def inject_message(
+        self,
+        role: str,
+        content: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Queue a human (or system) message to be inserted into the conversation.
+
+        The queue is processed at the start of each turn so injections are
+        preserved in the transcript before the next participant speaks.
+        """
+        normalized_role = role.strip() if role else "human"
+        payload = {
+            "role": normalized_role,
+            "content": content or "",
+            "metadata": metadata.copy() if isinstance(metadata, dict) else {},
+        }
+        self._injected_messages.append(payload)
+        self.logger.info(
+            "Queued injected message from '%s' (len=%d, pending=%d)",
+            normalized_role,
+            len(payload["content"]),
+            len(self._injected_messages),
+        )
+
+    def get_status_snapshot(self) -> Dict[str, Any]:
+        """Return a lightweight snapshot describing the current discussion."""
+        return {
+            "turn_counter": self._turn_counter,
+            "current_agent": self._current_agent,
+            "participants": list(self.participants),
+            "human_control_mode": self.human_control_mode,
+            "pending_injections": len(self._injected_messages),
+            "max_turns": self._active_max_turns,
+            "last_activity_at": self._last_activity_at,
+            "run_started_at": self._run_started_at,
+        }
 
     def determine_next_speaker(self, context: Sequence[Dict[str, Any]]) -> Optional[str]:
         """
@@ -2187,6 +2233,35 @@ class ConversationManager:
             structured["dispatch"] = dispatch
 
         self.history.append(structured)
+
+    def _flush_injected_messages(
+        self,
+        conversation: List[Dict[str, Any]],
+        topic: str,
+    ) -> None:
+        """Drain queued injected messages into the conversation history."""
+        while self._injected_messages:
+            payload = self._injected_messages.popleft()
+            metadata = payload.get("metadata") or {}
+            metadata = metadata.copy()
+            metadata["injected"] = True
+
+            turn_record = {
+                "turn": self._turn_counter,
+                "speaker": payload.get("role") or "human",
+                "topic": topic,
+                "prompt": payload.get("content") or "",
+                "dispatch": {"injected": True},
+                "response": None,
+                "metadata": metadata,
+            }
+
+            conversation.append(turn_record)
+            self._turn_counter += 1
+            self._store_turn(turn_record)
+            self._record_turn_activity(turn_record["speaker"], turn_record)
+            self._record_with_context_manager(turn_record)
+            self._route_message(turn_record, topic, dispatched=True)
 
     @staticmethod
     def _select_retry_delay(sequence: Any, ordinal: int) -> float:

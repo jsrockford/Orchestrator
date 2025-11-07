@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, Type, cast
@@ -58,6 +60,16 @@ class PromptRequest(BaseModel):
     submit: bool = True
 
 
+class DiscussionConfig(BaseModel):
+    """Configuration payload for orchestrated discussions."""
+    max_turns: int = 10
+    starting_model: Optional[str] = None
+    participants: Optional[Sequence[str]] = None
+    discussion_topic: Optional[str] = None
+    include_history: bool = True
+    log_level: Optional[str] = None
+
+
 # Mapping of model names to their instruction files
 INSTRUCTION_FILES = {
     "Claude": "CLAUDE.md",
@@ -99,6 +111,7 @@ def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
         return {"status": "ok"}
 
     register_control_routes(app)
+    register_discussion_routes(app)
     register_instruction_routes(app)
     register_filesystem_routes(app)
     register_stream_routes(app)
@@ -387,6 +400,38 @@ def register_control_routes(app: FastAPI) -> None:
 
         Returns a dict with per-model results indicating success/failure.
         """
+        manager = getattr(orchestrator, "discussion_manager", None)
+        discussion_state = getattr(orchestrator, "discussion_state", "IDLE")
+        if manager is not None and discussion_state in {"RUNNING", "PAUSED"}:
+            if discussion_state != "PAUSED":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Pause the discussion before sending manual prompts",
+                )
+
+            try:
+                manager.inject_message(
+                    "human",
+                    request.prompt,
+                    metadata={"targets": list(request.models or [])},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to inject discussion prompt: %s", exc)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to inject prompt: {exc}",
+                ) from exc
+
+            return {
+                "results": {
+                    "discussion": {
+                        "success": True,
+                        "injected": True,
+                        "targets": list(request.models or []),
+                    }
+                }
+            }
+
         results = {}
 
         for model_name in request.models:
@@ -514,6 +559,9 @@ def register_control_routes(app: FastAPI) -> None:
 
         if started or already_running:
             orchestrator.active_project_directory = str(project_dir)
+            orchestrator.project_state = "OPEN"
+        else:
+            orchestrator.project_state = "IDLE"
 
         return {
             "success": not failed,
@@ -561,6 +609,9 @@ def register_control_routes(app: FastAPI) -> None:
 
         if not orchestrator.controllers:
             orchestrator.active_project_directory = None
+            orchestrator.project_state = "IDLE"
+            orchestrator.should_stop_discussion = True
+            orchestrator.discussion_state = "IDLE"
 
         return {
             "success": not failed,
@@ -568,6 +619,185 @@ def register_control_routes(app: FastAPI) -> None:
             "already_stopped": already_stopped,
             "failed": failed,
         }
+
+
+def register_discussion_routes(app: FastAPI) -> None:
+    """Attach discussion orchestration endpoints to the provided FastAPI app."""
+
+    def _normalize_participants(
+        orchestrator: "DevelopmentTeamOrchestrator",
+        requested: Optional[Sequence[str]],
+    ) -> List[str]:
+        if requested:
+            return normalize_model_names(requested)
+        available = list(orchestrator.controllers.keys())
+        if not available:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active controllers available for discussion",
+            )
+        return available
+
+    def _order_participants(participants: List[str], starting_model: str) -> List[str]:
+        if starting_model not in participants:
+            return participants
+        idx = participants.index(starting_model)
+        return participants[idx:] + participants[:idx]
+
+    @app.post("/api/discussion/configure", tags=["discussion"])
+    async def configure_discussion(
+        config: DiscussionConfig,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        participants = _normalize_participants(orchestrator, config.participants)
+        if len(participants) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least two participants are required for a discussion",
+            )
+
+        starting_model = (
+            config.starting_model.strip().lower()
+            if isinstance(config.starting_model, str) and config.starting_model.strip()
+            else participants[0]
+        )
+        if starting_model not in participants:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"starting_model '{config.starting_model}' is not part of the participant list",
+            )
+
+        ordered_participants = _order_participants(participants, starting_model)
+        try:
+            max_turns = max(1, int(config.max_turns))
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="max_turns must be an integer >= 1",
+            ) from None
+
+        normalized_config = {
+            "max_turns": max_turns,
+            "starting_model": starting_model,
+            "participants": ordered_participants,
+            "discussion_topic": (config.discussion_topic or "").strip() or None,
+            "include_history": bool(config.include_history),
+            "log_level": (config.log_level or "").upper() or None,
+        }
+
+        orchestrator.discussion_config = normalized_config
+        return {"status": "configured", "config": normalized_config}
+
+    @app.post("/api/discussion/start", tags=["discussion"])
+    async def start_discussion(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        if orchestrator.project_state != "OPEN":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Open a project before starting a discussion",
+            )
+
+        if len(orchestrator.controllers) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least two active controllers are required",
+            )
+
+        if orchestrator.discussion_state == "RUNNING":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Discussion already running",
+            )
+
+        if orchestrator.discussion_thread and orchestrator.discussion_thread.is_alive():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Discussion thread already active",
+            )
+
+        config = orchestrator.discussion_config
+        if not config:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Configure the discussion before starting",
+            )
+
+        participants = list(config.get("participants") or [])
+        if len(participants) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Discussion configuration must include at least two participants",
+            )
+
+        missing = [name for name in participants if name not in orchestrator.controllers]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Participants not running: {', '.join(missing)}",
+            )
+
+        topic = config.get("discussion_topic") or "General discussion"
+        max_turns = int(config.get("max_turns") or 10)
+        include_history = bool(config.get("include_history", True))
+
+        orchestrator.should_stop_discussion = False
+        orchestrator.discussion_state = "RUNNING"
+        orchestrator.discussion_error = None
+
+        def _discussion_worker() -> None:
+            try:
+                orchestrator.start_discussion(
+                    topic,
+                    participants=participants,
+                    max_turns=max_turns,
+                    include_history=include_history,
+                )
+            except Exception as exc:  # noqa: BLE001
+                orchestrator.discussion_error = str(exc)
+                logger.exception("Discussion failed: %s", exc)
+            finally:
+                orchestrator.should_stop_discussion = False
+                orchestrator.discussion_state = "IDLE"
+                orchestrator.discussion_thread = None
+
+        thread = threading.Thread(target=_discussion_worker, name="orchestrated-discussion", daemon=True)
+        orchestrator.discussion_thread = thread
+        thread.start()
+
+        return {
+            "status": "started",
+            "topic": topic,
+            "max_turns": max_turns,
+            "participants": participants,
+        }
+
+    @app.post("/api/discussion/stop", tags=["discussion"])
+    async def stop_discussion(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        thread = orchestrator.discussion_thread
+        if thread is None or not thread.is_alive():
+            orchestrator.should_stop_discussion = False
+            orchestrator.discussion_state = "IDLE"
+            return {"status": "stopped", "already_stopped": True}
+
+        orchestrator.should_stop_discussion = True
+        thread.join(timeout=10.0)
+        if thread.is_alive():
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Discussion did not stop within 10 seconds",
+            )
+
+        orchestrator.discussion_thread = None
+        orchestrator.discussion_state = "IDLE"
+        orchestrator.should_stop_discussion = False
+        return {"status": "stopped", "already_stopped": False}
+
+    @app.get("/api/discussion/status", tags=["discussion"])
+    async def discussion_status(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        snapshot = orchestrator.get_discussion_status_snapshot()
+        thread = orchestrator.discussion_thread
+        snapshot["thread_alive"] = bool(thread and thread.is_alive())
+        snapshot["config"] = orchestrator.discussion_config
+        return snapshot
 
 
 def register_instruction_routes(app: FastAPI) -> None:
@@ -787,6 +1017,8 @@ async def stream_controller_output(
 
     capture_callable = cast(Callable[[], str], capture)
     previous = ""
+    last_status_payload: Optional[Dict[str, Any]] = None
+    last_status_sent_at = 0.0
 
     try:
         initial_snapshot = await asyncio.to_thread(capture_callable)
@@ -845,6 +1077,28 @@ async def stream_controller_output(
                 previous = snapshot
             else:
                 logger.debug("No diff for '%s' (previous=%d chars, current=%d chars)", model_name, len(previous), len(snapshot))
+
+            if orchestrator is not None:
+                now = time.time()
+                if now - last_status_sent_at >= 2.0:
+                    status_snapshot = orchestrator.get_discussion_status_snapshot()
+                    manager_snapshot = status_snapshot.get("manager") or {}
+                    status_payload = {
+                        "type": "discussion_status",
+                        "project_state": status_snapshot.get("project_state"),
+                        "state": status_snapshot.get("discussion_state"),
+                        "turn": manager_snapshot.get("turn_counter"),
+                        "speaker": manager_snapshot.get("current_agent"),
+                        "pending_injections": manager_snapshot.get("pending_injections"),
+                        "error": status_snapshot.get("error"),
+                    }
+                    config = status_snapshot.get("config")
+                    if config:
+                        status_payload["config"] = config
+                    if status_payload != last_status_payload:
+                        await websocket.send_json(status_payload)
+                        last_status_payload = status_payload
+                    last_status_sent_at = now
 
             await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
     except WebSocketDisconnect:
