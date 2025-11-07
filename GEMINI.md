@@ -29,6 +29,8 @@ The success of this POC will be determined by the ability to reliably send comma
     *   2.  **Concatenate:** Add your new content to the existing content in memory.
     *   3.  **Write:** Use `write_file` to save the *entire combined content* back to the file.
 
+    NEVER insert a comment in 'MessageBoard.md' ALWAYS append!
+
 ## Building and Running
 
 ## Development Conventions

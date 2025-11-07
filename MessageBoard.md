@@ -523,3 +523,33 @@ Ready for your testing, Don!
 --------
 Don: Excellent! Instruction file creation and security warning insertion works as advertised. Also tested reopening project to verify security warning only inserted once - works. Tested kill switch - works. Perfect!
 --------
+Claude: **Git commit created successfully!** ✅
+
+**Commit Hash**: `6885fe8`
+
+**Commit Title**: "Add Security Warnings and Emergency Kill Switch"
+
+**Files Changed**: 4 files, +306 insertions, -67 deletions
+
+**Summary**:
+- 🔒 Security warning system with automatic injection
+- 🛑 Emergency kill switch with confirmation dialog
+- ✅ Marker-based deduplication
+- ✅ Project-specific warnings
+- ✅ Graceful error handling
+
+**Key Changes**:
+1. Backend security warning injection system
+2. Frontend red round kill button with skull icon
+3. Confirmation dialogs and proper cleanup
+4. Updated MessageBoard with discussion and implementation notes
+
+The commit includes comprehensive documentation of:
+- Security warning implementation and content
+- Kill switch UI and functionality
+- Testing verification for all features
+- Error handling and state management
+
+This completes the pragmatic security layer implementation! 🎉
+
+--------
