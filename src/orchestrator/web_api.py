@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, Type, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from ..controllers import ClaudeController, CodexController, GeminiController, QwenController
+from ..controllers.session_backend import SessionBackendError, SessionNotFoundError
+from ..utils.exceptions import SessionAlreadyExists
 from ..utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -37,12 +40,37 @@ class NewFolder(BaseModel):
     folderName: str
 
 
+class StartSessionsRequest(BaseModel):
+    """Payload describing which sessions to start and where."""
+    project_directory: str
+    models: Optional[Sequence[str]] = None
+
+
+class StopSessionsRequest(BaseModel):
+    """Payload describing which sessions to stop."""
+    models: Optional[Sequence[str]] = None
+
+
+class PromptRequest(BaseModel):
+    """Request body for sending prompts to AI models."""
+    prompt: str
+    models: list[str]
+    submit: bool = True
+
+
 # Mapping of model names to their instruction files
 INSTRUCTION_FILES = {
     "Claude": "CLAUDE.md",
     "Codex": "AGENTS.md",
     "Gemini": "GEMINI.md",
     "Qwen": "QWEN.md",
+}
+
+CONTROLLER_FACTORIES: Dict[str, Type[Any]] = {
+    "claude": ClaudeController,
+    "codex": CodexController,
+    "gemini": GeminiController,
+    "qwen": QwenController,
 }
 
 
@@ -118,6 +146,103 @@ def normalize_key_name(key_name: str) -> str:
     )
 
 
+def normalize_model_names(models: Sequence[str]) -> List[str]:
+    """Normalize and validate requested model identifiers."""
+    if not models:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one model must be specified",
+        )
+
+    normalized: List[str] = []
+    seen = set()
+    for raw in models:
+        if raw is None:
+            candidate = ""
+        else:
+            candidate = str(raw).strip().lower()
+
+        if not candidate:
+            continue
+
+        if candidate not in CONTROLLER_FACTORIES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown model '{raw}'. Supported models: {', '.join(sorted(CONTROLLER_FACTORIES))}",
+            )
+
+        if candidate not in seen:
+            normalized.append(candidate)
+            seen.add(candidate)
+
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid models were provided",
+        )
+
+    return normalized
+
+
+def resolve_project_directory(path_str: str) -> Path:
+    """Resolve and validate the requested project directory."""
+    if not path_str:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="project_directory is required",
+        )
+
+    try:
+        path = Path(path_str).expanduser().resolve()
+    except OSError as exc:  # pragma: no cover - filesystem-dependent
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid project directory: {exc}",
+        ) from exc
+
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Project directory '{path}' does not exist",
+        )
+    if not path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Project directory '{path}' is not a directory",
+        )
+
+    return path
+
+
+def controller_session_active(controller: Any) -> bool:
+    """Return True if the controller reports an active session."""
+    exists_fn = getattr(controller, "session_exists", None)
+    if not callable(exists_fn):
+        return False
+    try:
+        return bool(exists_fn())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def kill_controller_session(controller: Any) -> None:
+    """Invoke the most appropriate kill method on the controller."""
+    kill_fn = getattr(controller, "kill_session", None)
+    if callable(kill_fn):
+        kill_fn()
+        return
+
+    legacy_kill = getattr(controller, "kill", None)
+    if callable(legacy_kill):
+        legacy_kill()
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Controller does not support kill_session()",
+    )
+
+
 def register_control_routes(app: FastAPI) -> None:
     """Attach control endpoints to the provided FastAPI app."""
 
@@ -181,6 +306,51 @@ def register_control_routes(app: FastAPI) -> None:
 
         return {"status": "sent", "model": model_name, "key": normalized}
 
+    @app.post("/api/control/send-prompt", tags=["control"])
+    async def send_prompt(
+        request: PromptRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        """
+        Send a prompt to one or more AI models.
+
+        Returns a dict with per-model results indicating success/failure.
+        """
+        results = {}
+
+        for model_name in request.models:
+            model_lower = model_name.lower()
+
+            # Check if model is registered
+            if model_lower not in orchestrator.controllers:
+                results[model_name] = {
+                    "success": False,
+                    "error": "Model not running or not registered"
+                }
+                continue
+
+            # Try to dispatch the command
+            try:
+                dispatch_result = orchestrator.dispatch_command(
+                    model_lower,
+                    request.prompt,
+                    submit=request.submit
+                )
+                results[model_name] = {
+                    "success": True,
+                    "dispatched": dispatch_result.get("dispatched", False),
+                    "queued": dispatch_result.get("queued", False),
+                    "reason": dispatch_result.get("reason"),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to send prompt to %s: %s", model_name, exc)
+                results[model_name] = {
+                    "success": False,
+                    "error": str(exc)
+                }
+
+        return {"results": results}
+
     @app.get("/api/control/status", tags=["control"])
     async def control_status(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
         controller_statuses = {
@@ -199,6 +369,130 @@ def register_control_routes(app: FastAPI) -> None:
                 "host": orchestrator.api_host,
                 "port": orchestrator.api_port,
             },
+        }
+
+    @app.post("/api/control/start-sessions", tags=["control"])
+    async def start_sessions(
+        payload: StartSessionsRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        project_dir = resolve_project_directory(payload.project_directory)
+        requested = normalize_model_names(
+            list(payload.models) if payload.models is not None else list(CONTROLLER_FACTORIES.keys())
+        )
+
+        started: List[str] = []
+        already_running: List[str] = []
+        failed: List[Dict[str, str]] = []
+
+        for model_name in requested:
+            existing = orchestrator.controllers.get(model_name)
+            if existing and controller_session_active(existing):
+                already_running.append(model_name)
+                continue
+            if existing:
+                orchestrator.unregister_controller(model_name)
+
+            factory = CONTROLLER_FACTORIES.get(model_name)
+            if factory is None:  # pragma: no cover - normalized inputs guard this
+                failed.append({"model": model_name, "error": "Model not supported"})
+                continue
+
+            try:
+                controller = factory(working_dir=str(project_dir))
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to initialize controller '%s': %s", model_name, exc)
+                failed.append({"model": model_name, "error": str(exc)})
+                continue
+
+            orchestrator.register_controller(
+                model_name,
+                controller,
+                metadata={"working_dir": str(project_dir)},
+            )
+
+            start_fn = getattr(controller, "start_session", None)
+            wait_fn = getattr(controller, "wait_for_ready", None)
+            if not callable(start_fn):
+                orchestrator.unregister_controller(model_name)
+                failed.append({"model": model_name, "error": "Controller does not support start_session()"})
+                continue
+
+            try:
+                start_fn()
+                if callable(wait_fn):
+                    wait_fn()
+                started.append(model_name)
+            except SessionAlreadyExists as exc:
+                logger.info("Session for '%s' already running: %s", model_name, exc)
+                already_running.append(model_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to start session for '%s': %s", model_name, exc)
+                failure_entry = {"model": model_name, "error": str(exc)}
+                failed.append(failure_entry)
+                try:
+                    kill_controller_session(controller)
+                except HTTPException as kill_exc:
+                    failure_entry["error"] = f"{failure_entry['error']} (cleanup_failed: {kill_exc.detail})"
+                except Exception as kill_exc:  # noqa: BLE001
+                    logger.warning("Cleanup failed for '%s': %s", model_name, kill_exc)
+                orchestrator.unregister_controller(model_name)
+
+        if started or already_running:
+            orchestrator.active_project_directory = str(project_dir)
+
+        return {
+            "success": not failed,
+            "started": started,
+            "already_running": already_running,
+            "failed": failed,
+            "project_directory": str(project_dir),
+        }
+
+    @app.post("/api/control/stop-sessions", tags=["control"])
+    async def stop_sessions(
+        payload: StopSessionsRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        if payload.models:
+            requested = normalize_model_names(list(payload.models))
+        else:
+            requested = list(orchestrator.controllers.keys())
+
+        stopped: List[str] = []
+        already_stopped: List[str] = []
+        failed: List[Dict[str, str]] = []
+
+        for model_name in requested:
+            controller = orchestrator.controllers.get(model_name)
+            if controller is None:
+                already_stopped.append(model_name)
+                continue
+
+            try:
+                kill_controller_session(controller)
+                orchestrator.unregister_controller(model_name)
+                stopped.append(model_name)
+            except SessionNotFoundError:
+                orchestrator.unregister_controller(model_name)
+                already_stopped.append(model_name)
+            except SessionBackendError as exc:
+                logger.error("Backend error stopping '%s': %s", model_name, exc)
+                failed.append({"model": model_name, "error": str(exc)})
+            except HTTPException as exc:
+                failed.append({"model": model_name, "error": exc.detail})
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Unexpected error stopping '%s': %s", model_name, exc)
+                failed.append({"model": model_name, "error": str(exc)})
+
+        if not orchestrator.controllers:
+            orchestrator.active_project_directory = None
+
+        return {
+            "success": not failed,
+            "stopped": stopped,
+            "already_stopped": already_stopped,
+            "failed": failed,
         }
 
 

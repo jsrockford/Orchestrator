@@ -81,16 +81,27 @@ def build_controllers(model_names: Iterable[str]) -> Dict[str, object]:
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
 
-    models = args.models or list(CONTROLLER_FACTORIES.keys())
-    controllers = build_controllers(models)
-    orchestrator = DevelopmentTeamOrchestrator(controllers)
+    orchestrator = DevelopmentTeamOrchestrator()
 
     if args.start_sessions:
+        models = args.models or list(CONTROLLER_FACTORIES.keys())
+        controllers = build_controllers(models)
+        for name, controller in controllers.items():
+            orchestrator.register_controller(name, controller)
+
         for name, controller in controllers.items():
             start = getattr(controller, "start_session", None)
             if callable(start):
                 logger.info("Starting tmux session for %s", name)
                 start()
+        logger.info(
+            "Preloaded %s controller(s) via --start-sessions flag; UI Start Project not required.",
+            len(controllers),
+        )
+    else:
+        logger.info(
+            "API server starting with no preloaded controllers; use the web UI Start Project button to launch sessions."
+        )
 
     orchestrator.start_api_server(host=args.host, port=args.port)
     logger.info("API server listening on http://%s:%s", args.host, args.port)

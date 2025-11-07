@@ -11,6 +11,7 @@ interface PromptInputProps {
   selectedCoders: number[];
   onSelectedCodersChange: (coders: number[]) => void;
   onSendPrompt: (prompt: string, coderIds: number[]) => void;
+  disabled?: boolean;
 }
 
 function PromptInput({
@@ -18,6 +19,7 @@ function PromptInput({
   selectedCoders,
   onSelectedCodersChange,
   onSendPrompt,
+  disabled = false,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('');
 
@@ -48,7 +50,7 @@ function PromptInput({
     }
   };
 
-  const isSendDisabled = prompt.trim().length === 0;
+  const isSendDisabled = disabled || prompt.trim().length === 0;
   const sendButtonText = selectedCoders.length === 0 || selectedCoders.length === coders.length
     ? 'Send to All'
     : `Send to ${selectedCoders.length} Model${selectedCoders.length > 1 ? 's' : ''}`;
@@ -62,8 +64,9 @@ function PromptInput({
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Enter your prompt..."
-              className="w-full bg-[#1e1e1e] border border-[#3e4451] rounded-lg px-4 py-3 text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
+              placeholder={disabled ? "Start models to send prompts..." : "Enter your prompt..."}
+              disabled={disabled}
+              className="w-full bg-[#1e1e1e] border border-[#3e4451] rounded-lg px-4 py-3 text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               rows={3}
             />
           </div>

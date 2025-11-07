@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Dict, List
+from typing import Any, Awaitable, Dict, List, Optional
 
 import pytest
 from fastapi import HTTPException, WebSocketDisconnect, status
@@ -11,6 +11,8 @@ from fastapi import HTTPException, WebSocketDisconnect, status
 from src.orchestrator.orchestrator import DevelopmentTeamOrchestrator
 from src.orchestrator import web_api
 from src.orchestrator.web_api import create_app
+from src.controllers.session_backend import SessionNotFoundError
+from src.utils.exceptions import SessionAlreadyExists
 
 
 class DummyController:
@@ -59,6 +61,31 @@ class StreamingDummyController(DummyController):
         snapshot = self._snapshots[index]
         self._calls += 1
         return snapshot
+
+
+class StartableDummyController(DummyController):
+    """Controller stub that can start/stop sessions with working dir tracking."""
+
+    def __init__(self, name: str, working_dir: Optional[str] = None) -> None:
+        super().__init__(name)
+        self._session_active = False
+        self.working_dir = working_dir
+
+    def session_exists(self) -> bool:  # type: ignore[override]
+        return self._session_active
+
+    def start_session(self) -> None:
+        if self._session_active:
+            raise SessionAlreadyExists("session already running")
+        self._session_active = True
+
+    def wait_for_ready(self) -> bool:
+        return True
+
+    def kill_session(self) -> None:
+        if not self._session_active:
+            raise SessionNotFoundError("session missing")
+        self._session_active = False
 
 
 @pytest.fixture()
@@ -254,3 +281,53 @@ def test_websocket_streams_snapshot_and_append(monkeypatch: pytest.MonkeyPatch) 
     assert second["type"] == "append"
     assert second["model"] == "claude"
     assert second["content"] == "line2\n"
+
+
+def test_start_sessions_registers_controllers(api_app, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app, get_endpoint = api_app
+
+    def factory(*, working_dir: Optional[str] = None, **kwargs):  # noqa: ANN001
+        return StartableDummyController("claude", working_dir)
+
+    monkeypatch.setattr(web_api, "CONTROLLER_FACTORIES", {"claude": factory})
+
+    start_endpoint = get_endpoint("/api/control/start-sessions", "POST")
+    payload = web_api.StartSessionsRequest(
+        project_directory=str(tmp_path),
+        models=["claude"],
+    )
+
+    response = run(start_endpoint(payload, app.state.orchestrator))
+    assert response["success"] is True
+    assert response["started"] == ["claude"]
+    assert app.state.orchestrator.controllers["claude"].working_dir == str(tmp_path)
+
+
+def test_start_sessions_validates_directory(api_app, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    app, get_endpoint = api_app
+    monkeypatch.setattr(web_api, "CONTROLLER_FACTORIES", {"claude": lambda **_: StartableDummyController("claude")})
+
+    start_endpoint = get_endpoint("/api/control/start-sessions", "POST")
+    payload = web_api.StartSessionsRequest(
+        project_directory=str(tmp_path / "missing"),
+        models=["claude"],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        run(start_endpoint(payload, app.state.orchestrator))
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_stop_sessions_kills_and_unregisters(api_app, orchestrator) -> None:
+    app, get_endpoint = api_app
+
+    controller = StartableDummyController("claude", "/tmp")
+    controller.start_session()
+    orchestrator.register_controller("claude", controller)
+
+    stop_endpoint = get_endpoint("/api/control/stop-sessions", "POST")
+    payload = web_api.StopSessionsRequest(models=["claude"])
+    response = run(stop_endpoint(payload, app.state.orchestrator))
+
+    assert response["stopped"] == ["claude"]
+    assert "claude" not in orchestrator.controllers

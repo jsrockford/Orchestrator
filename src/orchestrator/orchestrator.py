@@ -55,6 +55,7 @@ class DevelopmentTeamOrchestrator:
         self._api_app: Any = None
         self._api_server: Optional[uvicorn.Server] = None
         self._api_thread: Optional[threading.Thread] = None
+        self.active_project_directory: Optional[str] = None
 
         if controllers:
             for name, controller in controllers.items():

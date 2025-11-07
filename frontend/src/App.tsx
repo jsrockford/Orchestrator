@@ -36,6 +36,7 @@ function App() {
   const [streamErrors, setStreamErrors] = useState<Record<string, string | null>>(
     () => Object.fromEntries(allConversations.map(c => [c.title, null]))
   );
+  const [projectActionPending, setProjectActionPending] = useState(false);
 
   const socketsRef = useRef<Record<string, WebSocket>>({});
   const closingSocketsRef = useRef<Set<string>>(new Set());
@@ -207,11 +208,50 @@ function App() {
     setSelectedCoders(activeIds);
   }, [activeModels, allConversations]);
 
-  const handleSendPrompt = (prompt: string, coderIds: number[]) => {
-    console.log('Sending prompt to coders:', coderIds, prompt);
+  const handleSendPrompt = async (prompt: string, coderIds: number[]) => {
+    const modelNames = coderIds
+      .map(id => allConversations.find(c => c.id === id)?.title)
+      .filter(Boolean) as string[];
+
+    if (modelNames.length === 0) {
+      console.warn('No models selected for prompt');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/control/send-prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          models: modelNames,
+          submit: true
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('Prompt sent:', data);
+
+      // Check for any failures and show errors
+      const failures = Object.entries(data.results)
+        .filter(([_, result]: [string, any]) => !result.success)
+        .map(([model, result]: [string, any]) => `${model}: ${result.error}`);
+
+      if (failures.length > 0) {
+        console.error('Failed to send to some models:', failures);
+        alert(`Failed to send prompt to:\n${failures.join('\n')}`);
+      }
+    } catch (error) {
+      console.error('Failed to send prompt:', error);
+      alert(`Error sending prompt: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
-  const postControl = async (path: string) => {
+  const postControl = async (path: string, options: RequestInit = {}) => {
     const url = (() => {
       if (/^https?:\/\//.test(path)) {
         return path;
@@ -220,7 +260,7 @@ function App() {
       return `${API_BASE_URL}${normalizedPath}`;
     })();
 
-    const response = await fetch(url, { method: 'POST' });
+    const response = await fetch(url, { method: 'POST', ...options });
     if (!response.ok) {
       let detail = response.statusText;
       try {
@@ -281,35 +321,75 @@ function App() {
     }
   };
 
-  const handleStartProject = () => {
-    if (activeModels.length === 0) {
+  const handleStartProject = async () => {
+    if (activeModels.length === 0 || projectState !== 'idle' || projectActionPending) {
       return;
     }
 
-    setSessionOutputs(prev => {
-      const next = { ...prev };
-      activeModels.forEach(model => {
-        next[model] = '';
+    setProjectActionPending(true);
+    try {
+      const payload = {
+        project_directory: projectDirectory,
+        models: activeModels.map(model => model.trim().toLowerCase()),
+      };
+      const data = await postControl('/api/control/start-sessions', {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
-      return next;
-    });
 
-    setStreamErrors(prev => {
-      const next = { ...prev };
-      activeModels.forEach(model => {
-        next[model] = null;
+      const startedCount = (data?.started?.length ?? 0) + (data?.already_running?.length ?? 0);
+      if (!startedCount) {
+        const failureMessage = Array.isArray(data?.failed) && data.failed.length > 0
+          ? data.failed.map((entry: { error?: string }) => entry?.error ?? 'unknown error').join('; ')
+          : 'No sessions started';
+        throw new Error(failureMessage);
+      }
+
+      setSessionOutputs(prev => {
+        const next = { ...prev };
+        activeModels.forEach(model => {
+          next[model] = '';
+        });
+        return next;
       });
-      return next;
-    });
 
-    setProjectState('running');
-    // In the future, this will also trigger a backend call
+      setStreamErrors(prev => {
+        const next = { ...prev };
+        activeModels.forEach(model => {
+          next[model] = null;
+        });
+        return next;
+      });
+
+      setProjectState('running');
+    } catch (error) {
+      console.error('Failed to start project:', error);
+    } finally {
+      setProjectActionPending(false);
+    }
   };
 
-  const handleStopProject = () => {
-    closeAllSockets('idle');
-    setProjectState('idle');
-    // In the future, this will also trigger a backend call
+  const handleStopProject = async () => {
+    if (projectState === 'idle' || projectActionPending) {
+      return;
+    }
+
+    setProjectActionPending(true);
+    try {
+      const payload = {
+        models: activeModels.map(model => model.trim().toLowerCase()),
+      };
+      await postControl('/api/control/stop-sessions', {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.error('Failed to stop project:', error);
+    } finally {
+      closeAllSockets('idle');
+      setProjectState('idle');
+      setProjectActionPending(false);
+    }
   };
 
   const handleEditInstructions = (modelName: string) => {
@@ -351,17 +431,18 @@ function App() {
           {projectState === 'idle' ? (
             <button
               onClick={handleStartProject}
-              disabled={activeModels.length === 0}
+              disabled={activeModels.length === 0 || projectActionPending}
               className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Start Project
+              {projectActionPending ? 'Starting...' : 'Start Project'}
             </button>
           ) : (
             <button
               onClick={handleStopProject}
-              className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-all duration-200"
+              disabled={projectActionPending}
+              className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Stop Project
+              {projectActionPending ? 'Stopping...' : 'Stop Project'}
             </button>
           )}
           <button 
@@ -402,6 +483,7 @@ function App() {
           selectedCoders={selectedCoders}
           onSelectedCodersChange={setSelectedCoders}
           onSendPrompt={handleSendPrompt}
+          disabled={projectState === 'idle'}
         />
       )}
 
