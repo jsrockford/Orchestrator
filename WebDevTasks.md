@@ -122,22 +122,22 @@ This document tracks the implementation of the web UI integration with the exist
 
 ### Backend Tasks
 
-- [ ] **Task 2.1**: Implement WebSocket endpoint for session streaming in `src/orchestrator/web_api.py`
-  - [ ] Add WebSocket route: `GET /ws/session/{model_name}`
-  - [ ] Accept WebSocket connection
-  - [ ] Validate model_name exists in orchestrator.controllers
-  - [ ] Get controller instance: `controller = orchestrator.controllers.get(model_name.lower())`
-  - [ ] Create async polling loop (500ms interval)
-  - [ ] Call `controller.capture_scrollback(lines=1000)` each iteration
-  - [ ] Handle session not found errors (controller.session_exists())
-  - [ ] Handle disconnection and cleanup
+- [x] **Task 2.1**: Implement WebSocket endpoint for session streaming in `src/orchestrator/web_api.py`
+  - [x] Add WebSocket route: `GET /ws/session/{model_name}`
+  - [x] Accept WebSocket connection
+  - [x] Validate model_name exists in orchestrator.controllers
+  - [x] Get controller instance: `controller = orchestrator.controllers.get(model_name.lower())`
+  - [x] Create async polling loop (500ms interval)
+  - [x] Call `controller.capture_scrollback(lines=1000)` each iteration
+  - [x] Handle session not found errors (controller.session_exists())
+  - [x] Handle disconnection and cleanup
 
-- [ ] **Task 2.2**: Implement diff algorithm for efficient updates
-  - [ ] Track last output per WebSocket connection (use dict keyed by connection)
-  - [ ] Compare current output with last output
-  - [ ] Calculate diff: send only new lines that appeared since last check
-  - [ ] Send updates as JSON: `{"type": "output", "content": "new lines...", "timestamp": "..."}`
-  - [ ] Optimize: if output unchanged, don't send message (reduce bandwidth)
+- [x] **Task 2.2**: Implement diff algorithm for efficient updates
+  - [x] Track last output per WebSocket connection (use dict keyed by connection)
+  - [x] Compare current output with last output
+  - [x] Calculate diff: send only new lines that appeared since last check
+  - [x] Send updates as JSON: `{"type": "output", "content": "new lines...", "timestamp": "..."}`
+  - [x] Optimize: if output unchanged, don't send message (reduce bandwidth)
 
 - [ ] **Task 2.3**: Add orchestrator state to WebSocket messages
   - [ ] Access orchestrator state directly: `orchestrator.conversation_manager.human_control_mode`
@@ -152,9 +152,9 @@ This document tracks the implementation of the web UI integration with the exist
   - [ ] Maintain buffer across reconnections (client can request replay)
 
 - [ ] **Task 2.5**: Write pytest tests for WebSocket streaming
-  - [ ] Test WebSocket connection accepts successfully
-  - [ ] Test polling loop fetches controller output
-  - [ ] Test diff detection sends only new content
+  - [x] Test WebSocket connection accepts successfully
+  - [x] Test polling loop fetches controller output
+  - [x] Test diff detection sends only new content
   - [ ] Test invalid model_name returns error and closes connection
   - [ ] Test session not found scenario (controller exists but session dead)
   - [ ] Use pytest-asyncio for async WebSocket testing
@@ -169,23 +169,23 @@ This document tracks the implementation of the web UI integration with the exist
 
 ### Frontend Tasks
 
-- [ ] **Task 2.7**: Add WebSocket client to `ConversationWindow.tsx`
-  - [ ] Create WebSocket connection on component mount: `new WebSocket("ws://localhost:8000/ws/session/{model}")`
-  - [ ] Handle `onmessage` event: append new content to buffer state
-  - [ ] Handle `onopen`, `onerror`, `onclose` events with logging/feedback
-  - [ ] Implement reconnection logic with exponential backoff
+- [x] **Task 2.7**: Add WebSocket client to `ConversationWindow.tsx`
+  - [x] Create WebSocket connection on component mount: `new WebSocket("ws://localhost:8000/ws/session/{model}")`
+  - [x] Handle `onmessage` event: append new content to buffer state
+  - [x] Handle `onopen`, `onerror`, `onclose` events with logging/feedback
+  - [x] Implement reconnection logic with exponential backoff
 
-- [ ] **Task 2.8**: Update UI to display streaming content
-  - [ ] Replace hardcoded `sampleOutput` with state variable `outputBuffer`
-  - [ ] Append incoming messages to `outputBuffer`
-  - [ ] Render buffer in `<pre>` tag with proper formatting
+- [x] **Task 2.8**: Update UI to display streaming content
+  - [x] Replace hardcoded `sampleOutput` with state variable `outputBuffer`
+  - [x] Append incoming messages to `outputBuffer`
+  - [x] Render buffer in `<pre>` tag with proper formatting
   - [ ] Apply OutputParser or ANSI-to-HTML conversion if needed
 
 - [ ] **Task 2.9**: Implement scroll management
-  - [ ] Detect if user is scrolled to bottom (auto-scroll mode)
-  - [ ] Only auto-scroll if user hasn't manually scrolled up
+  - [x] Detect if user is scrolled to bottom (auto-scroll mode)
+  - [x] Only auto-scroll if user hasn't manually scrolled up
   - [ ] Add "Scroll to Bottom" button when user scrolls up
-  - [ ] Preserve scroll position when new content arrives
+  - [x] Preserve scroll position when new content arrives
 
 - [ ] **Task 2.10**: Handle orchestrator state updates
   - [ ] Update UI based on received status messages
@@ -194,9 +194,9 @@ This document tracks the implementation of the web UI integration with the exist
   - [ ] Show visual indicators (header color change?) based on state
 
 - [ ] **Task 2.11**: Test streaming display end-to-end
-  - [ ] Start orchestrator with active conversation
-  - [ ] Open web UI and verify output appears
-  - [ ] Verify auto-scroll works correctly
+  - [x] Start orchestrator with active conversation
+  - [x] Open web UI and verify output appears
+  - [x] Verify auto-scroll works correctly
   - [ ] Test manual scrolling and "Scroll to Bottom" button
   - [ ] Test with multiple model windows simultaneously
 

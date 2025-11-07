@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Optional, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -17,9 +16,6 @@ from ..utils.logger import get_logger
 if TYPE_CHECKING:
     from .orchestrator import DevelopmentTeamOrchestrator
 
-DEFAULT_CONTROL_FIFO = Path("/tmp/orchestrator_control")
-DEFAULT_CONTROL_HISTORY = Path("logs/control_channel_history.log")
-CONTROL_HISTORY_ENV_VAR = "ORCHESTRATOR_CONTROL_HISTORY"
 logger = get_logger("orchestrator.web_api")
 
 
@@ -77,6 +73,7 @@ def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
     register_control_routes(app)
     register_instruction_routes(app)
     register_filesystem_routes(app)
+    register_stream_routes(app)
 
     return app
 
@@ -90,92 +87,6 @@ def get_orchestrator(request: Request) -> "DevelopmentTeamOrchestrator":
             detail="Orchestrator is not available",
         )
     return orchestrator
-
-
-async def write_fifo_message(
-    message: str,
-    *,
-    fifo_path: Path = DEFAULT_CONTROL_FIFO,
-    retries: int = 3,
-    delay_seconds: float = 0.1,
-    history_path: Optional[Path] = None,
-) -> None:
-    """
-    Write a control message to the orchestrator FIFO with retry logic.
-
-    Args:
-        message: Command to write, should include newline terminator.
-        fifo_path: Filesystem path to the named pipe.
-        retries: Number of attempts before raising an error.
-        delay_seconds: Wait duration between retries.
-    """
-    attempt = 0
-    while True:
-        try:
-            payload = message if message.endswith("\n") else f"{message}\n"
-            with fifo_path.open("w", encoding="utf-8") as fifo:
-                fifo.write(payload)
-                fifo.flush()
-            append_control_history(payload.rstrip("\n"), history_path=history_path)
-            logger.debug("Wrote command to control FIFO=%s message=%r", fifo_path, payload)
-            return
-        except FileNotFoundError as exc:
-            logger.warning(
-                "Control FIFO missing at %s (attempt %d/%d): %s",
-                fifo_path,
-                attempt + 1,
-                retries,
-                exc,
-            )
-            attempt += 1
-        except OSError as exc:  # EPIPE, ENXIO, etc.
-            logger.warning(
-                "Failed to write control command to %s (attempt %d/%d): %s",
-                fifo_path,
-                attempt + 1,
-                retries,
-                exc,
-            )
-            attempt += 1
-
-        if attempt >= retries:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Unable to write to control FIFO after {retries} attempts",
-            )
-        await asyncio.sleep(delay_seconds)
-
-
-def append_control_history(message: str, *, history_path: Optional[Path] = None) -> None:
-    """Persist control commands to the shared history log for auditability."""
-    env_override = os.environ.get(CONTROL_HISTORY_ENV_VAR)
-    target_path: Optional[Path]
-    if history_path is not None:
-        target_path = history_path
-    elif env_override:
-        target_path = Path(env_override).expanduser()
-    else:
-        target_path = DEFAULT_CONTROL_HISTORY
-
-    if target_path is None:
-        return
-
-    target_path = target_path.expanduser()
-
-    try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = f"{timestamp} | {message}"
-        with target_path.open("a", encoding="utf-8") as log_file:
-            log_file.write(f"{entry}\n")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Unable to append control history to %s: %s", target_path, exc)
-
-
-def format_key_command(model_name: str, key_name: str) -> str:
-    """Return a KEY command string for the control channel."""
-    normalized = key_name.strip()
-    return f"KEY {model_name} {normalized}"
 
 
 def validate_model_name(orchestrator: "DevelopmentTeamOrchestrator", model_name: str) -> None:
@@ -211,14 +122,37 @@ def register_control_routes(app: FastAPI) -> None:
     """Attach control endpoints to the provided FastAPI app."""
 
     @app.post("/api/control/pause", tags=["control"])
-    async def pause(_: "DevelopmentTeamOrchestrator" = Depends(get_orchestrator)) -> Dict[str, str]:
-        await write_fifo_message("PAUSE")
-        return {"status": "paused"}
+    async def pause(orchestrator: "DevelopmentTeamOrchestrator" = Depends(get_orchestrator)) -> Dict[str, Any]:
+        controllers = orchestrator.controllers
+        if not controllers:
+            return {"status": "paused", "controllers": []}
+
+        for name, controller in controllers.items():
+            pause_fn = getattr(controller, "pause_automation", None)
+            if not callable(pause_fn):
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=f"Controller '{name}' does not support pause_automation()",
+                )
+            pause_fn("api-request")
+
+        return {"status": "paused", "controllers": list(controllers.keys())}
 
     @app.post("/api/control/resume", tags=["control"])
-    async def resume(_: "DevelopmentTeamOrchestrator" = Depends(get_orchestrator)) -> Dict[str, str]:
-        await write_fifo_message("RESUME")
-        return {"status": "resumed"}
+    async def resume(orchestrator: "DevelopmentTeamOrchestrator" = Depends(get_orchestrator)) -> Dict[str, Any]:
+        controllers = orchestrator.controllers
+        if not controllers:
+            return {"status": "resumed", "controllers": []}
+
+        for name, controller in controllers.items():
+            resume_fn = getattr(controller, "resume_automation", None)
+            if not callable(resume_fn):
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=f"Controller '{name}' does not support resume_automation()",
+                )
+            resume_fn()
+        return {"status": "resumed", "controllers": list(controllers.keys())}
 
     @app.post("/api/control/{model_name}/key/{key_name}", tags=["control"])
     async def send_key(
@@ -228,8 +162,23 @@ def register_control_routes(app: FastAPI) -> None:
     ) -> Dict[str, str]:
         validate_model_name(orchestrator, model_name)
         normalized = normalize_key_name(key_name)
-        command = format_key_command(model_name, normalized)
-        await write_fifo_message(command)
+        controller = orchestrator.controllers[model_name]
+        send_key_fn = getattr(controller, "send_key", None)
+        if not callable(send_key_fn):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=f"Controller '{model_name}' does not support send_key()",
+            )
+
+        try:
+            send_key_fn(normalized)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to send key '%s' to %s: %s", normalized, model_name, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send key: {exc}",
+            ) from exc
+
         return {"status": "sent", "model": model_name, "key": normalized}
 
     @app.get("/api/control/status", tags=["control"])
@@ -379,6 +328,173 @@ def register_filesystem_routes(app: FastAPI) -> None:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=str(exc),
             )
+
+
+STREAM_POLL_INTERVAL_SECONDS = 0.5
+
+
+def normalize_scrollback_text(text: str) -> str:
+    """
+    Remove trailing blank lines from a tmux scrollback capture.
+
+    Tmux captures often pad the buffer with empty rows equal to the pane height,
+    which results in WebSocket clients displaying a blank viewport initially.
+    This helper trims those trailing blank lines while preserving intentional
+    whitespace elsewhere. A trailing newline is preserved so line breaks render
+    naturally in the UI.
+    """
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines) + "\n"
+
+
+def compute_scrollback_event(previous: str, current: str) -> Optional[Dict[str, str]]:
+    """
+    Determine the appropriate payload describing the transition from previous to current.
+
+    Returns:
+        Dict containing "type" (snapshot|append|reset) and "content". None if unchanged.
+    """
+    if not previous:
+        if current:
+            return {"type": "snapshot", "content": current}
+        return None
+
+    if current.startswith(previous):
+        delta = current[len(previous):]
+        if delta:
+            return {"type": "append", "content": delta}
+        return None
+
+    return {"type": "reset", "content": current}
+
+
+async def stream_controller_output(
+    websocket: WebSocket,
+    orchestrator: Optional["DevelopmentTeamOrchestrator"],
+    model_name: str,
+) -> None:
+    """Stream tmux scrollback snapshots over the given WebSocket connection."""
+
+    await websocket.accept()
+    logger.debug("WebSocket accepted for model '%s'", model_name)
+
+    if orchestrator is None:
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": "Orchestrator is not available",
+        })
+        await websocket.close(code=1011)
+        return
+
+    if model_name not in orchestrator.controllers:
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": f"Unknown model '{model_name}'",
+        })
+        await websocket.close(code=1008)
+        return
+
+    controller = orchestrator.controllers[model_name]
+    capture: Optional[Callable[[], str]] = getattr(controller, "capture_scrollback", None)
+    if not callable(capture):
+        logger.warning("Model '%s' lacks capture_scrollback()", model_name)
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": "capture_scrollback unavailable on controller",
+        })
+        await websocket.close(code=1011)
+        return
+
+    capture_callable = cast(Callable[[], str], capture)
+    previous = ""
+
+    try:
+        initial_snapshot = await asyncio.to_thread(capture_callable)
+        initial_snapshot = normalize_scrollback_text(initial_snapshot)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Initial capture failed for %s: %s", model_name, exc)
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": f"capture_scrollback failed: {exc}",
+        })
+        await websocket.close(code=1011)
+        return
+
+    try:
+        event = compute_scrollback_event(previous, initial_snapshot)
+        if event:
+            payload = {
+                "model": model_name,
+                "timestamp": datetime.utcnow().isoformat(),
+                **event,
+            }
+            logger.debug("Initial snapshot payload for '%s': type=%s size=%d", model_name, event["type"], len(event["content"]))
+            await websocket.send_json(payload)
+            previous = initial_snapshot
+        else:
+            previous = initial_snapshot
+    except WebSocketDisconnect:
+        logger.debug("WebSocket disconnected for model '%s' during initial snapshot", model_name)
+        return
+
+    try:
+        while True:
+            try:
+                snapshot = await asyncio.to_thread(capture_callable)
+                snapshot = normalize_scrollback_text(snapshot)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to capture scrollback for %s: %s", model_name, exc)
+                await websocket.send_json({
+                    "type": "error",
+                    "model": model_name,
+                    "message": f"capture_scrollback failed: {exc}",
+                })
+                await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+                continue
+
+            event = compute_scrollback_event(previous, snapshot)
+            if event:
+                payload = {
+                    "model": model_name,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    **event,
+                }
+                logger.debug("Streaming update for '%s': type=%s size=%d", model_name, event["type"], len(event["content"]))
+                await websocket.send_json(payload)
+                previous = snapshot
+            else:
+                logger.debug("No diff for '%s' (previous=%d chars, current=%d chars)", model_name, len(previous), len(snapshot))
+
+            await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+    except WebSocketDisconnect:
+        logger.debug("WebSocket disconnected for model '%s'", model_name)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error streaming %s: %s", model_name, exc)
+        await websocket.close(code=1011)
+
+
+def register_stream_routes(app: FastAPI) -> None:
+    """Attach WebSocket streaming routes for session output."""
+
+    @app.websocket("/ws/session/{model_name}")
+    async def stream_session_output(websocket: WebSocket, model_name: str) -> None:
+        orchestrator = getattr(websocket.app.state, "orchestrator", None)
+        await stream_controller_output(websocket, orchestrator, model_name)
 
     @app.post("/api/fs/create-folder", tags=["filesystem"])
     async def create_folder(new_folder: NewFolder) -> Dict[str, str]:
