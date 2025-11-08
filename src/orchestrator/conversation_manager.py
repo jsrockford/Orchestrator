@@ -15,6 +15,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
+from ..controllers.session_backend import TurnCancelledByUser
 from ..utils.logger import get_logger
 from ..utils.output_parser import OutputParser, ParsedOutput, ValidationResult
 from ..utils.config_loader import get_config
@@ -216,6 +217,11 @@ class ConversationManager:
 
         self.human_control_mode: bool = False
         self._current_agent: Optional[str] = None
+        self._injected_messages: Deque[Dict[str, Any]] = deque()
+        self._resume_speaker: Optional[str] = None
+        self._awaiting_resume_after_cancel: bool = False
+        self._pending_cancelled_turn: Optional[Dict[str, Any]] = None
+        self._pending_injection_payloads: List[Dict[str, Any]] = []
 
         if self.context_manager is not None:
             registrar = getattr(self.context_manager, "register_participant", None)
@@ -255,6 +261,15 @@ class ConversationManager:
 
         conversation: List[Dict[str, Any]] = []
         for _ in range(max_turns):
+            if getattr(self.orchestrator, "should_stop_discussion", False):
+                self.logger.info("Stop requested; ending discussion on '%s'", topic)
+                break
+
+            if not self._wait_for_discussion_resumption():
+                self.logger.info("Discussion paused indefinitely; stopping '%s'", topic)
+                break
+
+            self._flush_injected_messages(conversation, topic)
             self._refresh_status_snapshot()
             self._check_control_commands()
             while self.human_control_mode:
@@ -314,7 +329,18 @@ class ConversationManager:
 
             self._current_agent = speaker
             try:
-                prompt = self._build_prompt(speaker, topic, conversation)
+                resume_context = self._claim_pending_cancelled_turn(speaker)
+                prompt_source: Optional[str] = None
+                if resume_context:
+                    topic = resume_context.get("topic") or topic
+                    prompt_source = resume_context.get("prompt")
+
+                if prompt_source is None:
+                    prompt = self._build_prompt(speaker, topic, conversation)
+                else:
+                    prompt = prompt_source
+
+                prompt, injected_into_prompt = self._apply_injected_prompts(speaker, prompt)
                 validation_cfg = get_config().get_section("response_validation") or {}
                 max_retries = max(0, int(validation_cfg.get("max_retries", 2)))
                 backoff_sequence = validation_cfg.get("retry_backoff_seconds") or []
@@ -325,6 +351,7 @@ class ConversationManager:
                 parsed_output: Optional[ParsedOutput] = None
                 validation_result = None
                 is_queued = False
+                turn_cancelled = False
 
                 while True:
                     self._check_control_commands()
@@ -339,7 +366,12 @@ class ConversationManager:
                         validation_result = None
                         break
 
-                    parsed_output = self._read_last_output(speaker, pre_snapshot)
+                    try:
+                        parsed_output = self._read_last_output(speaker, pre_snapshot)
+                    except TurnCancelledByUser:
+                        turn_cancelled = True
+                        self._handle_turn_cancelled(speaker, topic, prompt)
+                        break
                     parser = self._output_parsers.setdefault(speaker, OutputParser())
                     validation_result = parser.validate_response(parsed_output, speaker)
                     self._log_filtered_patterns(validation_cfg, speaker, validation_result)
@@ -383,6 +415,12 @@ class ConversationManager:
                     )
                     continue
 
+                if turn_cancelled:
+                    self.logger.info(
+                        "Turn for '%s' cancelled; waiting for resume before retrying",
+                        speaker,
+                    )
+                    continue
                 response = None
                 if validation_result and validation_result.response_text is not None:
                     response = validation_result.response_text
@@ -420,6 +458,8 @@ class ConversationManager:
                 self._record_turn_activity(speaker, turn_record)
 
                 metadata = turn_record.setdefault("metadata", {})
+                if injected_into_prompt:
+                    metadata["injection_applied"] = True
                 loop_info = self._update_loop_state(conversation)
                 if loop_info:
                     metadata["loop_detected"] = True
@@ -514,6 +554,161 @@ class ConversationManager:
 
         return conversation
 
+    def inject_message(
+        self,
+        role: str,
+        content: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Queue a human (or system) message to be inserted into the conversation.
+
+        The queue is processed at the start of each turn so injections are
+        preserved in the transcript before the next participant speaks.
+        """
+        normalized_role = role.strip() if role else "human"
+        payload = {
+            "role": normalized_role,
+            "content": content or "",
+            "metadata": metadata.copy() if isinstance(metadata, dict) else {},
+        }
+        self._injected_messages.append(payload)
+        self.logger.info(
+            "Queued injected message from '%s' (len=%d, pending=%d)",
+            normalized_role,
+            len(payload["content"]),
+            len(self._injected_messages),
+        )
+
+    def process_key_command(self, target: str, keys: Sequence[str] | str) -> bool:
+        """
+        Invoke the control-channel KEY handler without writing to the FIFO.
+
+        Args:
+            target: Controller name or alias (e.g., ``gemini``, ``all``).
+            keys: Iterable of keys to send. A single string is accepted for convenience.
+
+        Returns:
+            True if the keys were dispatched successfully, False otherwise.
+        """
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError("KEY command requires a target controller name")
+
+        if isinstance(keys, str):
+            key_list = [keys]
+        else:
+            key_list = [
+                str(key).strip()
+                for key in keys
+                if isinstance(key, str) and str(key).strip()
+            ]
+
+        if not key_list:
+            raise ValueError("KEY command requires at least one key")
+
+        args = [target.strip()]
+        args.extend(key_list)
+        raw = "KEY " + " ".join(args)
+        command = ControlCommand(name="KEY", args=args, raw=raw)
+        return self._handle_key_command(command)
+
+    def _queue_pending_injection(self, payload: Dict[str, Any]) -> None:
+        """Track injected text so it can be merged into the next prompt."""
+        content = (payload.get("content") or "").strip()
+        if not content:
+            return
+
+        metadata = payload.get("metadata") or {}
+        targets_raw = metadata.get("targets")
+        normalized_targets: Optional[Set[str]] = None
+        if isinstance(targets_raw, (list, tuple, set)):
+            normalized_targets = {
+                str(item).strip().lower()
+                for item in targets_raw
+                if isinstance(item, str) and item.strip()
+            }
+            if not normalized_targets:
+                normalized_targets = None
+
+        entry = {
+            "content": content,
+            "role": payload.get("role") or "human",
+            "metadata": metadata,
+            "targets": normalized_targets,
+        }
+        self._pending_injection_payloads.append(entry)
+
+    def _collect_injections_for_speaker(self, speaker: str) -> List[Dict[str, Any]]:
+        """Return any queued injections that apply to ``speaker``."""
+        if not self._pending_injection_payloads:
+            return []
+
+        speaker_key = (speaker or "").strip().lower()
+        matched: List[Dict[str, Any]] = []
+        remaining: List[Dict[str, Any]] = []
+
+        for entry in self._pending_injection_payloads:
+            targets = entry.get("targets")
+            if targets and speaker_key not in targets:
+                remaining.append(entry)
+                continue
+
+            matched.append(
+                {
+                    "content": entry.get("content"),
+                    "role": entry.get("role"),
+                    "metadata": entry.get("metadata"),
+                }
+            )
+
+            if targets:
+                residual = set(targets)
+                residual.discard(speaker_key)
+                if residual:
+                    entry = entry.copy()
+                    entry["targets"] = residual
+                    remaining.append(entry)
+            # Broadcast injections (no targets) are consumed once.
+
+        self._pending_injection_payloads = remaining
+        return matched
+
+    def _apply_injected_prompts(self, speaker: str, prompt: str) -> Tuple[str, bool]:
+        """Prepend any applicable injected text to ``prompt``."""
+        payloads = self._collect_injections_for_speaker(speaker)
+        if not payloads:
+            return prompt, False
+
+        directives = [
+            (payload.get("content") or "").strip() for payload in payloads if payload.get("content")
+        ]
+        directives = [text for text in directives if text]
+        if not directives:
+            return prompt, False
+
+        injected_text = "\n\n".join(directives)
+        updated_prompt = f"{injected_text}\n\n{prompt}" if prompt else injected_text
+        self.logger.info(
+            "Applied %d injected message(s) to prompt for '%s'",
+            len(directives),
+            speaker,
+        )
+        return updated_prompt, True
+
+    def get_status_snapshot(self) -> Dict[str, Any]:
+        """Return a lightweight snapshot describing the current discussion."""
+        return {
+            "turn_counter": self._turn_counter,
+            "current_agent": self._current_agent,
+            "participants": list(self.participants),
+            "human_control_mode": self.human_control_mode,
+            "pending_injections": len(self._injected_messages),
+            "max_turns": self._active_max_turns,
+            "last_activity_at": self._last_activity_at,
+            "run_started_at": self._run_started_at,
+        }
+
     def determine_next_speaker(self, context: Sequence[Dict[str, Any]]) -> Optional[str]:
         """
         Pick the next controller to speak (round-robin by default).
@@ -527,6 +722,18 @@ class ConversationManager:
         ]
         if not active_participants:
             return None
+
+        if self._resume_speaker:
+            pending = self._resume_speaker
+            if pending in active_participants:
+                self.logger.debug("Resuming cancelled turn with '%s'", pending)
+                self._resume_speaker = None
+                return pending
+            self.logger.debug(
+                "Resume target '%s' unavailable; clearing pending resume",
+                pending,
+            )
+            self._resume_speaker = None
 
         if not context:
             # Resume from the participant after the last global speaker, unless the last turn was queued.
@@ -1468,6 +1675,65 @@ class ConversationManager:
     # Control channel helpers
     # ------------------------------------------------------------------ #
 
+    def _claim_pending_cancelled_turn(self, speaker: str) -> Optional[Dict[str, Any]]:
+        """
+        Return the stored cancelled turn context for ``speaker``, if any.
+
+        The stored context is cleared once claimed so we don't replay it twice.
+        """
+        context = self._pending_cancelled_turn
+        if not context:
+            return None
+        pending_speaker = context.get("speaker")
+        if pending_speaker and pending_speaker != speaker:
+            return None
+        self._pending_cancelled_turn = None
+        return context.copy()
+
+    def _handle_turn_cancelled(self, speaker: str, topic: str, prompt: str) -> None:
+        self._resume_speaker = speaker
+        self._awaiting_resume_after_cancel = True
+        self._pending_cancelled_turn = {
+            "speaker": speaker,
+            "topic": topic,
+            "prompt": prompt or "",
+        }
+        state = getattr(self.orchestrator, "discussion_state", None)
+        if isinstance(state, str) and state.upper() == "RUNNING":
+            self.logger.info("Marking discussion paused after cancellation on '%s'", speaker)
+            setattr(self.orchestrator, "discussion_state", "PAUSED")
+        self._set_status_error(f"Turn cancelled for {speaker}; awaiting resume")
+        self._refresh_status_snapshot(force=True)
+        self.logger.info(
+            "Cancellation detected for '%s' (topic='%s'); prompt len=%d",
+            speaker,
+            topic,
+            len(prompt or ""),
+        )
+
+    def _wait_for_discussion_resumption(self) -> bool:
+        orchestrator_state = getattr(self.orchestrator, "discussion_state", "RUNNING")
+        if orchestrator_state != "PAUSED":
+            if self._awaiting_resume_after_cancel:
+                self._awaiting_resume_after_cancel = False
+                self._set_status_error(None)
+            return True
+
+        self.logger.info("Discussion state is PAUSED; waiting for resume signal")
+        while True:
+            if getattr(self.orchestrator, "should_stop_discussion", False):
+                self.logger.info("Stop requested while waiting for resume; exiting discussion wait")
+                return False
+            orchestrator_state = getattr(self.orchestrator, "discussion_state", "RUNNING")
+            if orchestrator_state != "PAUSED":
+                self._awaiting_resume_after_cancel = False
+                self._set_status_error(None)
+                self._refresh_status_snapshot(force=True)
+                return True
+            self._refresh_status_snapshot()
+            self._check_control_commands()
+            time.sleep(0.3)
+
     def _record_turn_activity(self, speaker: str, turn_record: Dict[str, Any]) -> None:
         now = time.time()
         self._last_activity_at = now
@@ -1961,7 +2227,7 @@ class ConversationManager:
         )
         return False
 
-    def _handle_key_command(self, command: ControlCommand) -> None:
+    def _handle_key_command(self, command: ControlCommand) -> bool:
         args = list(command.args or [])
         if len(args) < 2:
             self.logger.warning(
@@ -1969,20 +2235,20 @@ class ConversationManager:
                 command.raw,
             )
             self._set_status_error("KEY command requires target and at least one key")
-            return
+            return False
 
         target = args[0]
         keys = [key for key in args[1:] if key]
         if not keys:
             self.logger.warning("Control channel: KEY command missing key arguments")
             self._set_status_error("KEY command missing key arguments")
-            return
+            return False
 
         targets = self._resolve_targets(target)
         if not targets:
             self.logger.warning("Control channel: KEY command target '%s' not recognized", target)
             self._set_status_error(f"KEY target '{target}' not recognized")
-            return
+            return False
 
         self.logger.info(
             "Control channel: sending keys %s to %s",
@@ -2002,6 +2268,7 @@ class ConversationManager:
                 joined,
             )
             self._set_status_error(f"KEY dispatch failed for: {joined}")
+            return False
         else:
             should_pause = (
                 "escape" in normalized_keys
@@ -2021,6 +2288,7 @@ class ConversationManager:
                 self._set_status_error("Manual control active (Escape); send RESUME to continue")
             else:
                 self._set_status_error(None)
+        return True
 
     def _send_keys_to_agent(self, agent_name: str, keys: Sequence[str]) -> bool:
         if not keys:
@@ -2129,11 +2397,12 @@ class ConversationManager:
                 interrupt_triggered = bool(self._pending_interrupt)
                 self._pending_interrupt = False
 
-            if ready is False and interrupt_triggered:
+            if interrupt_triggered and ready is not True:
                 self.logger.info(
                     "Controller '%s' wait_for_ready interrupted via control channel",
                     controller_name,
                 )
+                raise TurnCancelledByUser(f"Turn interrupted for {controller_name}")
         else:
             self._pending_interrupt = False
 
@@ -2187,6 +2456,37 @@ class ConversationManager:
             structured["dispatch"] = dispatch
 
         self.history.append(structured)
+
+    def _flush_injected_messages(
+        self,
+        conversation: List[Dict[str, Any]],
+        topic: str,
+    ) -> None:
+        """Drain queued injected messages into the conversation history."""
+        while self._injected_messages:
+            payload = self._injected_messages.popleft()
+            metadata = payload.get("metadata") or {}
+            metadata = metadata.copy()
+            metadata["injected"] = True
+            content = payload.get("content") or ""
+
+            turn_record = {
+                "turn": self._turn_counter,
+                "speaker": payload.get("role") or "human",
+                "topic": topic,
+                "prompt": content,
+                "dispatch": {"injected": True},
+                "response": content,
+                "metadata": metadata,
+            }
+
+            self._queue_pending_injection(payload)
+            conversation.append(turn_record)
+            self._turn_counter += 1
+            self._store_turn(turn_record)
+            self._record_turn_activity(turn_record["speaker"], turn_record)
+            self._record_with_context_manager(turn_record)
+            self._route_message(turn_record, topic, dispatched=True)
 
     @staticmethod
     def _select_retry_delay(sequence: Any, ordinal: int) -> float:

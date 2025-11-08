@@ -1,0 +1,1348 @@
+"""FastAPI application exposing orchestrator control and monitoring endpoints."""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, Type, cast
+
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from ..controllers import ClaudeController, CodexController, GeminiController, QwenController
+from ..controllers.session_backend import SessionBackendError, SessionNotFoundError
+from ..utils.exceptions import SessionAlreadyExists
+from ..utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from .orchestrator import DevelopmentTeamOrchestrator
+
+logger = get_logger("orchestrator.web_api")
+
+
+# Pydantic models for request/response bodies
+class InstructionFile(BaseModel):
+    """Request body for saving instruction files."""
+    content: str
+    project_directory: Optional[str] = None
+
+
+class DirectoryPath(BaseModel):
+    """Request body for filesystem browsing."""
+    path: str
+
+
+class NewFolder(BaseModel):
+    """Request body for creating new folders."""
+    path: str
+    folderName: str
+
+
+class StartSessionsRequest(BaseModel):
+    """Payload describing which sessions to start and where."""
+    project_directory: str
+    models: Optional[Sequence[str]] = None
+
+
+class StopSessionsRequest(BaseModel):
+    """Payload describing which sessions to stop."""
+    models: Optional[Sequence[str]] = None
+
+
+class PromptRequest(BaseModel):
+    """Request body for sending prompts to AI models."""
+    prompt: str
+    models: list[str]
+    submit: bool = True
+
+
+class DiscussionConfig(BaseModel):
+    """Configuration payload for orchestrated discussions."""
+    max_turns: int = 10
+    starting_model: Optional[str] = None
+    participants: Optional[Sequence[str]] = None
+    discussion_topic: Optional[str] = None
+    include_history: bool = True
+    log_level: Optional[str] = None
+
+
+# Mapping of model names to their instruction files
+INSTRUCTION_FILES = {
+    "Claude": "CLAUDE.md",
+    "Codex": "AGENTS.md",
+    "Gemini": "GEMINI.md",
+    "Qwen": "QWEN.md",
+}
+
+CONTROLLER_FACTORIES: Dict[str, Type[Any]] = {
+    "claude": ClaudeController,
+    "codex": CodexController,
+    "gemini": GeminiController,
+    "qwen": QwenController,
+}
+
+
+def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
+    """
+    Build a FastAPI application bound to the provided orchestrator instance.
+
+    Args:
+        orchestrator: Live orchestrator instance used to satisfy API requests.
+    """
+
+    app = FastAPI(title="Development Team Orchestrator API", version="0.1.0")
+    app.state.orchestrator = orchestrator
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/api/health", tags=["health"])
+    async def health() -> Dict[str, str]:
+        """Return a simple heartbeat payload for readiness probes."""
+        return {"status": "ok"}
+
+    register_control_routes(app)
+    register_discussion_routes(app)
+    register_instruction_routes(app)
+    register_filesystem_routes(app)
+    register_stream_routes(app)
+
+    return app
+
+
+def get_orchestrator(request: Request) -> "DevelopmentTeamOrchestrator":
+    """Dependency that returns the orchestrator stored on the FastAPI app."""
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator is not available",
+        )
+    return orchestrator
+
+
+def validate_model_name(orchestrator: "DevelopmentTeamOrchestrator", model_name: str) -> None:
+    """Raise 404 if the model is not registered."""
+    if model_name not in orchestrator.controllers:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown model '{model_name}'",
+        )
+
+
+ALLOWED_KEYS: Dict[str, Iterable[str]] = {
+    "Up": ("Up", "ArrowUp"),
+    "Down": ("Down", "ArrowDown"),
+    "Enter": ("Enter", "Return"),
+    "Escape": ("Escape", "Esc"),
+}
+
+
+def normalize_key_name(key_name: str) -> str:
+    """Normalize user-provided key names to control channel tokens."""
+    candidate = key_name.strip()
+    for normalized, variants in ALLOWED_KEYS.items():
+        if candidate == normalized or candidate in variants:
+            return normalized
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Unsupported key '{key_name}'",
+    )
+
+
+def normalize_model_names(models: Sequence[str]) -> List[str]:
+    """Normalize and validate requested model identifiers."""
+    if not models:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one model must be specified",
+        )
+
+    normalized: List[str] = []
+    seen = set()
+    for raw in models:
+        if raw is None:
+            candidate = ""
+        else:
+            candidate = str(raw).strip().lower()
+
+        if not candidate:
+            continue
+
+        if candidate not in CONTROLLER_FACTORIES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown model '{raw}'. Supported models: {', '.join(sorted(CONTROLLER_FACTORIES))}",
+            )
+
+        if candidate not in seen:
+            normalized.append(candidate)
+            seen.add(candidate)
+
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid models were provided",
+        )
+
+    return normalized
+
+
+def resolve_project_directory(path_str: str) -> Path:
+    """Resolve and validate the requested project directory."""
+    if not path_str:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="project_directory is required",
+        )
+
+    try:
+        path = Path(path_str).expanduser().resolve()
+    except OSError as exc:  # pragma: no cover - filesystem-dependent
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid project directory: {exc}",
+        ) from exc
+
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Project directory '{path}' does not exist",
+        )
+    if not path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Project directory '{path}' is not a directory",
+        )
+
+    return path
+
+
+SECURITY_MARKER = "<!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->"
+TEMPLATE_PATH = Path(__file__).parent.parent.parent / "templates" / "ALL_MODELS_TEMPLATE.md"
+
+
+def get_instruction_template(project_dir: str) -> str:
+    """
+    Load the instruction template and substitute the project directory.
+
+    Args:
+        project_dir: The project directory path to substitute into the template
+
+    Returns:
+        The template content with project_dir substituted
+    """
+    try:
+        logger.info("Looking for template at: %s", TEMPLATE_PATH)
+        logger.info("Template exists: %s", TEMPLATE_PATH.exists())
+        if not TEMPLATE_PATH.exists():
+            logger.warning("Template file not found at %s, using fallback", TEMPLATE_PATH)
+            # Fallback with full instructions if template doesn't exist
+            return f"""{SECURITY_MARKER}
+## CRITICAL: Project Directory Security
+
+**Your working directory**: {project_dir}
+
+**YOU MUST**:
+- Only create, modify, or delete files within: {project_dir}
+- Use relative paths (./file.txt) or absolute paths starting with {project_dir}
+- If asked to work outside this directory, politely decline and explain the restriction
+
+**FORBIDDEN PATHS**:
+- /etc/ (system configuration)
+- /home/other_user/ (other users' files)
+- ../../ (parent directory traversal)
+- /tmp/ (temporary system files)
+- Any path outside your working directory
+
+**Example**:
+✅ ALLOWED: `./src/main.py`, `docs/README.md`, `{project_dir}/config.json`
+❌ FORBIDDEN: `/etc/passwd`, `../../other_project/`, `/home/dgray/Projects/Orchestrator/`
+
+{SECURITY_MARKER}
+
+═══════════════════════════════════════════════════════════
+⚠️  CRITICAL REQUIREMENTS - READ FIRST ⚠️
+═══════════════════════════════════════════════════════════
+
+## 1. RESPONSE DELIMITER PROTOCOL (MANDATORY)
+
+When responding to your teammates, you MUST wrap your final
+response in delimiters. NO EXCEPTIONS.
+
+**FORMAT:**
+```
+<<<RESPONSE_START>>>
+Your actual response here
+<<<RESPONSE_END>>>
+```
+
+**Why this matters:**
+- Everything outside these delimiters (thinking, tool use, file
+  edits, etc.) will be filtered out and NOT sent to your teammate
+- Missing delimiters = BROKEN COMMUNICATION
+- Your teammate will only see what's inside the delimiters
+
+**Example:**
+```
+[Your internal reasoning and tool usage here...]
+
+<<<RESPONSE_START>>>
+I've reviewed the code and found the following issues:
+1. The collision detection needs adjustment
+2. Please update line 42 to fix the boundary check
+<<<RESPONSE_END>>>
+```
+
+## 2. PROJECT COMPLETION SIGNAL
+
+When ALL project objectives are met and you AND your teammates
+agree the work is complete, signal completion by including:
+
+**[[PROJECT_COMPLETE]]**
+
+Place this INSIDE your <<<RESPONSE_START>>> delimiters.
+
+The orchestrator requires 66% consensus to end the discussion.
+Only signal when you genuinely believe the project is done.
+
+ =============================================================
+
+"""
+
+        template_content = TEMPLATE_PATH.read_text(encoding='utf-8')
+
+        # Replace the placeholder project directory with the actual one
+        # The template has a hardcoded path that we need to replace
+        template_content = template_content.replace(
+            '/home/dgray/Projects/scratch/project-orch2',
+            project_dir
+        )
+
+        return template_content
+
+    except Exception as exc:
+        logger.error("Failed to load template from %s: %s", TEMPLATE_PATH, exc)
+        # Return minimal security warning as fallback
+        return f"""{SECURITY_MARKER}
+## CRITICAL: Project Directory Security
+
+**Your working directory**: {project_dir}
+
+{SECURITY_MARKER}
+
+"""
+
+
+def ensure_instruction_file_security(project_dir: Path, model_name: str) -> None:
+    """
+    Ensure instruction file exists with template content (security + protocol) in the project directory.
+
+    Args:
+        project_dir: The project directory path
+        model_name: The model name (e.g., "claude", "gemini")
+    """
+    instruction_file = INSTRUCTION_FILES.get(model_name.capitalize())
+    if not instruction_file:
+        logger.warning("No instruction file mapping for model '%s'", model_name)
+        return
+
+    file_path = project_dir / instruction_file
+    template_content = get_instruction_template(str(project_dir))
+
+    try:
+        if file_path.exists():
+            # Read existing content
+            content = file_path.read_text(encoding='utf-8')
+
+            # Check if security marker already present
+            if SECURITY_MARKER in content:
+                logger.debug("Template content already present in %s", file_path)
+                return
+
+            # Prepend template content (security + protocol)
+            new_content = template_content + "\n" + content
+            file_path.write_text(new_content, encoding='utf-8')
+            logger.info("Prepended instruction template to existing %s", file_path)
+        else:
+            # Create new file with template content
+            file_path.write_text(template_content, encoding='utf-8')
+            logger.info("Created new instruction file %s with template content", file_path)
+
+    except Exception as exc:
+        logger.error("Failed to update instruction file %s: %s", file_path, exc)
+        # Don't raise - this is not critical enough to fail session startup
+
+
+def controller_session_active(controller: Any) -> bool:
+    """Return True if the controller reports an active session."""
+    exists_fn = getattr(controller, "session_exists", None)
+    if not callable(exists_fn):
+        return False
+    try:
+        return bool(exists_fn())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def kill_controller_session(controller: Any) -> None:
+    """Invoke the most appropriate kill method on the controller."""
+    kill_fn = getattr(controller, "kill_session", None)
+    if callable(kill_fn):
+        kill_fn()
+        return
+
+    legacy_kill = getattr(controller, "kill", None)
+    if callable(legacy_kill):
+        legacy_kill()
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Controller does not support kill_session()",
+    )
+
+
+def register_control_routes(app: FastAPI) -> None:
+    """Attach control endpoints to the provided FastAPI app."""
+
+    @app.post("/api/control/pause", tags=["control"])
+    async def pause(orchestrator: "DevelopmentTeamOrchestrator" = Depends(get_orchestrator)) -> Dict[str, Any]:
+        controllers = orchestrator.controllers
+        if not controllers:
+            return {"status": "paused", "controllers": []}
+
+        for name, controller in controllers.items():
+            pause_fn = getattr(controller, "pause_automation", None)
+            if not callable(pause_fn):
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=f"Controller '{name}' does not support pause_automation()",
+                )
+            pause_fn("api-request")
+
+        # If a discussion is running, pause it so human can inject prompts
+        if orchestrator.discussion_state == "RUNNING":
+            orchestrator.discussion_state = "PAUSED"
+            logger.info("Discussion paused for human interjection")
+
+        return {"status": "paused", "controllers": list(controllers.keys()), "discussion_state": orchestrator.discussion_state}
+
+    @app.post("/api/control/resume", tags=["control"])
+    async def resume(orchestrator: "DevelopmentTeamOrchestrator" = Depends(get_orchestrator)) -> Dict[str, Any]:
+        controllers = orchestrator.controllers
+        if not controllers:
+            return {"status": "resumed", "controllers": []}
+
+        for name, controller in controllers.items():
+            resume_fn = getattr(controller, "resume_automation", None)
+            if not callable(resume_fn):
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=f"Controller '{name}' does not support resume_automation()",
+                )
+            resume_fn()
+
+        # If a discussion was paused, resume it
+        if orchestrator.discussion_state == "PAUSED":
+            orchestrator.discussion_state = "RUNNING"
+            # Also clear human_control_mode in the conversation manager
+            manager = getattr(orchestrator, "discussion_manager", None)
+            if manager is not None:
+                if hasattr(manager, "human_control_mode"):
+                    manager.human_control_mode = False
+                    logger.debug("Cleared human_control_mode in conversation manager")
+            logger.info("Discussion resumed after human interjection")
+
+        return {"status": "resumed", "controllers": list(controllers.keys()), "discussion_state": orchestrator.discussion_state}
+
+    @app.post("/api/control/{model_name}/key/{key_name}", tags=["control"])
+    async def send_key(
+        model_name: str,
+        key_name: str,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, str]:
+        validate_model_name(orchestrator, model_name)
+        normalized = normalize_key_name(key_name)
+        controller = orchestrator.controllers[model_name]
+
+        manager = getattr(orchestrator, "discussion_manager", None)
+        discussion_state = getattr(orchestrator, "discussion_state", "IDLE")
+        if manager is not None and discussion_state in {"RUNNING", "PAUSED"}:
+            process_key = getattr(manager, "process_key_command", None)
+            if callable(process_key):
+                try:
+                    success = process_key(model_name, [normalized])
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Failed to route key '%s' to %s via discussion manager: %s",
+                        normalized,
+                        model_name,
+                        exc,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to send key: {exc}",
+                    ) from exc
+
+                if not success:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to send key via discussion manager",
+                    )
+
+                return {"status": "sent", "model": model_name, "key": normalized}
+
+        send_key_fn = getattr(controller, "send_key", None)
+        if not callable(send_key_fn):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=f"Controller '{model_name}' does not support send_key()",
+            )
+
+        try:
+            send_key_fn(normalized)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to send key '%s' to %s: %s", normalized, model_name, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send key: {exc}",
+            ) from exc
+
+        return {"status": "sent", "model": model_name, "key": normalized}
+
+    @app.post("/api/control/send-prompt", tags=["control"])
+    async def send_prompt(
+        request: PromptRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        """
+        Send a prompt to one or more AI models.
+
+        Returns a dict with per-model results indicating success/failure.
+        """
+        manager = getattr(orchestrator, "discussion_manager", None)
+        discussion_state = getattr(orchestrator, "discussion_state", "IDLE")
+        if manager is not None and discussion_state in {"RUNNING", "PAUSED"}:
+            if discussion_state != "PAUSED":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Pause the discussion before sending manual prompts",
+                )
+
+            try:
+                manager.inject_message(
+                    "human",
+                    request.prompt,
+                    metadata={"targets": list(request.models or [])},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to inject discussion prompt: %s", exc)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to inject prompt: {exc}",
+                ) from exc
+
+            return {
+                "results": {
+                    "discussion": {
+                        "success": True,
+                        "injected": True,
+                        "targets": list(request.models or []),
+                    }
+                }
+            }
+
+        results = {}
+
+        for model_name in request.models:
+            model_lower = model_name.lower()
+
+            # Check if model is registered
+            if model_lower not in orchestrator.controllers:
+                results[model_name] = {
+                    "success": False,
+                    "error": "Model not running or not registered"
+                }
+                continue
+
+            # Try to dispatch the command
+            try:
+                dispatch_result = orchestrator.dispatch_command(
+                    model_lower,
+                    request.prompt,
+                    submit=request.submit
+                )
+                results[model_name] = {
+                    "success": True,
+                    "dispatched": dispatch_result.get("dispatched", False),
+                    "queued": dispatch_result.get("queued", False),
+                    "reason": dispatch_result.get("reason"),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to send prompt to %s: %s", model_name, exc)
+                results[model_name] = {
+                    "success": False,
+                    "error": str(exc)
+                }
+
+        return {"results": results}
+
+    @app.get("/api/control/status", tags=["control"])
+    async def control_status(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        controller_statuses = {
+            name: orchestrator.get_controller_status(name)
+            for name in orchestrator.controllers.keys()
+        }
+        pending = {
+            name: orchestrator.get_pending_command_count(name)
+            for name in orchestrator.controllers.keys()
+        }
+        return {
+            "controllers": controller_statuses,
+            "pending": pending,
+            "api": {
+                "running": orchestrator.api_server_running(),
+                "host": orchestrator.api_host,
+                "port": orchestrator.api_port,
+            },
+        }
+
+    @app.post("/api/control/start-sessions", tags=["control"])
+    async def start_sessions(
+        payload: StartSessionsRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        project_dir = resolve_project_directory(payload.project_directory)
+        requested = normalize_model_names(
+            list(payload.models) if payload.models is not None else list(CONTROLLER_FACTORIES.keys())
+        )
+
+        started: List[str] = []
+        already_running: List[str] = []
+        failed: List[Dict[str, str]] = []
+
+        for model_name in requested:
+            existing = orchestrator.controllers.get(model_name)
+            if existing and controller_session_active(existing):
+                already_running.append(model_name)
+                continue
+            if existing:
+                orchestrator.unregister_controller(model_name)
+
+            factory = CONTROLLER_FACTORIES.get(model_name)
+            if factory is None:  # pragma: no cover - normalized inputs guard this
+                failed.append({"model": model_name, "error": "Model not supported"})
+                continue
+
+            try:
+                controller = factory(working_dir=str(project_dir))
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to initialize controller '%s': %s", model_name, exc)
+                failed.append({"model": model_name, "error": str(exc)})
+                continue
+
+            orchestrator.register_controller(
+                model_name,
+                controller,
+                metadata={"working_dir": str(project_dir)},
+            )
+
+            start_fn = getattr(controller, "start_session", None)
+            wait_fn = getattr(controller, "wait_for_ready", None)
+            if not callable(start_fn):
+                orchestrator.unregister_controller(model_name)
+                failed.append({"model": model_name, "error": "Controller does not support start_session()"})
+                continue
+
+            try:
+                # Ensure instruction file has security warnings
+                ensure_instruction_file_security(project_dir, model_name)
+
+                start_fn()
+                if callable(wait_fn):
+                    wait_fn()
+                started.append(model_name)
+            except SessionAlreadyExists as exc:
+                logger.info("Session for '%s' already running: %s", model_name, exc)
+                already_running.append(model_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to start session for '%s': %s", model_name, exc)
+                failure_entry = {"model": model_name, "error": str(exc)}
+                failed.append(failure_entry)
+                try:
+                    kill_controller_session(controller)
+                except HTTPException as kill_exc:
+                    failure_entry["error"] = f"{failure_entry['error']} (cleanup_failed: {kill_exc.detail})"
+                except Exception as kill_exc:  # noqa: BLE001
+                    logger.warning("Cleanup failed for '%s': %s", model_name, kill_exc)
+                orchestrator.unregister_controller(model_name)
+
+        if started or already_running:
+            orchestrator.active_project_directory = str(project_dir)
+            orchestrator.project_state = "OPEN"
+        else:
+            orchestrator.project_state = "IDLE"
+
+        return {
+            "success": not failed,
+            "started": started,
+            "already_running": already_running,
+            "failed": failed,
+            "project_directory": str(project_dir),
+        }
+
+    @app.post("/api/control/stop-sessions", tags=["control"])
+    async def stop_sessions(
+        payload: StopSessionsRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        if payload.models:
+            requested = normalize_model_names(list(payload.models))
+        else:
+            requested = list(orchestrator.controllers.keys())
+
+        stopped: List[str] = []
+        already_stopped: List[str] = []
+        failed: List[Dict[str, str]] = []
+
+        for model_name in requested:
+            controller = orchestrator.controllers.get(model_name)
+            if controller is None:
+                already_stopped.append(model_name)
+                continue
+
+            try:
+                kill_controller_session(controller)
+                orchestrator.unregister_controller(model_name)
+                stopped.append(model_name)
+            except SessionNotFoundError:
+                orchestrator.unregister_controller(model_name)
+                already_stopped.append(model_name)
+            except SessionBackendError as exc:
+                logger.error("Backend error stopping '%s': %s", model_name, exc)
+                failed.append({"model": model_name, "error": str(exc)})
+            except HTTPException as exc:
+                failed.append({"model": model_name, "error": exc.detail})
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Unexpected error stopping '%s': %s", model_name, exc)
+                failed.append({"model": model_name, "error": str(exc)})
+
+        if not orchestrator.controllers:
+            orchestrator.active_project_directory = None
+            orchestrator.project_state = "IDLE"
+            orchestrator.should_stop_discussion = True
+            orchestrator.discussion_state = "IDLE"
+
+        return {
+            "success": not failed,
+            "stopped": stopped,
+            "already_stopped": already_stopped,
+            "failed": failed,
+        }
+
+
+def register_discussion_routes(app: FastAPI) -> None:
+    """Attach discussion orchestration endpoints to the provided FastAPI app."""
+
+    def _normalize_participants(
+        orchestrator: "DevelopmentTeamOrchestrator",
+        requested: Optional[Sequence[str]],
+    ) -> List[str]:
+        if requested:
+            return normalize_model_names(requested)
+        available = list(orchestrator.controllers.keys())
+        if not available:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active controllers available for discussion",
+            )
+        return available
+
+    def _order_participants(participants: List[str], starting_model: str) -> List[str]:
+        if starting_model not in participants:
+            return participants
+        idx = participants.index(starting_model)
+        return participants[idx:] + participants[:idx]
+
+    @app.post("/api/discussion/configure", tags=["discussion"])
+    async def configure_discussion(
+        config: DiscussionConfig,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        participants = _normalize_participants(orchestrator, config.participants)
+        if len(participants) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least two participants are required for a discussion",
+            )
+
+        starting_model = (
+            config.starting_model.strip().lower()
+            if isinstance(config.starting_model, str) and config.starting_model.strip()
+            else participants[0]
+        )
+        if starting_model not in participants:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"starting_model '{config.starting_model}' is not part of the participant list",
+            )
+
+        ordered_participants = _order_participants(participants, starting_model)
+        try:
+            max_turns = max(1, int(config.max_turns))
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="max_turns must be an integer >= 1",
+            ) from None
+
+        normalized_config = {
+            "max_turns": max_turns,
+            "starting_model": starting_model,
+            "participants": ordered_participants,
+            "discussion_topic": (config.discussion_topic or "").strip() or None,
+            "include_history": bool(config.include_history),
+            "log_level": (config.log_level or "").upper() or None,
+        }
+
+        orchestrator.discussion_config = normalized_config
+        return {"status": "configured", "config": normalized_config}
+
+    @app.post("/api/discussion/start", tags=["discussion"])
+    async def start_discussion(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        if orchestrator.project_state != "OPEN":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Open a project before starting a discussion",
+            )
+
+        if len(orchestrator.controllers) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least two active controllers are required",
+            )
+
+        if orchestrator.discussion_state == "RUNNING":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Discussion already running",
+            )
+
+        if orchestrator.discussion_thread and orchestrator.discussion_thread.is_alive():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Discussion thread already active",
+            )
+
+        config = orchestrator.discussion_config
+        if not config:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Configure the discussion before starting",
+            )
+
+        participants = list(config.get("participants") or [])
+        if len(participants) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Discussion configuration must include at least two participants",
+            )
+
+        missing = [name for name in participants if name not in orchestrator.controllers]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Participants not running: {', '.join(missing)}",
+            )
+
+        topic = config.get("discussion_topic") or "General discussion"
+        max_turns = int(config.get("max_turns") or 10)
+        include_history = bool(config.get("include_history", True))
+        log_level_override = config.get("log_level")
+        orchestrator.apply_discussion_log_level(log_level_override)
+
+        orchestrator.should_stop_discussion = False
+        orchestrator.discussion_state = "RUNNING"
+        orchestrator.discussion_error = None
+
+        def _discussion_worker() -> None:
+            result = None
+            try:
+                result = orchestrator.start_discussion(
+                    topic,
+                    participants=participants,
+                    max_turns=max_turns,
+                    include_history=include_history,
+                )
+            except Exception as exc:  # noqa: BLE001
+                orchestrator.discussion_error = str(exc)
+                logger.exception("Discussion failed: %s", exc)
+            finally:
+                # Cache the final turn count before manager is cleared
+                if result and "conversation" in result:
+                    orchestrator.last_discussion_turns = len(result["conversation"])
+                    logger.info("Discussion completed with %d turns", orchestrator.last_discussion_turns)
+                elif orchestrator.discussion_manager:
+                    snapshot = getattr(orchestrator.discussion_manager, "get_status_snapshot", lambda: {})()
+                    orchestrator.last_discussion_turns = snapshot.get("turn_counter", 0)
+                    logger.info("Discussion completed, cached turn count: %d", orchestrator.last_discussion_turns)
+                orchestrator.should_stop_discussion = False
+                orchestrator.discussion_state = "IDLE"
+                orchestrator.discussion_thread = None
+                orchestrator.reset_discussion_log_level()
+
+        thread = threading.Thread(target=_discussion_worker, name="orchestrated-discussion", daemon=True)
+        orchestrator.discussion_thread = thread
+        thread.start()
+
+        return {
+            "status": "started",
+            "topic": topic,
+            "max_turns": max_turns,
+            "participants": participants,
+        }
+
+    @app.post("/api/discussion/stop", tags=["discussion"])
+    async def stop_discussion(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        thread = orchestrator.discussion_thread
+        if thread is None or not thread.is_alive():
+            orchestrator.should_stop_discussion = False
+            orchestrator.discussion_state = "IDLE"
+            return {"status": "stopped", "already_stopped": True}
+
+        orchestrator.should_stop_discussion = True
+        logger.info("Stop discussion requested, waiting for current turn to complete...")
+        thread.join(timeout=30.0)
+        if thread.is_alive():
+            logger.error("Discussion thread did not stop within 30 seconds")
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Discussion did not stop within 30 seconds. The current model may be taking a long time to respond. Try again or use the KILL button if needed.",
+            )
+
+        orchestrator.discussion_thread = None
+        orchestrator.discussion_state = "IDLE"
+        orchestrator.should_stop_discussion = False
+        logger.info("Discussion stopped successfully")
+        return {"status": "stopped", "already_stopped": False}
+
+    @app.get("/api/discussion/status", tags=["discussion"])
+    async def discussion_status(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        snapshot = orchestrator.get_discussion_status_snapshot()
+        thread = orchestrator.discussion_thread
+        snapshot["thread_alive"] = bool(thread and thread.is_alive())
+        snapshot["config"] = orchestrator.discussion_config
+        return snapshot
+
+
+def register_instruction_routes(app: FastAPI) -> None:
+    """Attach instruction file management endpoints to the provided FastAPI app."""
+
+    @app.get("/api/instructions/{model_name}", tags=["instructions"])
+    async def get_instruction_file(
+        model_name: str,
+        project_directory: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """
+        Fetch the instruction file for a given model.
+
+        Args:
+            model_name: Model identifier (e.g., "Claude", "Gemini")
+            project_directory: Optional base directory (defaults to repository root)
+
+        Returns:
+            Dictionary with "content" key containing the file contents
+        """
+        if model_name not in INSTRUCTION_FILES:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown model '{model_name}'",
+            )
+
+        # Determine base path
+        if project_directory:
+            base_path = Path(project_directory)
+        else:
+            # Default to repository root (2 levels up from src/orchestrator/)
+            base_path = Path(__file__).resolve().parents[2]
+
+        file_path = base_path / INSTRUCTION_FILES[model_name]
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            logger.debug("Read instruction file: %s", file_path)
+            return {"content": content}
+        except FileNotFoundError:
+            logger.warning("Instruction file not found: %s", file_path)
+            return {"content": ""}
+
+    @app.post("/api/instructions/{model_name}", tags=["instructions"])
+    async def save_instruction_file(
+        model_name: str,
+        instruction_file: InstructionFile,
+    ) -> Dict[str, str]:
+        """
+        Save the instruction file for a given model.
+
+        Args:
+            model_name: Model identifier
+            instruction_file: Request body with content and optional project_directory
+
+        Returns:
+            Success message
+        """
+        if model_name not in INSTRUCTION_FILES:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown model '{model_name}'",
+            )
+
+        # Determine base path
+        if instruction_file.project_directory:
+            base_path = Path(instruction_file.project_directory)
+        else:
+            base_path = Path(__file__).resolve().parents[2]
+
+        file_path = base_path / INSTRUCTION_FILES[model_name]
+
+        try:
+            file_path.write_text(instruction_file.content, encoding="utf-8")
+            logger.info("Saved instruction file: %s", file_path)
+            return {"message": "File saved successfully"}
+        except Exception as exc:
+            logger.error("Failed to save instruction file %s: %s", file_path, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(exc),
+            )
+
+
+def register_filesystem_routes(app: FastAPI) -> None:
+    """Attach filesystem browsing endpoints to the provided FastAPI app."""
+
+    @app.post("/api/fs/browse", tags=["filesystem"])
+    async def browse_filesystem(directory_path: DirectoryPath) -> Dict[str, Any]:
+        """
+        Browse filesystem directory contents.
+
+        Args:
+            directory_path: Request body with path to browse
+
+        Returns:
+            Dictionary with "path" and "contents" (list of files/folders)
+        """
+        logger.debug("Browsing path: %s", directory_path.path)
+        try:
+            base_path = Path(directory_path.path).resolve()
+            if not base_path.is_dir():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid directory path",
+                )
+
+            contents = []
+            for item in sorted(base_path.iterdir(), key=lambda x: (not x.is_dir(), x.name)):
+                contents.append({
+                    "name": item.name,
+                    "is_dir": item.is_dir(),
+                    "path": str(item),
+                })
+
+            return {"path": str(base_path), "contents": contents}
+        except PermissionError as exc:
+            logger.warning("Permission denied browsing %s: %s", directory_path.path, exc)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied",
+            )
+        except Exception as exc:
+            logger.error("Error browsing path %s: %s", directory_path.path, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(exc),
+            )
+
+
+STREAM_POLL_INTERVAL_SECONDS = 0.5
+
+
+def normalize_scrollback_text(text: str) -> str:
+    """
+    Remove trailing blank lines from a tmux scrollback capture.
+
+    Tmux captures often pad the buffer with empty rows equal to the pane height,
+    which results in WebSocket clients displaying a blank viewport initially.
+    This helper trims those trailing blank lines while preserving intentional
+    whitespace elsewhere. A trailing newline is preserved so line breaks render
+    naturally in the UI.
+    """
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines) + "\n"
+
+
+def compute_scrollback_event(previous: str, current: str) -> Optional[Dict[str, str]]:
+    """
+    Determine the appropriate payload describing the transition from previous to current.
+
+    Returns:
+        Dict containing "type" (snapshot|append|reset) and "content". None if unchanged.
+    """
+    if not previous:
+        if current:
+            return {"type": "snapshot", "content": current}
+        return None
+
+    if current.startswith(previous):
+        delta = current[len(previous):]
+        if delta:
+            return {"type": "append", "content": delta}
+        return None
+
+    return {"type": "reset", "content": current}
+
+
+async def stream_controller_output(
+    websocket: WebSocket,
+    orchestrator: Optional["DevelopmentTeamOrchestrator"],
+    model_name: str,
+) -> None:
+    """Stream tmux scrollback snapshots over the given WebSocket connection."""
+
+    await websocket.accept()
+    logger.debug("WebSocket accepted for model '%s'", model_name)
+
+    if orchestrator is None:
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": "Orchestrator is not available",
+        })
+        await websocket.close(code=1011)
+        return
+
+    if model_name not in orchestrator.controllers:
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": f"Unknown model '{model_name}'",
+        })
+        await websocket.close(code=1008)
+        return
+
+    controller = orchestrator.controllers[model_name]
+    capture: Optional[Callable[[], str]] = getattr(controller, "capture_scrollback", None)
+    if not callable(capture):
+        logger.warning("Model '%s' lacks capture_scrollback()", model_name)
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": "capture_scrollback unavailable on controller",
+        })
+        await websocket.close(code=1011)
+        return
+
+    capture_callable = cast(Callable[[], str], capture)
+    previous = ""
+    last_status_payload: Optional[Dict[str, Any]] = None
+    last_status_sent_at = 0.0
+
+    try:
+        initial_snapshot = await asyncio.to_thread(capture_callable)
+        initial_snapshot = normalize_scrollback_text(initial_snapshot)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Initial capture failed for %s: %s", model_name, exc)
+        await websocket.send_json({
+            "type": "error",
+            "model": model_name,
+            "message": f"capture_scrollback failed: {exc}",
+        })
+        await websocket.close(code=1011)
+        return
+
+    try:
+        event = compute_scrollback_event(previous, initial_snapshot)
+        if event:
+            payload = {
+                "model": model_name,
+                "timestamp": datetime.utcnow().isoformat(),
+                **event,
+            }
+            logger.debug("Initial snapshot payload for '%s': type=%s size=%d", model_name, event["type"], len(event["content"]))
+            await websocket.send_json(payload)
+            previous = initial_snapshot
+        else:
+            previous = initial_snapshot
+    except WebSocketDisconnect:
+        logger.debug("WebSocket disconnected for model '%s' during initial snapshot", model_name)
+        return
+
+    try:
+        while True:
+            try:
+                snapshot = await asyncio.to_thread(capture_callable)
+                snapshot = normalize_scrollback_text(snapshot)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to capture scrollback for %s: %s", model_name, exc)
+                await websocket.send_json({
+                    "type": "error",
+                    "model": model_name,
+                    "message": f"capture_scrollback failed: {exc}",
+                })
+                await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+                continue
+
+            event = compute_scrollback_event(previous, snapshot)
+            if event:
+                payload = {
+                    "model": model_name,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    **event,
+                }
+                logger.debug("Streaming update for '%s': type=%s size=%d", model_name, event["type"], len(event["content"]))
+                await websocket.send_json(payload)
+                previous = snapshot
+            else:
+                logger.debug("No diff for '%s' (previous=%d chars, current=%d chars)", model_name, len(previous), len(snapshot))
+
+            if orchestrator is not None:
+                now = time.time()
+                if now - last_status_sent_at >= 2.0:
+                    status_snapshot = orchestrator.get_discussion_status_snapshot()
+                    manager_snapshot = status_snapshot.get("manager") or {}
+                    status_payload = {
+                        "type": "discussion_status",
+                        "project_state": status_snapshot.get("project_state"),
+                        "state": status_snapshot.get("discussion_state"),
+                        "turn": manager_snapshot.get("turn_counter"),
+                        "speaker": manager_snapshot.get("current_agent"),
+                        "pending_injections": manager_snapshot.get("pending_injections"),
+                        "error": status_snapshot.get("error"),
+                    }
+                    config = status_snapshot.get("config")
+                    if config:
+                        status_payload["config"] = config
+                    if status_payload != last_status_payload:
+                        await websocket.send_json(status_payload)
+                        last_status_payload = status_payload
+                    last_status_sent_at = now
+
+            await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+    except WebSocketDisconnect:
+        logger.debug("WebSocket disconnected for model '%s'", model_name)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error streaming %s: %s", model_name, exc)
+        await websocket.close(code=1011)
+
+
+def register_stream_routes(app: FastAPI) -> None:
+    """Attach WebSocket streaming routes for session output."""
+
+    @app.websocket("/ws/session/{model_name}")
+    async def stream_session_output(websocket: WebSocket, model_name: str) -> None:
+        orchestrator = getattr(websocket.app.state, "orchestrator", None)
+        await stream_controller_output(websocket, orchestrator, model_name)
+
+    @app.post("/api/fs/prepare-project", tags=["filesystem"])
+    async def prepare_project(directory_path: DirectoryPath) -> Dict[str, Any]:
+        """
+        Prepare a project directory by creating instruction files if they don't exist.
+
+        This should be called when the user selects a project directory in the UI,
+        BEFORE clicking "Open Project", so the files exist for customization.
+
+        Args:
+            directory_path: Request body with path field
+
+        Returns:
+            Status of file preparation
+        """
+        try:
+            project_dir = resolve_project_directory(directory_path.path)
+            created_files = []
+            existing_files = []
+
+            # Create instruction files for all known models
+            for model_name in INSTRUCTION_FILES.keys():
+                model_lower = model_name.lower()
+                instruction_file = INSTRUCTION_FILES.get(model_name)
+                file_path = project_dir / instruction_file
+
+                if file_path.exists():
+                    existing_files.append(instruction_file)
+                else:
+                    # Create new file with template
+                    ensure_instruction_file_security(project_dir, model_lower)
+                    created_files.append(instruction_file)
+
+            return {
+                "project_directory": str(project_dir),
+                "created_files": created_files,
+                "existing_files": existing_files,
+                "message": f"Created {len(created_files)} instruction files" if created_files else "All instruction files already exist"
+            }
+
+        except Exception as exc:
+            logger.error("Failed to prepare project: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to prepare project: {str(exc)}"
+            )
+
+    @app.post("/api/fs/create-folder", tags=["filesystem"])
+    async def create_folder(new_folder: NewFolder) -> Dict[str, str]:
+        """
+        Create a new folder in the specified directory.
+
+        Args:
+            new_folder: Request body with path and folderName
+
+        Returns:
+            Success message
+        """
+        logger.debug("Creating folder: %s in %s", new_folder.folderName, new_folder.path)
+        try:
+            path = Path(new_folder.path).resolve()
+            folder_name = new_folder.folderName
+            new_folder_path = path / folder_name
+            new_folder_path.mkdir(parents=False, exist_ok=False)
+            logger.info("Created folder: %s", new_folder_path)
+            return {"message": f"Folder '{folder_name}' created successfully"}
+        except FileExistsError:
+            logger.warning("Folder already exists: %s", new_folder_path)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Folder with that name already exists",
+            )
+        except PermissionError as exc:
+            logger.warning("Permission denied creating folder %s: %s", new_folder_path, exc)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied",
+            )
+        except Exception as exc:
+            logger.error("Error creating folder %s: %s", new_folder_path, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(exc),
+            )
