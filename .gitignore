@@ -72,7 +72,7 @@ temp/
 # *.jpg
 # *.jpeg
 # repomix-output.txt
-repomix-output.txt
+repomix-output.xml
 
 # exclude these untracked files
 #CodexConcerns.md
@@ -88,3 +88,4 @@ logs/
 
 .claude/
 
+.specstory/
