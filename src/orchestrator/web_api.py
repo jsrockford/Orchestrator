@@ -228,11 +228,26 @@ def resolve_project_directory(path_str: str) -> Path:
 
 
 SECURITY_MARKER = "<!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->"
+TEMPLATE_PATH = Path(__file__).parent.parent.parent / "templates" / "ALL_MODELS_TEMPLATE.md"
 
 
-def get_security_warning_section(project_dir: str) -> str:
-    """Generate the security warning section for instruction files."""
-    return f"""{SECURITY_MARKER}
+def get_instruction_template(project_dir: str) -> str:
+    """
+    Load the instruction template and substitute the project directory.
+
+    Args:
+        project_dir: The project directory path to substitute into the template
+
+    Returns:
+        The template content with project_dir substituted
+    """
+    try:
+        logger.info("Looking for template at: %s", TEMPLATE_PATH)
+        logger.info("Template exists: %s", TEMPLATE_PATH.exists())
+        if not TEMPLATE_PATH.exists():
+            logger.warning("Template file not found at %s, using fallback", TEMPLATE_PATH)
+            # Fallback with full instructions if template doesn't exist
+            return f"""{SECURITY_MARKER}
 ## CRITICAL: Project Directory Security
 
 **Your working directory**: {project_dir}
@@ -255,12 +270,82 @@ def get_security_warning_section(project_dir: str) -> str:
 
 {SECURITY_MARKER}
 
+═══════════════════════════════════════════════════════════
+⚠️  CRITICAL REQUIREMENTS - READ FIRST ⚠️
+═══════════════════════════════════════════════════════════
+
+## 1. RESPONSE DELIMITER PROTOCOL (MANDATORY)
+
+When responding to your teammates, you MUST wrap your final
+response in delimiters. NO EXCEPTIONS.
+
+**FORMAT:**
+```
+<<<RESPONSE_START>>>
+Your actual response here
+<<<RESPONSE_END>>>
+```
+
+**Why this matters:**
+- Everything outside these delimiters (thinking, tool use, file
+  edits, etc.) will be filtered out and NOT sent to your teammate
+- Missing delimiters = BROKEN COMMUNICATION
+- Your teammate will only see what's inside the delimiters
+
+**Example:**
+```
+[Your internal reasoning and tool usage here...]
+
+<<<RESPONSE_START>>>
+I've reviewed the code and found the following issues:
+1. The collision detection needs adjustment
+2. Please update line 42 to fix the boundary check
+<<<RESPONSE_END>>>
+```
+
+## 2. PROJECT COMPLETION SIGNAL
+
+When ALL project objectives are met and you AND your teammates
+agree the work is complete, signal completion by including:
+
+**[[PROJECT_COMPLETE]]**
+
+Place this INSIDE your <<<RESPONSE_START>>> delimiters.
+
+The orchestrator requires 66% consensus to end the discussion.
+Only signal when you genuinely believe the project is done.
+
+ =============================================================
+
+"""
+
+        template_content = TEMPLATE_PATH.read_text(encoding='utf-8')
+
+        # Replace the placeholder project directory with the actual one
+        # The template has a hardcoded path that we need to replace
+        template_content = template_content.replace(
+            '/home/dgray/Projects/scratch/project-orch2',
+            project_dir
+        )
+
+        return template_content
+
+    except Exception as exc:
+        logger.error("Failed to load template from %s: %s", TEMPLATE_PATH, exc)
+        # Return minimal security warning as fallback
+        return f"""{SECURITY_MARKER}
+## CRITICAL: Project Directory Security
+
+**Your working directory**: {project_dir}
+
+{SECURITY_MARKER}
+
 """
 
 
 def ensure_instruction_file_security(project_dir: Path, model_name: str) -> None:
     """
-    Ensure instruction file exists with security warnings in the project directory.
+    Ensure instruction file exists with template content (security + protocol) in the project directory.
 
     Args:
         project_dir: The project directory path
@@ -272,7 +357,7 @@ def ensure_instruction_file_security(project_dir: Path, model_name: str) -> None
         return
 
     file_path = project_dir / instruction_file
-    security_section = get_security_warning_section(str(project_dir))
+    template_content = get_instruction_template(str(project_dir))
 
     try:
         if file_path.exists():
@@ -281,17 +366,17 @@ def ensure_instruction_file_security(project_dir: Path, model_name: str) -> None
 
             # Check if security marker already present
             if SECURITY_MARKER in content:
-                logger.debug("Security warnings already present in %s", file_path)
+                logger.debug("Template content already present in %s", file_path)
                 return
 
-            # Prepend security warnings
-            new_content = security_section + "\n" + content
+            # Prepend template content (security + protocol)
+            new_content = template_content + "\n" + content
             file_path.write_text(new_content, encoding='utf-8')
-            logger.info("Prepended security warnings to existing %s", file_path)
+            logger.info("Prepended instruction template to existing %s", file_path)
         else:
-            # Create new file with security warnings
-            file_path.write_text(security_section, encoding='utf-8')
-            logger.info("Created new instruction file %s with security warnings", file_path)
+            # Create new file with template content
+            file_path.write_text(template_content, encoding='utf-8')
+            logger.info("Created new instruction file %s with template content", file_path)
 
     except Exception as exc:
         logger.error("Failed to update instruction file %s: %s", file_path, exc)
@@ -345,7 +430,12 @@ def register_control_routes(app: FastAPI) -> None:
                 )
             pause_fn("api-request")
 
-        return {"status": "paused", "controllers": list(controllers.keys())}
+        # If a discussion is running, pause it so human can inject prompts
+        if orchestrator.discussion_state == "RUNNING":
+            orchestrator.discussion_state = "PAUSED"
+            logger.info("Discussion paused for human interjection")
+
+        return {"status": "paused", "controllers": list(controllers.keys()), "discussion_state": orchestrator.discussion_state}
 
     @app.post("/api/control/resume", tags=["control"])
     async def resume(orchestrator: "DevelopmentTeamOrchestrator" = Depends(get_orchestrator)) -> Dict[str, Any]:
@@ -361,7 +451,13 @@ def register_control_routes(app: FastAPI) -> None:
                     detail=f"Controller '{name}' does not support resume_automation()",
                 )
             resume_fn()
-        return {"status": "resumed", "controllers": list(controllers.keys())}
+
+        # If a discussion was paused, resume it
+        if orchestrator.discussion_state == "PAUSED":
+            orchestrator.discussion_state = "RUNNING"
+            logger.info("Discussion resumed after human interjection")
+
+        return {"status": "resumed", "controllers": list(controllers.keys()), "discussion_state": orchestrator.discussion_state}
 
     @app.post("/api/control/{model_name}/key/{key_name}", tags=["control"])
     async def send_key(
@@ -782,16 +878,19 @@ def register_discussion_routes(app: FastAPI) -> None:
             return {"status": "stopped", "already_stopped": True}
 
         orchestrator.should_stop_discussion = True
-        thread.join(timeout=10.0)
+        logger.info("Stop discussion requested, waiting for current turn to complete...")
+        thread.join(timeout=30.0)
         if thread.is_alive():
+            logger.error("Discussion thread did not stop within 30 seconds")
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="Discussion did not stop within 10 seconds",
+                detail="Discussion did not stop within 30 seconds. The current model may be taking a long time to respond. Try again or use the KILL button if needed.",
             )
 
         orchestrator.discussion_thread = None
         orchestrator.discussion_state = "IDLE"
         orchestrator.should_stop_discussion = False
+        logger.info("Discussion stopped successfully")
         return {"status": "stopped", "already_stopped": False}
 
     @app.get("/api/discussion/status", tags=["discussion"])
@@ -1120,6 +1219,52 @@ def register_stream_routes(app: FastAPI) -> None:
     async def stream_session_output(websocket: WebSocket, model_name: str) -> None:
         orchestrator = getattr(websocket.app.state, "orchestrator", None)
         await stream_controller_output(websocket, orchestrator, model_name)
+
+    @app.post("/api/fs/prepare-project", tags=["filesystem"])
+    async def prepare_project(directory_path: DirectoryPath) -> Dict[str, Any]:
+        """
+        Prepare a project directory by creating instruction files if they don't exist.
+
+        This should be called when the user selects a project directory in the UI,
+        BEFORE clicking "Open Project", so the files exist for customization.
+
+        Args:
+            directory_path: Request body with path field
+
+        Returns:
+            Status of file preparation
+        """
+        try:
+            project_dir = resolve_project_directory(directory_path.path)
+            created_files = []
+            existing_files = []
+
+            # Create instruction files for all known models
+            for model_name in INSTRUCTION_FILES.keys():
+                model_lower = model_name.lower()
+                instruction_file = INSTRUCTION_FILES.get(model_name)
+                file_path = project_dir / instruction_file
+
+                if file_path.exists():
+                    existing_files.append(instruction_file)
+                else:
+                    # Create new file with template
+                    ensure_instruction_file_security(project_dir, model_lower)
+                    created_files.append(instruction_file)
+
+            return {
+                "project_directory": str(project_dir),
+                "created_files": created_files,
+                "existing_files": existing_files,
+                "message": f"Created {len(created_files)} instruction files" if created_files else "All instruction files already exist"
+            }
+
+        except Exception as exc:
+            logger.error("Failed to prepare project: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to prepare project: {str(exc)}"
+            )
 
     @app.post("/api/fs/create-folder", tags=["filesystem"])
     async def create_folder(new_folder: NewFolder) -> Dict[str, str]:

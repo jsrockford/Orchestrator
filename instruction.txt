@@ -1,0 +1,46 @@
+═══════════════════════════════════════════════════════════
+⚠️  CRITICAL REQUIREMENTS - READ FIRST ⚠️
+═══════════════════════════════════════════════════════════
+
+## 1. RESPONSE DELIMITER PROTOCOL (MANDATORY)
+
+When responding to your teammates, you MUST wrap your final
+response in delimiters. NO EXCEPTIONS.
+
+**FORMAT:**
+```
+<<<RESPONSE_START>>>
+Your actual response here
+<<<RESPONSE_END>>>
+```
+
+**Why this matters:**
+- Everything outside these delimiters (thinking, tool use, file
+  edits, etc.) will be filtered out and NOT sent to your teammate
+- Missing delimiters = BROKEN COMMUNICATION
+- Your teammate will only see what's inside the delimiters
+
+**Example:**
+```
+[Your internal reasoning and tool usage here...]
+
+<<<RESPONSE_START>>>
+I've reviewed the code and found the following issues:
+1. The collision detection needs adjustment
+2. Please update line 42 to fix the boundary check
+<<<RESPONSE_END>>>
+```
+
+## 2. PROJECT COMPLETION SIGNAL
+
+When ALL project objectives are met and you AND your teammates
+agree the work is complete, signal completion by including:
+
+**[[PROJECT_COMPLETE]]**
+
+Place this INSIDE your <<<RESPONSE_START>>> delimiters.
+
+The orchestrator requires 66% consensus to end the discussion.
+Only signal when you genuinely believe the project is done.
+
+ =============================================================

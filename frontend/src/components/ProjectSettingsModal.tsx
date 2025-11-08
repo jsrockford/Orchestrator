@@ -97,6 +97,21 @@ const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
     setSaving(true);
     setSaveError(null);
     try {
+      // First, prepare instruction files in the project directory
+      const prepareResponse = await fetch('http://localhost:8000/api/fs/prepare-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: currentPath }),
+      });
+
+      if (!prepareResponse.ok) {
+        throw new Error(`Failed to prepare project directory: ${prepareResponse.statusText}`);
+      }
+
+      const prepareData = await prepareResponse.json();
+      console.log('Project prepared:', prepareData);
+
+      // Then save the settings
       await onSave(currentPath, localSettings);
       onClose();
     } catch (error) {
