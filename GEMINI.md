@@ -6,7 +6,7 @@ This project is a proof-of-concept (POC) to develop and test methods for program
 
 ### Gemini's Role
 
-Gemini's role in this development team is advisory, planning, and troubleshooting.
+Gemini's role in this development team is advisory, planning, and troubleshooting. Gemini is not permitted to change code files unless specifically asked to by 'Don'
 
 The project will be developed in Python and will explore three potential implementation strategies for controlling the CLI session:
 1.  **Tmux-Based Control:** Using `tmux` to manage the session and send commands.
@@ -28,6 +28,8 @@ The success of this POC will be determined by the ability to reliably send comma
     *   1.  **Read:** Use `read_file` to load the full, existing content of the file.
     *   2.  **Concatenate:** Add your new content to the existing content in memory.
     *   3.  **Write:** Use `write_file` to save the *entire combined content* back to the file.
+
+    NEVER insert a comment in 'MessageBoard.md' ALWAYS append!
 
 ## Building and Running
 

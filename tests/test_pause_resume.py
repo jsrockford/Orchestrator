@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.controllers.session_backend import TurnCancelledByUser
 from src.orchestrator.conversation_manager import ConversationManager
 from src.orchestrator.control_channel import ControlCommand
 
@@ -218,8 +219,71 @@ def test_control_interrupt_requested_handles_escape(monkeypatch, patched_manager
     # No new commands, but pending flag keeps the interrupt latched.
     assert manager._control_interrupt_requested() is True  # noqa: SLF001
 
-    manager._pending_interrupt = False  # noqa: SLF001
-    assert manager._control_interrupt_requested() is False  # noqa: SLF001
+
+def test_process_key_command_triggers_manual_pause(patched_manager):
+    manager, orchestrator = patched_manager
+    manager._current_agent = "gemini"  # noqa: SLF001
+    manager.human_control_mode = False
+
+    result = manager.process_key_command("gemini", ["Escape"])
+
+    assert result is True
+    assert orchestrator.controllers["gemini"].keys == ["Escape"]
+    assert manager.human_control_mode is True
+    assert manager._pending_interrupt is True  # noqa: SLF001
+
+
+def test_wait_for_controller_raises_on_interrupt(patched_manager):
+    manager, orchestrator = patched_manager
+    controller = orchestrator.controllers["gemini"]
+
+    def fake_wait_for_ready(**_kwargs):
+        return False
+
+    controller.wait_for_ready = fake_wait_for_ready  # type: ignore[assignment]
+    manager._pending_interrupt = True  # noqa: SLF001
+
+    with pytest.raises(TurnCancelledByUser):
+        manager._wait_for_controller("gemini", controller)
+
+
+def test_cancelled_turn_replays_with_injected_prompt(monkeypatch, patched_manager):
+    manager, orchestrator = patched_manager
+    orchestrator.discussion_state = "RUNNING"
+
+    read_calls = {"count": 0}
+
+    def cancelling_reader(self, speaker, snapshot):
+        if read_calls["count"] == 0:
+            read_calls["count"] += 1
+            raise TurnCancelledByUser("manual-cancel")
+        return SimpleNamespace(response="ok", cleaned_output="ok", prompt="prompt")
+
+    monkeypatch.setattr(ConversationManager, "_read_last_output", cancelling_reader)
+
+    def fake_wait(self):
+        if self._awaiting_resume_after_cancel:  # noqa: SLF001
+            self.inject_message(  # noqa: SLF001
+                "human",
+                "Focus on writing tests.",
+                metadata={"targets": ["gemini"]},
+            )
+            setattr(self.orchestrator, "discussion_state", "RUNNING")  # noqa: SLF001
+            self._awaiting_resume_after_cancel = False  # noqa: SLF001
+            self._set_status_error(None)  # noqa: SLF001
+        return True
+
+    monkeypatch.setattr(ConversationManager, "_wait_for_discussion_resumption", fake_wait)
+
+    conversation = manager.facilitate_discussion("test-topic", max_turns=2)
+
+    assert len(orchestrator.dispatch_calls) == 2
+    resumed_prompt = orchestrator.dispatch_calls[1][1]
+    assert resumed_prompt.startswith("Focus on writing tests.")
+    assert "[Turn" in resumed_prompt
+    assert conversation
+    agent_turn = next(turn for turn in conversation if turn["speaker"] == "gemini")
+    assert agent_turn["metadata"].get("injection_applied") is True
 
 
 def test_complete_manual_pause_records_turn(monkeypatch, patched_manager):

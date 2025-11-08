@@ -10,8 +10,14 @@ top of a stable contract.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import threading
+import time
 from collections import deque
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import uvicorn
 
 from ..utils.logger import get_logger
 
@@ -45,11 +51,125 @@ class DevelopmentTeamOrchestrator:
         self._debug_prompts: bool = False
         self._debug_prompt_chars: int = 200
         self.controller_metadata: Dict[str, Dict[str, Any]] = {}
+        self.api_host: Optional[str] = None
+        self.api_port: Optional[int] = None
+        self._api_app: Any = None
+        self._api_server: Optional[uvicorn.Server] = None
+        self._api_thread: Optional[threading.Thread] = None
+        self.active_project_directory: Optional[str] = None
+        self.project_state: str = "IDLE"
+        self.discussion_state: str = "IDLE"
+        self.discussion_config: Optional[Dict[str, Any]] = None
+        self.discussion_thread: Optional[threading.Thread] = None
+        self.discussion_manager: Any | None = None
+        self.should_stop_discussion: bool = False
+        self.discussion_error: Optional[str] = None
+        self.last_discussion_turns: int = 0  # Cache final turn count when discussion completes
+        self._discussion_log_level_override: Optional[int] = None
+        self._discussion_logger_levels: Dict[str, int] = {}
+        self._discussion_logger_names: Tuple[str, ...] = (
+            "orchestrator.development_team",
+            "orchestrator.conversation",
+            "orchestrator.web_api",
+            "orchestrator.message_router",
+            "orchestrator.control_channel",
+            "orchestrator.context",
+        )
 
         if controllers:
             for name, controller in controllers.items():
                 meta = metadata.get(name) if isinstance(metadata, dict) else None
                 self.register_controller(name, controller, metadata=meta)
+
+    # ------------------------------------------------------------------ #
+    # API server management
+    # ------------------------------------------------------------------ #
+
+    def start_api_server(
+        self,
+        *,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        log_level: str = "info",
+        access_log: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Launch the embedded FastAPI server in a background thread.
+
+        Returns:
+            Dict describing the server configuration (host, port).
+        """
+        if self._api_thread and self._api_thread.is_alive():
+            raise RuntimeError("API server is already running")
+
+        from .web_api import create_app  # local import to avoid cycle
+
+        app = create_app(self)
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=int(port),
+            log_level=log_level,
+            access_log=access_log,
+            loop="asyncio",
+        )
+        server = uvicorn.Server(config)
+
+        def _run_server() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(server.serve())
+            finally:
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except RuntimeError:
+                    pass
+                asyncio.set_event_loop(None)
+                loop.close()
+
+        thread = threading.Thread(
+            target=_run_server,
+            name="orchestrator-api",
+            daemon=True,
+        )
+        thread.start()
+
+        # Wait briefly for server startup for predictable integration tests
+        deadline = time.time() + 5.0
+        while not getattr(server, "started", False) and thread.is_alive() and time.time() < deadline:
+            time.sleep(0.05)
+
+        self.api_host = host
+        self.api_port = int(port)
+        self._api_app = app
+        self._api_server = server
+        self._api_thread = thread
+        return {"host": host, "port": port}
+
+    def stop_api_server(self, *, wait: bool = True, timeout: float = 5.0) -> bool:
+        """Stop the embedded FastAPI server if it is running."""
+        server = self._api_server
+        thread = self._api_thread
+        if server is None:
+            return False
+
+        server.should_exit = True
+        server.force_exit = True
+
+        if wait and thread:
+            thread.join(timeout)
+
+        self._api_server = None
+        self._api_thread = None
+        self._api_app = None
+        self.api_host = None
+        self.api_port = None
+        return True
+
+    def api_server_running(self) -> bool:
+        """Return True if the API server thread is active."""
+        return bool(self._api_thread and self._api_thread.is_alive())
 
     # ------------------------------------------------------------------ #
     # Controller registration & status helpers
@@ -346,12 +466,46 @@ class DevelopmentTeamOrchestrator:
             participant_metadata=participant_metadata or None,
             include_history=include_history,
         )
-        conversation = manager.facilitate_discussion(topic, max_turns=max_turns)
+        self.discussion_manager = manager
+        try:
+            conversation = manager.facilitate_discussion(topic, max_turns=max_turns)
+        finally:
+            if self.discussion_manager is manager:
+                self.discussion_manager = None
         return {
             "conversation": conversation,
             "manager": manager,
             "context_manager": ctx_manager,
             "message_router": msg_router,
+        }
+
+    def get_discussion_status_snapshot(self) -> Dict[str, Any]:
+        """
+        Return a high-level snapshot of the current discussion status.
+
+        Used by the API layer to report progress to the web UI.
+        """
+        manager = self.discussion_manager
+        manager_snapshot = {}
+        if manager is not None:
+            snapshot_provider = getattr(manager, "get_status_snapshot", None)
+            if callable(snapshot_provider):
+                try:
+                    manager_snapshot = snapshot_provider()
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("Conversation manager snapshot failed", exc_info=True)
+
+        # If discussion just completed, include cached turn count
+        if self.discussion_state == "IDLE" and not manager_snapshot and self.last_discussion_turns > 0:
+            manager_snapshot = {"turn_counter": self.last_discussion_turns}
+
+        return {
+            "project_state": self.project_state,
+            "discussion_state": self.discussion_state,
+            "active_project_directory": self.active_project_directory,
+            "manager": manager_snapshot or None,
+            "config": self.discussion_config,
+            "error": self.discussion_error,
         }
 
     # ------------------------------------------------------------------ #
@@ -362,6 +516,41 @@ class DevelopmentTeamOrchestrator:
         if name not in self.controllers:
             raise KeyError(f"Unknown controller '{name}'")
         return self.controllers[name]
+
+    def apply_discussion_log_level(self, level_name: Optional[str]) -> Optional[int]:
+        """
+        Override orchestrator-related loggers for the duration of a discussion.
+        """
+        if not level_name:
+            self._discussion_log_level_override = None
+            return None
+
+        level_str = str(level_name).strip().upper()
+        level = getattr(logging, level_str, None)
+        if not isinstance(level, int):
+            self.logger.warning("Invalid discussion log level '%s'", level_name)
+            return None
+
+        self._discussion_log_level_override = level
+        for logger_name in self._discussion_logger_names:
+            logger = logging.getLogger(logger_name)
+            if not logger.handlers:
+                get_logger(logger_name)
+            if logger_name not in self._discussion_logger_levels:
+                self._discussion_logger_levels[logger_name] = logger.level
+            logger.setLevel(level)
+        return level
+
+    def reset_discussion_log_level(self) -> None:
+        """Restore logger levels after a discussion completes."""
+        if not self._discussion_logger_levels:
+            self._discussion_log_level_override = None
+            return
+
+        for logger_name, original_level in self._discussion_logger_levels.items():
+            logging.getLogger(logger_name).setLevel(original_level)
+        self._discussion_logger_levels.clear()
+        self._discussion_log_level_override = None
 
     def _queue_command(
         self,

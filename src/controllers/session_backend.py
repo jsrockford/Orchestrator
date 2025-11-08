@@ -42,6 +42,10 @@ class SessionNotFoundError(SessionBackendError):
     """Raised when an operation targets a session that does not exist."""
 
 
+class TurnCancelledByUser(SessionBackendError):
+    """Raised when a human interrupt cancels the active turn."""
+
+
 class SessionBackend(ABC):
     """
     Transport interface for automating interactive AI CLI tools.
