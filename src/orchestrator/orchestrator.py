@@ -64,6 +64,7 @@ class DevelopmentTeamOrchestrator:
         self.discussion_manager: Any | None = None
         self.should_stop_discussion: bool = False
         self.discussion_error: Optional[str] = None
+        self.last_discussion_turns: int = 0  # Cache final turn count when discussion completes
         self._discussion_log_level_override: Optional[int] = None
         self._discussion_logger_levels: Dict[str, int] = {}
         self._discussion_logger_names: Tuple[str, ...] = (
@@ -493,6 +494,10 @@ class DevelopmentTeamOrchestrator:
                     manager_snapshot = snapshot_provider()
                 except Exception:  # noqa: BLE001
                     self.logger.debug("Conversation manager snapshot failed", exc_info=True)
+
+        # If discussion just completed, include cached turn count
+        if self.discussion_state == "IDLE" and not manager_snapshot and self.last_discussion_turns > 0:
+            manager_snapshot = {"turn_counter": self.last_discussion_turns}
 
         return {
             "project_state": self.project_state,

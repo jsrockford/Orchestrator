@@ -58,6 +58,7 @@ function App() {
   const closingSocketsRef = useRef<Set<string>>(new Set());
   const projectStateRef = useRef(projectState);
   const activeModelsRef = useRef<string[]>(activeModels);
+  const previousDiscussionStateRef = useRef<DiscussionState>('idle');
 
   useEffect(() => {
     projectStateRef.current = projectState;
@@ -250,6 +251,14 @@ function App() {
           return;
         }
         const normalizedState = String(data.discussion_state ?? 'idle').toLowerCase() as DiscussionState;
+
+        // Detect discussion completion
+        if (normalizedState === 'idle' && previousDiscussionStateRef.current === 'running') {
+          const turnCount = data.manager?.turn_counter ?? 0;
+          alert(`✅ Discussion completed! Total turns: ${turnCount}`);
+        }
+
+        previousDiscussionStateRef.current = normalizedState;
         setDiscussionState(normalizedState);
         setDiscussionStatus({
           turn: data.manager?.turn_counter ?? null,

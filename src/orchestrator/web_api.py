@@ -876,8 +876,9 @@ def register_discussion_routes(app: FastAPI) -> None:
         orchestrator.discussion_error = None
 
         def _discussion_worker() -> None:
+            result = None
             try:
-                orchestrator.start_discussion(
+                result = orchestrator.start_discussion(
                     topic,
                     participants=participants,
                     max_turns=max_turns,
@@ -887,6 +888,14 @@ def register_discussion_routes(app: FastAPI) -> None:
                 orchestrator.discussion_error = str(exc)
                 logger.exception("Discussion failed: %s", exc)
             finally:
+                # Cache the final turn count before manager is cleared
+                if result and "conversation" in result:
+                    orchestrator.last_discussion_turns = len(result["conversation"])
+                    logger.info("Discussion completed with %d turns", orchestrator.last_discussion_turns)
+                elif orchestrator.discussion_manager:
+                    snapshot = getattr(orchestrator.discussion_manager, "get_status_snapshot", lambda: {})()
+                    orchestrator.last_discussion_turns = snapshot.get("turn_counter", 0)
+                    logger.info("Discussion completed, cached turn count: %d", orchestrator.last_discussion_turns)
                 orchestrator.should_stop_discussion = False
                 orchestrator.discussion_state = "IDLE"
                 orchestrator.discussion_thread = None
