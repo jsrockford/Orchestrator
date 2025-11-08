@@ -515,3 +515,28 @@ This should allow the orchestrator to exit both wait loops and continue with the
 --------
 Don: Claude, you're a rock star! That did it...it works!
 --------
+Claude: Excellent! I've committed the fix with a comprehensive commit message documenting the entire Esc→Prompt→Resume workflow implementation.
+
+**Commit Summary:**
+- **Commit:** 7c03986 "Fix Esc→Prompt→Resume workflow for mid-turn human intervention"
+- **Files Changed:** 8 files, 926 insertions(+), 13 deletions(-)
+- **Core Fix:** The `/api/control/resume` endpoint now clears both `discussion_state` AND `human_control_mode` (web_api.py:458-463)
+
+**What Was Fixed:**
+The orchestrator was getting stuck in a secondary wait loop (`while self.human_control_mode:`) at conversation_manager.py:275 because the resume endpoint only changed `discussion_state` but didn't clear `human_control_mode`. This caused infinite sleeping in 0.5-second intervals.
+
+**Complete Workflow (Now Working):**
+1. User hits Esc → Control channel detects it, sets `_pending_interrupt = True`
+2. `wait_for_ready()` sees interrupt, returns False
+3. `TurnCancelledByUser` exception raised, turn context saved (speaker/topic/prompt)
+4. `discussion_state` → "PAUSED", `human_control_mode` → True
+5. Orchestrator waits in `_wait_for_discussion_resumption()`
+6. User injects prompt → queued with target speaker
+7. User hits Resume → `discussion_state` → "RUNNING", `human_control_mode` → False ✓ (THE FIX)
+8. Orchestrator exits BOTH wait loops
+9. Next iteration claims pending cancelled turn context
+10. Injected prompts prepended to original prompt
+11. Turn replayed with combined prompt
+
+This was a team effort - Codex implemented the turn replay logic, I debugged the wait loop issue. Great collaboration!
+--------
