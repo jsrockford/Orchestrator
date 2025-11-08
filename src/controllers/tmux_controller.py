@@ -16,7 +16,8 @@ from .session_backend import (
     SessionBackend,
     SessionSpec,
     SessionBackendError,
-    SessionNotFoundError
+    SessionNotFoundError,
+    TurnCancelledByUser,
 )
 from ..utils.exceptions import (
     SessionAlreadyExists,
@@ -288,6 +289,26 @@ class TmuxController(SessionBackend):
         if self._strip_ansi_for_markers:
             self.logger.debug("ANSI stripping enabled for indicator detection")
         self._pause_on_manual_clients = bool(self.config.get('pause_on_manual_clients', True))
+        cancellation_markers = self.config.get('cancellation_indicators') or []
+        if isinstance(cancellation_markers, str):
+            cancellation_markers = [cancellation_markers]
+        normalized_cancellations = [
+            str(marker).strip().lower()
+            for marker in cancellation_markers
+            if isinstance(marker, str) and marker.strip()
+        ]
+        default_cancellations = [
+            "request cancelled",
+            "request canceled",
+            "operation cancelled",
+            "operation canceled",
+            "keyboardinterrupt",
+            "ctrl+c",
+            "cancelled by user",
+            "canceled by user",
+            "user interrupt",
+        ]
+        self._cancellation_markers: List[str] = normalized_cancellations or default_cancellations
 
         guard_cfg = self.config.get('interactive_command_guard') or {}
         self._interactive_guard: Optional[_InteractiveCommandGuard] = None
@@ -1276,6 +1297,21 @@ class TmuxController(SessionBackend):
     def _contains_any(haystack: str, needles: Sequence[str]) -> bool:
         return any(needle and needle in haystack for needle in needles)
 
+    def _detect_cancellation_signal(self, tail_lines: Sequence[str]) -> Optional[str]:
+        """
+        Return the matched cancellation marker when tmux reports a manual stop.
+        """
+        if not tail_lines or not self._cancellation_markers:
+            return None
+        window = tail_lines[-10:] if len(tail_lines) > 10 else tail_lines
+        normalized = "\n".join(line.lower() for line in window if line)
+        if not normalized:
+            return None
+        for marker in self._cancellation_markers:
+            if marker and marker in normalized:
+                return marker
+        return None
+
     def _indicator_text(self, text: str) -> str:
         if not text:
             return ""
@@ -1417,6 +1453,9 @@ class TmuxController(SessionBackend):
 
         Returns:
             True if ready detected, False if timeout or interrupted.
+
+        Raises:
+            TurnCancelledByUser: If a manual cancellation signal is detected.
         """
         if not self.session_exists():
             return False
@@ -1463,6 +1502,16 @@ class TmuxController(SessionBackend):
             current_output = self.capture_output()
             tail_lines = self._tail_lines(current_output)
             sanitized_tail_lines = [self._indicator_text(line) for line in tail_lines]
+            cancellation_marker = self._detect_cancellation_signal(sanitized_tail_lines)
+            if cancellation_marker:
+                self.logger.info(
+                    "wait_for_ready detected cancellation marker '%s' for session '%s'",
+                    cancellation_marker,
+                    self.session_name,
+                )
+                raise TurnCancelledByUser(
+                    f"Session '{self.session_name}' turn cancelled via '{cancellation_marker}'"
+                )
 
             if self._apply_interactive_guard(sanitized_tail_lines):
                 stable_count = 0

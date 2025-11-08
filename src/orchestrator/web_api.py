@@ -455,6 +455,12 @@ def register_control_routes(app: FastAPI) -> None:
         # If a discussion was paused, resume it
         if orchestrator.discussion_state == "PAUSED":
             orchestrator.discussion_state = "RUNNING"
+            # Also clear human_control_mode in the conversation manager
+            manager = getattr(orchestrator, "discussion_manager", None)
+            if manager is not None:
+                if hasattr(manager, "human_control_mode"):
+                    manager.human_control_mode = False
+                    logger.debug("Cleared human_control_mode in conversation manager")
             logger.info("Discussion resumed after human interjection")
 
         return {"status": "resumed", "controllers": list(controllers.keys()), "discussion_state": orchestrator.discussion_state}
@@ -468,6 +474,34 @@ def register_control_routes(app: FastAPI) -> None:
         validate_model_name(orchestrator, model_name)
         normalized = normalize_key_name(key_name)
         controller = orchestrator.controllers[model_name]
+
+        manager = getattr(orchestrator, "discussion_manager", None)
+        discussion_state = getattr(orchestrator, "discussion_state", "IDLE")
+        if manager is not None and discussion_state in {"RUNNING", "PAUSED"}:
+            process_key = getattr(manager, "process_key_command", None)
+            if callable(process_key):
+                try:
+                    success = process_key(model_name, [normalized])
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Failed to route key '%s' to %s via discussion manager: %s",
+                        normalized,
+                        model_name,
+                        exc,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to send key: {exc}",
+                    ) from exc
+
+                if not success:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to send key via discussion manager",
+                    )
+
+                return {"status": "sent", "model": model_name, "key": normalized}
+
         send_key_fn = getattr(controller, "send_key", None)
         if not callable(send_key_fn):
             raise HTTPException(

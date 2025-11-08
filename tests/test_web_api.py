@@ -159,6 +159,47 @@ def test_key_endpoint_sends_command(api_app, orchestrator) -> None:
     assert orchestrator.controllers["claude"].sent_keys == ["Up"]
 
 
+def test_key_endpoint_routes_through_discussion_manager(api_app, orchestrator) -> None:
+    app, get_endpoint = api_app
+
+    class StubManager:
+        def __init__(self) -> None:
+            self.calls: List[tuple[str, List[str]]] = []
+
+        def process_key_command(self, target: str, keys: List[str]) -> bool:
+            self.calls.append((target, list(keys)))
+            orchestrator.controllers[target].send_key(keys[0])
+            return True
+
+    orchestrator.discussion_manager = StubManager()
+    orchestrator.discussion_state = "RUNNING"
+
+    send_key = get_endpoint("/api/control/{model_name}/key/{key_name}", "POST")
+    response = run(send_key("claude", "Escape", app.state.orchestrator))
+
+    assert response["status"] == "sent"
+    assert orchestrator.controllers["claude"].sent_keys == ["Escape"]
+    assert orchestrator.discussion_manager.calls == [("claude", ["Escape"])]  # type: ignore[attr-defined]
+
+
+def test_key_endpoint_reports_manager_failure(api_app, orchestrator) -> None:
+    app, get_endpoint = api_app
+
+    class FailingManager:
+        def process_key_command(self, target: str, keys: List[str]) -> bool:  # noqa: ARG002
+            return False
+
+    orchestrator.discussion_manager = FailingManager()
+    orchestrator.discussion_state = "RUNNING"
+
+    send_key = get_endpoint("/api/control/{model_name}/key/{key_name}", "POST")
+    with pytest.raises(HTTPException) as exc:
+        run(send_key("claude", "Escape", app.state.orchestrator))
+
+    assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert orchestrator.controllers["claude"].sent_keys == []
+
+
 def test_key_endpoint_validates_key(api_app) -> None:
     app, get_endpoint = api_app
     send_key = get_endpoint("/api/control/{model_name}/key/{key_name}", "POST")
