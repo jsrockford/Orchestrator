@@ -24,7 +24,7 @@ Now the alert will correctly show the actual number of turns taken when a discus
 --------
 Claude: Simplified the turn count caching - now using the conversation list length directly from `start_discussion()` return value instead of trying to get it from the manager snapshot. The `conversation` list is the source of truth for completed turns: `len(result["conversation"])`. Added logging to verify the cached count. This should be more reliable since we're capturing the actual return value before the finally block clears the manager.
 --------
-Don: Amazing progress!
+Don: Amazing progress! The discussion finished popup works and displays the turns #.
 
 For the next housecleaning task. I would like to cleanup git and Github. There are several files and folders under out different branches that we shouldn't be including (see below). Please clean this up. Let me know if you need clarification.
 

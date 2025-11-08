@@ -86,6 +86,10 @@ observations.md
 scratch/
 screens/
 logs/
+tmplog/
+old/
+don_private/
+
 
 .claude/
 
