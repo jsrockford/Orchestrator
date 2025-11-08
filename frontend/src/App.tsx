@@ -660,7 +660,7 @@ function App() {
                 disabled={activeModels.length === 0 || projectActionPending}
                 className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {projectActionPending ? 'Opening...' : 'Open Project'}
+                {projectActionPending ? 'Opening...' : 'Start Models'}
               </button>
             ) : (
               <button
@@ -668,7 +668,7 @@ function App() {
                 disabled={projectActionPending}
                 className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {projectActionPending ? 'Closing...' : 'Close Project'}
+                {projectActionPending ? 'Closing...' : 'Close Models'}
               </button>
             )}
             {discussionState === 'idle' ? (

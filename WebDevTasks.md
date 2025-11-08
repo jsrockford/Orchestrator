@@ -272,27 +272,30 @@ This document tracks the implementation of the web UI integration with the exist
   - [ ] Return partial conversation history if stopped early
   - [ ] Log graceful stop event
 
-- [ ] **Task 3.7**: Add human interjection support to ConversationManager
-  - [ ] Add `inject_message(role: str, content: str)` method to ConversationManager
-  - [ ] Store injected messages in a queue
-  - [ ] Check queue at start of each turn
-  - [ ] Insert injected messages into conversation history
-  - [ ] Continue discussion with injected context
+- [x] **Task 3.7**: Add human interjection support to ConversationManager
+  - [x] Add `inject_message(role: str, content: str)` method to ConversationManager
+  - [x] Store injected messages in a queue (`_injected_messages`)
+  - [x] Check queue at start of each turn
+  - [x] Insert injected messages into conversation history
+  - [x] Continue discussion with injected context
+  - **COMPLETED**: Implemented with `_apply_injected_prompts()` and turn replay logic
 
-- [ ] **Task 3.8**: Integrate pause/resume with discussion state
-  - [ ] Modify existing `POST /api/control/pause` endpoint
-  - [ ] If `discussion_state == "RUNNING"`, set to "PAUSED"
-  - [ ] Notify ConversationManager to hold before next turn
-  - [ ] Modify existing `POST /api/control/resume` endpoint
-  - [ ] If `discussion_state == "PAUSED"`, set to "RUNNING"
-  - [ ] Allow ConversationManager to continue
+- [x] **Task 3.8**: Integrate pause/resume with discussion state
+  - [x] Modify existing `POST /api/control/pause` endpoint
+  - [x] If `discussion_state == "RUNNING"`, set to "PAUSED"
+  - [x] Notify ConversationManager to hold before next turn
+  - [x] Modify existing `POST /api/control/resume` endpoint
+  - [x] If `discussion_state == "PAUSED"`, set to "RUNNING"
+  - [x] Clear `human_control_mode` to allow ConversationManager to continue
+  - **COMPLETED**: Pause/resume fully integrated with turn cancellation and replay
 
-- [ ] **Task 3.9**: Modify send-prompt endpoint for discussion injection
-  - [ ] Update `POST /api/control/send-prompt` endpoint
-  - [ ] Check if `discussion_state == "PAUSED"`
-  - [ ] If paused, call `discussion_manager.inject_message()` instead of individual model dispatch
-  - [ ] If not in discussion, use existing per-model dispatch logic
-  - [ ] Return appropriate success/error response
+- [x] **Task 3.9**: Modify send-prompt endpoint for discussion injection
+  - [x] Update `POST /api/control/send-prompt` endpoint
+  - [x] Check if `discussion_state == "PAUSED"`
+  - [x] If paused, call `discussion_manager.inject_message()` instead of individual model dispatch
+  - [x] If not in discussion, use existing per-model dispatch logic
+  - [x] Return appropriate success/error response
+  - **COMPLETED**: Prompt injection works with queued messages prepended to cancelled turns
 
 - [ ] **Task 3.10**: Add discussion status to WebSocket streams
   - [ ] Modify WebSocket endpoint `/ws/session/{model_name}`
@@ -392,14 +395,15 @@ This document tracks the implementation of the web UI integration with the exist
   - [ ] Try starting discussion twice (should fail with 409)
   - [ ] Verify error messages appear in UI
 
-- [ ] **Task 3.23**: Test pause/resume for human interjection
-  - [ ] Start discussion
-  - [ ] Click Esc to pause
-  - [ ] Verify discussion pauses (status shows PAUSED)
-  - [ ] Type prompt and send
-  - [ ] Verify prompt injected into discussion
-  - [ ] Click Rsm to resume
-  - [ ] Verify discussion continues with injected context
+- [x] **Task 3.23**: Test pause/resume for human interjection
+  - [x] Start discussion
+  - [x] Click Esc to pause
+  - [x] Verify discussion pauses (status shows PAUSED)
+  - [x] Type prompt and send
+  - [x] Verify prompt injected into discussion
+  - [x] Click Rsm to resume
+  - [x] Verify discussion continues with injected context
+  - **COMPLETED**: Full Esc→Prompt→Resume workflow implemented and tested (commit 7c03986)
 
 - [ ] **Task 3.24**: Test session loss during discussion
   - [ ] Start discussion with 3 models
@@ -598,6 +602,7 @@ This document tracks the implementation of the web UI integration with the exist
 
 ---
 
-**Last Updated**: 2025-11-05
-**Status**: Planning Complete - Architecture Refined - Ready for Implementation
+**Last Updated**: 2025-11-08
+**Status**: Phase 1 & 2 Complete - Phase 3 Partial (Human Interjection Working)
+**Key Milestone**: Esc→Prompt→Resume workflow fully functional (commit 7c03986)
 **Key Change**: FastAPI integrated into orchestrator for direct controller access
