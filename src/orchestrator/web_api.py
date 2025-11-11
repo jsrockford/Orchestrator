@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, Type, cast
@@ -86,6 +87,34 @@ CONTROLLER_FACTORIES: Dict[str, Type[Any]] = {
 }
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for graceful startup and shutdown.
+
+    This ensures WebSocket tasks and other async resources are properly
+    cleaned up when the server shuts down, preventing "Event loop is closed"
+    errors and pending task warnings.
+    """
+    # Startup
+    logger.info("FastAPI application starting up")
+    yield
+    # Shutdown
+    logger.info("FastAPI application shutting down, cancelling pending tasks")
+
+    # Cancel all pending tasks gracefully
+    tasks = [task for task in asyncio.all_tasks() if not task.done()]
+    if tasks:
+        logger.debug("Cancelling %d pending tasks during shutdown", len(tasks))
+        for task in tasks:
+            task.cancel()
+
+        # Wait for tasks to complete cancellation
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    logger.info("FastAPI shutdown complete")
+
+
 def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
     """
     Build a FastAPI application bound to the provided orchestrator instance.
@@ -94,7 +123,11 @@ def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
         orchestrator: Live orchestrator instance used to satisfy API requests.
     """
 
-    app = FastAPI(title="Development Team Orchestrator API", version="0.1.0")
+    app = FastAPI(
+        title="Development Team Orchestrator API",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
     app.state.orchestrator = orchestrator
 
     app.add_middleware(
@@ -1249,10 +1282,18 @@ async def stream_controller_output(
     except WebSocketDisconnect:
         logger.debug("WebSocket disconnected for model '%s'", model_name)
     except asyncio.CancelledError:
-        raise
+        # Graceful cancellation during shutdown
+        logger.debug("WebSocket task cancelled for model '%s' during shutdown", model_name)
+        try:
+            await websocket.close(code=1001, reason="Server shutting down")
+        except Exception:  # noqa: BLE001
+            pass  # Connection may already be closed
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error streaming %s: %s", model_name, exc)
-        await websocket.close(code=1011)
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # noqa: BLE001
+            pass  # Connection may already be closed
 
 
 def register_stream_routes(app: FastAPI) -> None:

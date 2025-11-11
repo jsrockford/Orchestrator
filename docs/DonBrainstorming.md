@@ -37,4 +37,12 @@ AI-to-AI Communication
   approach we discussed earlier offers the best balance of token efficiency while maintaining
   human-readable logs and simple architecture.
 
-  
+  ================================
+
+
+
+
+
+   [on creating Instruction File Templates for different development scenarios]
+   Let's take this a little further. Let's consider a full development cycle from PRD to Final Product. Would it be reasonable to utilize the orchestrator to run in multiple independent cycles for each development process. ie run a session to create the PRD, run another session to create the spec file, the another session to create a comprehensive task list, the actual product programming sessions? And what would the typical subordinate positions be for these categories? How many corresponding roles should we create?
+

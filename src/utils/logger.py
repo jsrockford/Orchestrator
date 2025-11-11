@@ -6,6 +6,7 @@ Reads defaults from config.yaml when available and wires up console/file output.
 
 import logging
 import sys
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional, Tuple
@@ -21,6 +22,27 @@ DEFAULT_DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 _LOGGING_DEFAULTS: Optional[Tuple[int, str, bool, int, int]] = None
 _LOGGING_FORMAT: str = DEFAULT_FORMAT
+
+
+def get_timestamped_log_path(base_log_path: str) -> str:
+    """
+    Convert a log file path to include a timestamp.
+
+    Example:
+        logs/orchestrator.log -> logs/orchestrator_2025-11-11_08-30-45.log
+
+    Args:
+        base_log_path: Original log file path from config
+
+    Returns:
+        Log path with timestamp inserted before extension
+    """
+    log_path = Path(base_log_path)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    stem = log_path.stem
+    suffix = log_path.suffix
+    new_name = f"{stem}_{timestamp}{suffix}"
+    return str(log_path.parent / new_name)
 
 
 def _load_logging_defaults() -> Tuple[int, Optional[str], bool, Optional[int], Optional[int], str]:
@@ -53,7 +75,10 @@ def _load_logging_defaults() -> Tuple[int, Optional[str], bool, Optional[int], O
             config = {}
         level_str = str(config.get("level", "INFO")).upper()
         level = getattr(logging, level_str, logging.INFO)
-        log_file = config.get("file") or None
+        base_log_file = config.get("file") or None
+        # Add timestamp to log filename for each run
+        if base_log_file:
+            log_file = get_timestamped_log_path(base_log_file)
         console = bool(config.get("console", True))
         max_bytes_val = config.get("max_bytes")
         backup_count_val = config.get("backup_count")
@@ -106,14 +131,26 @@ def setup_logger(
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create handler with immediate flush capability
         if max_bytes and max_bytes > 0:
-            handler = RotatingFileHandler(
-                log_file,
-                maxBytes=max_bytes,
-                backupCount=backup_count or 0,
-            )
+            base_handler_class = RotatingFileHandler
+            handler_args = (log_file, )
+            handler_kwargs = {'maxBytes': max_bytes, 'backupCount': backup_count or 0}
         else:
-            handler = logging.FileHandler(log_file)
+            base_handler_class = logging.FileHandler
+            handler_args = (log_file, )
+            handler_kwargs = {}
+
+        # Create a custom handler that flushes immediately after each emit
+        class ImmediateFlushFileHandler(base_handler_class):
+            def emit(self, record):
+                super().emit(record)
+                # Flush immediately to ensure logs are written even on crashes
+                if hasattr(self, 'stream') and self.stream:
+                    self.stream.flush()
+
+        handler = ImmediateFlushFileHandler(*handler_args, **handler_kwargs)
         handler.setLevel(level)
         handler.setFormatter(formatter)
         logger.addHandler(handler)
