@@ -2,6 +2,8 @@
 
 The FastAPI application defined in `src/orchestrator/web_api.py` exposes REST and WebSocket endpoints that the React UI—and external automation—use to control the orchestrator. This reference summarizes each surface, expected payloads, and notable responses.
 
+> Need a machine-readable spec? Run `source venv/bin/activate && python scripts/generate_openapi.py` to emit `docs/openapi.json` (tracked in git). Serve `/docs`, `/redoc`, or `/openapi.json` from the running API for interactive browsing.
+
 - **Base URL (default dev)**: `http://localhost:9100`
 - **WebSocket base**: replace `http` with `ws` (e.g., `ws://localhost:9100/ws/...`)
 - **Auth**: no authentication yet; all endpoints are trusted within the local network.

@@ -188,7 +188,7 @@ This script opens a new `gnome-terminal` window and runs the Vite development se
   ./frontend/stop-dev.sh
   ```
 
-Once both servers are running, you can access the web interface by opening your browser to `http://localhost:9101`. From the UI, you can select a project directory, choose which AI models to activate, and start a collaborative discussion.
+Once both servers are running, you can access the web interface by opening your browser to `http://localhost:9101`. From the UI, you can select a project directory, choose which AI models to activate, and start a collaborative discussion. FastAPI’s interactive docs live at `http://localhost:9100/docs` (Swagger UI) and `http://localhost:9100/redoc`; the schema is available at `http://localhost:9100/openapi.json`.
 
 ### CLI Mode: Automated Discussion
 

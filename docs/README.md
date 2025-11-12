@@ -7,6 +7,7 @@ This directory hosts the layered documentation set described in `docs/Documentat
 | Engineers & stakeholders | [`architecture.md`](architecture.md) | End-to-end system overview, data flow, and component responsibilities. |
 | Backend developers | [`backend/development_guide.md`](backend/development_guide.md) | Environment setup, orchestrator modules, testing strategy, and config tips. |
 | Backend API consumers | [`backend/api_reference.md`](backend/api_reference.md) | FastAPI surface exposed to the React UI and external automation. |
+| Client builders / tooling | [`openapi.json`](openapi.json) | Machine-readable schema (`scripts/generate_openapi.py`) for SDK generation and contract tests. |
 | Frontend developers | [`frontend/development_guide.md`](frontend/development_guide.md) | React/Vite project structure, state flows, and UI conventions. |
 | Operators / DevOps | [`deployment.md`](deployment.md) | How to start/stop services, manage tmux sessions, and monitor logs. |
 

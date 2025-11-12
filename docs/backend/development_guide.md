@@ -91,4 +91,16 @@ These scripts activate the virtual environment automatically and record the PID 
 - Use helpers in `src/utils/` instead of inlining subprocess logic; shared behavior (retries, ready detection) should stay centralized.
 - Log state transitions with the controller name and project directory to simplify cross-agent debugging.
 
+## 9. OpenAPI Schema Generation
+
+- FastAPI automatically exposes `/openapi.json`, `/docs` (Swagger UI), and `/redoc`. Keep them enabled so operators can debug integrations quickly.
+- To commit the latest schema, activate the venv and run:
+
+```bash
+source venv/bin/activate
+python scripts/generate_openapi.py  # writes docs/openapi.json
+```
+
+- Clients (TypeScript/Python/etc.) can ingest `docs/openapi.json` directly for SDK generation or contract tests.
+
 Following this guide ensures backend contributions align with the orchestration engine’s contracts and remain discoverable by future developers.
