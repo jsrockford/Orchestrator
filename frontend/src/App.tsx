@@ -11,6 +11,7 @@ import { DiscussionSettings, DiscussionState } from './types';
 const DEFAULT_API_BASE = 'http://localhost:9100';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE).replace(/\/$/, '');
 const MAX_OUTPUT_CHARS = 60000;
+const STREAM_ACTIVITY_IDLE_MS = 1500;
 
 type StreamStatus = 'idle' | 'connecting' | 'streaming' | 'error';
 
@@ -62,6 +63,7 @@ function App() {
   const projectStateRef = useRef(projectState);
   const activeModelsRef = useRef<string[]>(activeModels);
   const previousDiscussionStateRef = useRef<DiscussionState>('idle');
+  const streamingActivityTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
 
   useEffect(() => {
     projectStateRef.current = projectState;
@@ -79,11 +81,47 @@ function App() {
     }
   }, [projectState]);
 
+  const clearStreamingActivityTimer = useCallback((model: string) => {
+    const existing = streamingActivityTimers.current[model];
+    if (existing) {
+      clearTimeout(existing);
+      streamingActivityTimers.current[model] = null;
+    }
+  }, []);
+
+  const scheduleStreamingIdleReset = useCallback((model: string) => {
+    clearStreamingActivityTimer(model);
+    streamingActivityTimers.current[model] = setTimeout(() => {
+      setStreamStatuses(prev => {
+        if (prev[model] !== 'streaming') {
+          return prev;
+        }
+        return { ...prev, [model]: 'ready' };
+      });
+      streamingActivityTimers.current[model] = null;
+    }, STREAM_ACTIVITY_IDLE_MS);
+  }, [clearStreamingActivityTimer]);
+
+  const markModelStreaming = useCallback((model: string) => {
+    setStreamStatuses(prev => ({ ...prev, [model]: 'streaming' }));
+    scheduleStreamingIdleReset(model);
+  }, [scheduleStreamingIdleReset]);
+
   const clampOutput = useCallback((text: string) => {
     if (text.length <= MAX_OUTPUT_CHARS) {
       return text;
     }
     return text.slice(-MAX_OUTPUT_CHARS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(streamingActivityTimers.current).forEach(timer => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
+    };
   }, []);
 
   const toWebSocketUrl = useCallback((path: string) => {
@@ -104,9 +142,10 @@ function App() {
       }
       delete socketsRef.current[model];
     }
+    clearStreamingActivityTimer(model);
     setStreamStatuses(prev => ({ ...prev, [model]: status }));
     setStreamErrors(prev => ({ ...prev, [model]: null }));
-  }, []);
+  }, [clearStreamingActivityTimer]);
 
   const closeAllSockets = useCallback((status: StreamStatus = 'idle') => {
     Object.keys(socketsRef.current).forEach(model => {
@@ -131,6 +170,7 @@ function App() {
       socket = new WebSocket(toWebSocketUrl(`/ws/session/${modelSlug}`));
     } catch (error) {
       console.error(`Unable to create WebSocket for ${model}:`, error);
+      clearStreamingActivityTimer(model);
       setStreamStatuses(prev => ({ ...prev, [model]: 'error' }));
       setStreamErrors(prev => ({ ...prev, [model]: 'WebSocket initialization failed' }));
       return;
@@ -141,11 +181,13 @@ function App() {
     setStreamStatuses(prev => ({ ...prev, [model]: 'connecting' }));
 
     socket.onopen = () => {
-      setStreamStatuses(prev => ({ ...prev, [model]: 'streaming' }));
+      clearStreamingActivityTimer(model);
+      setStreamStatuses(prev => ({ ...prev, [model]: 'ready' }));
       setStreamErrors(prev => ({ ...prev, [model]: null }));
     };
 
     socket.onerror = () => {
+      clearStreamingActivityTimer(model);
       setStreamStatuses(prev => ({ ...prev, [model]: 'error' }));
       setStreamErrors(prev => ({ ...prev, [model]: 'WebSocket error' }));
     };
@@ -161,6 +203,7 @@ function App() {
 
         if (eventType === 'error') {
           const message = typeof data.message === 'string' ? data.message : 'Stream error';
+          clearStreamingActivityTimer(model);
           setStreamStatuses(prev => ({ ...prev, [model]: 'error' }));
           setStreamErrors(prev => ({ ...prev, [model]: message }));
           return;
@@ -172,6 +215,9 @@ function App() {
             [model]: clampOutput(content),
           }));
           setStreamErrors(prev => ({ ...prev, [model]: null }));
+          if (eventType === 'reset') {
+            markModelStreaming(model);
+          }
         } else if (eventType === 'append') {
           setSessionOutputs(prev => {
             const existing = prev[model] ?? '';
@@ -181,6 +227,7 @@ function App() {
             };
           });
           setStreamErrors(prev => ({ ...prev, [model]: null }));
+          markModelStreaming(model);
         }
       } catch (error) {
         console.error('Failed to parse stream message:', error);
@@ -190,6 +237,7 @@ function App() {
     socket.onclose = () => {
       const wasPlanned = closingSocketsRef.current.delete(model);
       delete socketsRef.current[model];
+      clearStreamingActivityTimer(model);
       if (!wasPlanned) {
         const nextStatus: StreamStatus = projectStateRef.current === 'idle' ? 'idle' : 'error';
         setStreamStatuses(prev => ({ ...prev, [model]: nextStatus }));
@@ -203,7 +251,7 @@ function App() {
         setStreamErrors(prev => ({ ...prev, [model]: null }));
       }
     };
-  }, [clampOutput, toWebSocketUrl]);
+  }, [clampOutput, toWebSocketUrl, clearStreamingActivityTimer, markModelStreaming]);
 
   useEffect(() => {
     if (projectState === 'idle') {
@@ -630,7 +678,7 @@ function App() {
     if (streamStatus === 'error') {
       return 'error';
     }
-    if (streamStatus === 'connecting') {
+    if (streamStatus === 'streaming') {
       return 'processing';
     }
     return 'ready';
