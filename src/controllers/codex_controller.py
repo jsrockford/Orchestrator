@@ -7,7 +7,7 @@ reuse the same mechanics but keep configuration isolated in case future builds
 diverge.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .tmux_controller import TmuxController
 from ..utils.config_loader import get_config
@@ -20,6 +20,7 @@ class CodexController(TmuxController):
         self,
         session_name: Optional[str] = None,
         working_dir: Optional[str] = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize CodexController with Codex-specific configuration.
@@ -27,10 +28,14 @@ class CodexController(TmuxController):
         Args:
             session_name: Optional tmux session name (uses config default when omitted).
             working_dir: Working directory for the Codex process.
+            config_overrides: Optional per-run configuration overrides.
         """
         config = get_config()
-        codex_config = config.get_section("codex")
+        codex_config = dict(config.get_section("codex") or {})
         tmux_config = config.get_section("tmux")
+
+        if config_overrides:
+            codex_config.update(config_overrides)
 
         if session_name is None:
             session_name = tmux_config.get("codex_session", "codex")

@@ -5,25 +5,34 @@ interface EditInstructionsModalProps {
   isOpen: boolean;
   onClose: () => void;
   projectDirectory: string;
+  apiBaseUrl: string;
 }
 
-const EditInstructionsModal: React.FC<EditInstructionsModalProps> = ({ modelName, isOpen, onClose, projectDirectory }) => {
+const EditInstructionsModal: React.FC<EditInstructionsModalProps> = ({
+  modelName,
+  isOpen,
+  onClose,
+  projectDirectory,
+  apiBaseUrl,
+}) => {
   const [content, setContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const baseUrl = apiBaseUrl.replace(/\/$/, '');
 
   useEffect(() => {
     if (isOpen && modelName) {
       setIsLoading(true);
-      fetch(`http://localhost:8000/api/instructions/${modelName}?project_directory=${encodeURIComponent(projectDirectory)}`)
+      const params = new URLSearchParams({ project_directory: projectDirectory });
+      fetch(`${baseUrl}/api/instructions/${modelName}?${params.toString()}`)
         .then(res => res.json())
         .then(data => setContent(data.content))
         .catch(err => console.error("Error fetching instructions:", err))
         .finally(() => setIsLoading(false));
     }
-  }, [isOpen, modelName, projectDirectory]);
+  }, [isOpen, modelName, projectDirectory, baseUrl]);
 
   const handleSave = () => {
-    fetch(`http://localhost:8000/api/instructions/${modelName}`, {
+    fetch(`${baseUrl}/api/instructions/${modelName}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content, project_directory: projectDirectory }),

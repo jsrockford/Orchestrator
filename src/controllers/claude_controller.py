@@ -4,7 +4,7 @@ Claude Code Controller
 Wrapper around TmuxController configured specifically for Claude Code.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 from .tmux_controller import TmuxController
 from ..utils.config_loader import get_config
 
@@ -15,7 +15,8 @@ class ClaudeController(TmuxController):
     def __init__(
         self,
         session_name: Optional[str] = None,
-        working_dir: Optional[str] = None
+        working_dir: Optional[str] = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize ClaudeController with Claude-specific configuration.
@@ -23,11 +24,15 @@ class ClaudeController(TmuxController):
         Args:
             session_name: Name of tmux session (uses config default if not specified)
             working_dir: Working directory (defaults to current dir)
+            config_overrides: Optional per-run configuration overrides.
         """
         # Load Claude configuration
         config = get_config()
-        claude_config = config.get_section('claude')
+        claude_config = dict(config.get_section('claude') or {})
         tmux_config = config.get_section('tmux')
+
+        if config_overrides:
+            claude_config.update(config_overrides)
 
         # Use configured session name if not specified
         if session_name is None:

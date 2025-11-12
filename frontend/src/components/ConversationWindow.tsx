@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
-import { ArrowUp, ArrowDown, X, FilePenLine, Skull } from 'lucide-react';
+import { ArrowUp, ArrowDown, X, FilePenLine, Settings, Skull } from 'lucide-react';
 import ControlButton from './ControlButton';
 
 interface Message {
@@ -19,6 +19,7 @@ interface ConversationWindowProps {
   status: 'ready' | 'processing' | 'error';
   projectState: 'idle' | 'running' | 'paused';
   onEditInstructions: (modelName: string) => void;
+  onConfigureSettings: (modelName: string) => void;
   output: string;
   streamStatus: 'idle' | 'connecting' | 'streaming' | 'error';
   errorMessage?: string | null;
@@ -30,6 +31,7 @@ function ConversationWindow({
   status,
   projectState,
   onEditInstructions,
+  onConfigureSettings,
   output,
   streamStatus,
   errorMessage,
@@ -103,6 +105,13 @@ function ConversationWindow({
           </h2>
           <button onClick={() => onEditInstructions(conversation.title)} className="text-gray-400 hover:text-white">
             <FilePenLine size={14} />
+          </button>
+          <button
+            onClick={() => onConfigureSettings(conversation.title)}
+            className="text-gray-400 hover:text-white"
+            title="Model settings"
+          >
+            <Settings size={14} />
           </button>
         </div>
         <div className="flex items-center gap-4">

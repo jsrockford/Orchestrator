@@ -6,7 +6,7 @@ an `(esc to cancel` loading indicator, so we rely on loading indicator clears
 plus a configurable stabilization delay before submitting new input.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .tmux_controller import TmuxController
 from ..utils.config_loader import get_config
@@ -19,6 +19,7 @@ class QwenController(TmuxController):
         self,
         session_name: Optional[str] = None,
         working_dir: Optional[str] = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize QwenController with Qwen-specific configuration.
@@ -26,6 +27,7 @@ class QwenController(TmuxController):
         Args:
             session_name: Optional tmux session name (defaults to config value).
             working_dir: Working directory for the Qwen process.
+            config_overrides: Optional per-run configuration overrides.
         """
         config = get_config()
         qwen_config = dict(config.get_section("qwen") or {})
@@ -39,6 +41,9 @@ class QwenController(TmuxController):
         qwen_config["submit_retry_delay"] = 0.2
         qwen_config["text_enter_delay"] = 0.6
         qwen_config["post_text_delay"] = 0.0
+
+        if config_overrides:
+            qwen_config.update(config_overrides)
 
         if session_name is None:
             session_name = tmux_config.get("qwen_session", "qwen")

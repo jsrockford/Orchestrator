@@ -5,6 +5,7 @@ import PromptInput from './components/PromptInput';
 import SessionModelSelector from './components/SessionModelSelector';
 import EditInstructionsModal from './components/EditInstructionsModal';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
+import ModelSettingsModal from './components/ModelSettingsModal';
 import { DiscussionSettings, DiscussionState } from './types';
 
 const DEFAULT_API_BASE = 'http://localhost:9100';
@@ -28,6 +29,8 @@ function App() {
   const [editingModelName, setEditingModelName] = useState('');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [projectDirectory, setProjectDirectory] = useState('/home/dgray/Projects/Orchestrator');
+  const [isModelSettingsModalOpen, setIsModelSettingsModalOpen] = useState(false);
+  const [modelSettingsModelName, setModelSettingsModelName] = useState('');
   const [sessionOutputs, setSessionOutputs] = useState<Record<string, string>>(
     () => Object.fromEntries(allConversations.map(c => [c.title, '']))
   );
@@ -611,6 +614,11 @@ function App() {
     setIsEditModalOpen(true);
   };
 
+  const handleConfigureModelSettings = (modelName: string) => {
+    setModelSettingsModelName(modelName);
+    setIsModelSettingsModalOpen(true);
+  };
+
   const activeConversations = allConversations.filter(c => activeModels.includes(c.title));
 
   // Determine grid columns based on the number of conversations
@@ -723,6 +731,7 @@ function App() {
               status={getStatusForCoder(conversation.title)}
               projectState={projectState}
               onEditInstructions={handleEditInstructions}
+              onConfigureSettings={handleConfigureModelSettings}
               output={sessionOutputs[conversation.title] ?? ''}
               streamStatus={streamStatuses[conversation.title] ?? 'idle'}
               errorMessage={streamErrors[conversation.title] ?? null}
@@ -747,6 +756,7 @@ function App() {
         onClose={() => setIsEditModalOpen(false)}
         modelName={editingModelName}
         projectDirectory={projectDirectory}
+        apiBaseUrl={API_BASE_URL}
       />
 
       <ProjectSettingsModal
@@ -756,6 +766,18 @@ function App() {
         discussionSettings={discussionSettings}
         availableModels={allConversations.map(c => c.title)}
         onSave={handleSaveSettings}
+        apiBaseUrl={API_BASE_URL}
+      />
+
+      <ModelSettingsModal
+        isOpen={isModelSettingsModalOpen}
+        onClose={() => {
+          setIsModelSettingsModalOpen(false);
+          setModelSettingsModelName('');
+        }}
+        modelName={modelSettingsModelName}
+        projectDirectory={projectDirectory}
+        apiBaseUrl={API_BASE_URL}
       />
     </div>
   );
