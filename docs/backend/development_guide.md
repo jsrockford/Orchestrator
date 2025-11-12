@@ -101,6 +101,8 @@ source venv/bin/activate
 python scripts/generate_openapi.py  # writes docs/openapi.json
 ```
 
+- CI guardrails: `.github/workflows/openapi-schema.yml` reruns the script on every push/PR and fails if `docs/openapi.json` differs, so always commit the regenerated file alongside API changes.
+
 - Clients (TypeScript/Python/etc.) can ingest `docs/openapi.json` directly for SDK generation or contract tests.
 
 Following this guide ensures backend contributions align with the orchestration engine’s contracts and remain discoverable by future developers.
