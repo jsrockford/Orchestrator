@@ -10,8 +10,9 @@ interface PromptInputProps {
   coders: Coder[];
   selectedCoders: number[];
   onSelectedCodersChange: (coders: number[]) => void;
-  onSendPrompt: (prompt: string, coderIds: number[]) => void;
+  onSendPrompt: (prompt: string, coderIds: number[]) => Promise<void> | void;
   disabled?: boolean;
+  sending?: boolean;
 }
 
 function PromptInput({
@@ -20,19 +21,26 @@ function PromptInput({
   onSelectedCodersChange,
   onSendPrompt,
   disabled = false,
+  sending = false,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('');
 
-  const handleSend = () => {
-    if (prompt.trim()) {
-      if (selectedCoders.length === 0) {
-        // If no coders are selected, send to all as a fallback or show a warning
-        onSendPrompt(prompt, coders.map((c) => c.id));
-      } else {
-        onSendPrompt(prompt, selectedCoders);
-      }
-      setPrompt('');
+  const handleSend = async () => {
+    if (sending) {
+      return;
     }
+
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    if (selectedCoders.length === 0) {
+      await onSendPrompt(trimmed, coders.map((c) => c.id));
+    } else {
+      await onSendPrompt(trimmed, selectedCoders);
+    }
+    setPrompt('');
   };
 
   const toggleCoder = (coderId: number) => {
@@ -50,10 +58,11 @@ function PromptInput({
     }
   };
 
-  const isSendDisabled = disabled || prompt.trim().length === 0;
+  const isSendDisabled = disabled || sending || prompt.trim().length === 0;
   const sendButtonText = selectedCoders.length === 0 || selectedCoders.length === coders.length
     ? 'Send to All'
     : `Send to ${selectedCoders.length} Model${selectedCoders.length > 1 ? 's' : ''}`;
+  const buttonLabel = sending ? 'Sending...' : sendButtonText;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[#252526] border-t border-[#3e4451] shadow-2xl">
@@ -78,7 +87,7 @@ function PromptInput({
               className={`px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl ${isSendDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Send size={18} />
-              {sendButtonText}
+              {buttonLabel}
             </button>
 
             <div className="flex gap-3">

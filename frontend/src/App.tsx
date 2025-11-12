@@ -12,6 +12,11 @@ const DEFAULT_API_BASE = 'http://localhost:9100';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE).replace(/\/$/, '');
 const MAX_OUTPUT_CHARS = 60000;
 const STREAM_ACTIVITY_IDLE_MS = 1500;
+const AUTO_RESUME_MAX_ATTEMPTS = 3;
+const AUTO_RESUME_STATUS_POLLS = 5;
+const AUTO_RESUME_POLL_DELAY_MS = 400;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type StreamStatus = 'idle' | 'connecting' | 'streaming' | 'error';
 
@@ -42,6 +47,7 @@ function App() {
     () => Object.fromEntries(allConversations.map(c => [c.title, null]))
   );
   const [projectActionPending, setProjectActionPending] = useState(false);
+  const [promptActionPending, setPromptActionPending] = useState(false);
   const [discussionSettings, setDiscussionSettings] = useState<DiscussionSettings>({
     maxTurns: 10,
     startingModel: 'Claude',
@@ -333,6 +339,11 @@ function App() {
   }, [projectState]);
 
   const handleSendPrompt = async (prompt: string, coderIds: number[]) => {
+    if (promptActionPending) {
+      console.warn('Prompt send already in progress');
+      return;
+    }
+
     const modelNames = coderIds
       .map(id => allConversations.find(c => c.id === id)?.title)
       .filter(Boolean) as string[];
@@ -342,13 +353,33 @@ function App() {
       return;
     }
 
+    const uniqueModelNames = Array.from(new Set(modelNames));
+    const modelSlugs = uniqueModelNames.map(name => name.trim().toLowerCase());
+    const shouldAutoPause = projectState === 'running';
+    const discussionWasRunning = discussionState === 'running';
+    let autoPaused = false;
+
+    setPromptActionPending(true);
+
     try {
+      if (shouldAutoPause) {
+        for (const slug of modelSlugs) {
+          await postKey(slug, 'Escape');
+        }
+        await postControl('/api/control/pause');
+        autoPaused = true;
+        setProjectState('paused');
+        if (discussionWasRunning) {
+          setDiscussionState('paused');
+        }
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/control/send-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          models: modelNames,
+          models: uniqueModelNames,
           submit: true
         })
       });
@@ -360,7 +391,6 @@ function App() {
       const data = await response.json();
       console.log('Prompt sent:', data);
 
-      // Check for any failures and show errors
       const failures = Object.entries(data.results)
         .filter(([_, result]: [string, any]) => !result.success)
         .map(([model, result]: [string, any]) => `${model}: ${result.error}`);
@@ -372,6 +402,82 @@ function App() {
     } catch (error) {
       console.error('Failed to send prompt:', error);
       alert(`Error sending prompt: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (autoPaused) {
+        const fetchDiscussionStateSnapshot = async (): Promise<DiscussionState> => {
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/discussion/status`);
+            if (!response.ok) {
+              return 'idle';
+            }
+            const data = await response.json();
+            const normalized = String(data.discussion_state ?? 'idle').toLowerCase();
+            if (normalized === 'running' || normalized === 'paused' || normalized === 'idle') {
+              return normalized as DiscussionState;
+            }
+            return 'idle';
+          } catch {
+            return 'idle';
+          }
+        };
+
+        let resumeState: DiscussionState | null = discussionWasRunning ? 'paused' : null;
+        let resumeConfirmed = false;
+        let lastResumeError: unknown = null;
+
+        for (let attempt = 0; attempt < AUTO_RESUME_MAX_ATTEMPTS && !resumeConfirmed; attempt += 1) {
+          try {
+            await postControl('/api/control/resume');
+          } catch (resumeError) {
+            lastResumeError = resumeError;
+            await sleep(AUTO_RESUME_POLL_DELAY_MS);
+            continue;
+          }
+
+          if (!discussionWasRunning) {
+            resumeConfirmed = true;
+            break;
+          }
+
+          let stableState: DiscussionState | null = null;
+          let latestState: DiscussionState | null = null;
+
+          for (let check = 0; check < AUTO_RESUME_STATUS_POLLS; check += 1) {
+            await sleep(AUTO_RESUME_POLL_DELAY_MS);
+            latestState = await fetchDiscussionStateSnapshot();
+
+            if (latestState === 'running' || latestState === 'idle') {
+              stableState = latestState;
+              continue;
+            }
+
+            if (latestState === 'paused') {
+              stableState = null;
+            }
+          }
+
+          if (stableState && stableState !== 'paused') {
+            resumeState = stableState;
+            resumeConfirmed = true;
+          } else if (latestState && latestState !== 'paused') {
+            resumeState = latestState;
+            resumeConfirmed = true;
+          } else {
+            await sleep(AUTO_RESUME_POLL_DELAY_MS);
+          }
+        }
+
+        if (resumeConfirmed) {
+          setProjectState('running');
+          if (discussionWasRunning && resumeState) {
+            setDiscussionState(resumeState);
+          }
+        } else {
+          console.error('Failed to resume after prompt:', lastResumeError);
+          alert('Prompt sent, but automatic resume could not be confirmed. Please click Resume manually.');
+        }
+      }
+      setPromptActionPending(false);
     }
   };
 
@@ -704,6 +810,8 @@ function App() {
     return parts.join(' • ');
   })();
 
+  const promptInputDisabled = projectState === 'idle' || projectActionPending;
+
   return (
     <div className="min-h-screen bg-[#1e1e1e] text-gray-100 flex flex-col">
       <header className="py-8 text-center border-b border-gray-700">
@@ -795,7 +903,8 @@ function App() {
           selectedCoders={selectedCoders}
           onSelectedCodersChange={setSelectedCoders}
           onSendPrompt={handleSendPrompt}
-          disabled={projectState === 'idle' || discussionState === 'running'}
+          disabled={promptInputDisabled}
+          sending={promptActionPending}
         />
       )}
 
