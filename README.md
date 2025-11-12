@@ -160,7 +160,7 @@ source venv/bin/activate
 python scripts/run_api_server.py --host 0.0.0.0 --port 9100
 ```
 
-**Alternative:** Use the provided shell script to run in background:
+**Alternative:** Use the provided shell script to run in background (binds to port `9100` by default):
 ```bash
 ./backend/start_backend.sh
 ```
@@ -175,7 +175,7 @@ This script runs `python scripts/run_api_server.py --host 0.0.0.0 --port 9100` i
 
 #### 2. Start the Frontend (Web UI)
 
-The frontend is a React application built with Vite. It should be started from its own directory.
+The frontend is a React application built with Vite (served on port `9101`). It should be started from its own directory.
 
 ```bash
 # In a new terminal, from the project root
@@ -189,6 +189,22 @@ This script opens a new `gnome-terminal` window and runs the Vite development se
   ```
 
 Once both servers are running, you can access the web interface by opening your browser to `http://localhost:9101`. From the UI, you can select a project directory, choose which AI models to activate, and start a collaborative discussion. FastAPI’s interactive docs live at `http://localhost:9100/docs` (Swagger UI) and `http://localhost:9100/redoc`; the schema is available at `http://localhost:9100/openapi.json`.
+
+#### 3. Convenience Scripts
+
+To launch both services with a single command during development:
+
+```bash
+./start_all.sh
+```
+
+This helper activates the virtualenv, starts the FastAPI server on port `9100` in the background, waits a few seconds, and then starts the Vite dev server on port `9101`. When you are finished, stop everything cleanly with:
+
+```bash
+./stop_all.sh
+```
+
+Under the hood it calls the existing frontend/backend stop scripts so both servers shut down gracefully.
 
 ### CLI Mode: Automated Discussion
 
@@ -216,11 +232,11 @@ PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
 Start sessions manually for observation:
 
 ```bash
-# Terminal 1: Start Claude via sandboxed wrapper
-tmux new-session -s claude safe_claude --dangerously-skip-permissions
+# Terminal 1: Start Claude using the executable configured in config.yaml
+tmux new-session -s claude "claude --dangerously-skip-permissions"
 
 # Terminal 2: Start Gemini (screen reader mode produces linear text)
-tmux new-session -s gemini safe_gemini --yolo --screenReader
+tmux new-session -s gemini "gemini --yolo --screenReader"
 
 # Terminal 3: Run orchestrated discussion (reuses existing sessions)
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
@@ -552,17 +568,18 @@ def determine_next_speaker(self, context):
 
 ## Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** - Claude Code agent instructions
-- **[GEMINI.md](GEMINI.md)** - Gemini CLI agent instructions
-- **[AGENTS.md](AGENTS.md)** - Codex (Aider) agent instructions
-- **[QWEN.md](QWEN.md)** - Qwen CLI agent instructions
-- **[Tasks.md](Tasks.md)** - Development task tracking
-- **[WebDevTasks.md](WebDevTasks.md)** - Web UI integration task tracking
-- **[MessageBoard.md](MessageBoard.md)** - Team discussion and technical decisions
-- **[CodexConcerns.md](CodexConcerns.md)** - Architecture discussion and decisions
-- **[TIMING_GUIDE.md](TIMING_GUIDE.md)** - Performance tuning guide
-- **[docs/Human_Control_Guide.md](docs/Human_Control_Guide.md)** - Control channel usage guide
-- **[examples/README.md](examples/README.md)** - Example usage patterns
+- **[docs/README.md](docs/README.md)** – Documentation hub and navigation links
+- **[docs/architecture.md](docs/architecture.md)** – System overview, data flow, and components
+- **[docs/backend/development_guide.md](docs/backend/development_guide.md)** – Backend setup, API/CI workflows, and controller tips
+- **[docs/backend/api_reference.md](docs/backend/api_reference.md)** – FastAPI route reference plus OpenAPI schema notes
+- **[docs/frontend/development_guide.md](docs/frontend/development_guide.md)** – Web UI architecture, state flows, and styling conventions
+- **[docs/deployment.md](docs/deployment.md)** – Environment, networking, and operational checklists
+- **[docs/Documentation_Guidelines.md](docs/Documentation_Guidelines.md)** – Layered documentation standards we follow
+- **[docs/onboarding.md](docs/onboarding.md)** – Quick-start guide for new AI sessions (doc order, startup scripts, etiquette)
+- **[AGENTS.md](AGENTS.md)** / **[CLAUDE.md](CLAUDE.md)** / **[GEMINI.md](GEMINI.md)** – Agent-specific instructions
+- **[Tasks.md](Tasks.md)** and **[WebDevTasks.md](WebDevTasks.md)** – Task tracking checklists
+- **[MessageBoard.md](MessageBoard.md)** – Collaboration log for decisions and status updates
+- **[examples/README.md](examples/README.md)** – CLI usage patterns and helper scripts
 
 ## Success Criteria
 

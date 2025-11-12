@@ -10,5 +10,6 @@ This directory hosts the layered documentation set described in `docs/Documentat
 | Client builders / tooling | [`openapi.json`](openapi.json) | Machine-readable schema (`scripts/generate_openapi.py`) for SDK generation and contract tests. |
 | Frontend developers | [`frontend/development_guide.md`](frontend/development_guide.md) | React/Vite project structure, state flows, and UI conventions. |
 | Operators / DevOps | [`deployment.md`](deployment.md) | How to start/stop services, manage tmux sessions, and monitor logs. |
+| New AI sessions | [`onboarding.md`](onboarding.md) | Quick-start checklist covering doc order, startup scripts, and collaboration rules. |
 
 Each guide references real modules (e.g., `src/orchestrator/orchestrator.py`) and keeps success-path plus failure-path instructions close at hand. Update these docs whenever code paths change so a new contributor can reproduce your steps within 15 minutes without extra context.
