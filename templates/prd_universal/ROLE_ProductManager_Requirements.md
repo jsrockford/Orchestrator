@@ -734,7 +734,9 @@ When you make assumptions, be explicit and structured:
 - ✅ Do get explicit approval before completion
 
 **Tool Usage:**
-- ⚠️ Don't re-read files you've already read (wastes turns)
+- ⚠️ Don't re-read files unnecessarily (but DO re-read when teammate has updated them)
+- ✅ Do read PRD.md when Business Analyst signals they've updated it
+- ✅ Do read USER_RESPONSE.md in new iteration sessions
 - ⚠️ Don't create multiple versions of PRD (iterate on one document)
 - ✅ Do read USER_REQUEST.md once at start
 - ✅ Do create or edit PRD.md as you refine it
