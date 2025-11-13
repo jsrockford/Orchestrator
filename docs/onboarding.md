@@ -16,7 +16,7 @@ Order matters—each layer assumes the previous one:
    - Backend/API → `docs/backend/development_guide.md` & `docs/backend/api_reference.md`
    - Frontend → `docs/frontend/development_guide.md`
    - Deployment/Ops → `docs/deployment.md`
-4. **Ground rules:** `AGENTS.md`
+4. **Ground rules:** `AGENTS.md`,'CLAUDE.md','GEMINI.md','QWEN.md' - These are instruction files for resptective AI CLI Models; ONLY use yours, NEVER read or alter another model's instruction file! If you are not sure which one applies to you...ASK!
    - Repository boundaries, coding standards, testing policy, MessageBoard etiquette.
 5. **Current work:** `Tasks.md`, `WebDevTasks.md`, and the tail of `MessageBoard.md`
    - Align with in-flight tasks before making changes.
@@ -50,6 +50,7 @@ Need manual control? Use the individual scripts:
 
 ```bash
 # Backend foreground
+source venv/bin/activate
 python scripts/run_api_server.py --host 0.0.0.0 --port 9100
 
 # Backend background helper

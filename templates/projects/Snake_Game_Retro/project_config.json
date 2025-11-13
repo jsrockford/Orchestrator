@@ -1,0 +1,25 @@
+{
+  "project_name": "Snake Game Retro",
+  "project_path": "/home/dgray/Projects/scratch/SnakeGameRetro",
+  "project_type": "game",
+  "domain": "gaming",
+  "tech_stack": "python",
+  "num_phases": 3,
+  "roles": {
+    "1": [
+      "ProductManager",
+      "BusinessAnalyst"
+    ],
+    "2": [
+      "EngineeringManager",
+      "TechnicalLead"
+    ],
+    "3": [
+      "LeadDeveloper",
+      "CodeReviewer"
+    ]
+  },
+  "description": "Recreates Classic Snake Game in Python",
+  "existing_code": false,
+  "existing_code_path": ""
+}
