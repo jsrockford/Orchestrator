@@ -28,6 +28,363 @@ from dataclasses import dataclass, field
 import json
 
 
+# ============================================================================
+# ROLE DEFAULTS - Common responsibilities for each role
+# ============================================================================
+
+ROLE_DEFAULTS = {
+    'ProductManager': {
+        'primary_responsibilities': [
+            'Analyze stakeholder input and extract core requirements',
+            'Define the problem statement clearly',
+            'Identify user needs and success criteria',
+            'Ask clarifying questions when requirements are ambiguous',
+            'Write comprehensive Product Requirements Document (PRD)',
+            'Ensure requirements are testable and unambiguous'
+        ],
+        'secondary_responsibilities': [
+            'Identify scope boundaries (what\'s in/out)',
+            'Prioritize requirements by criticality',
+            'Consider user experience and usability'
+        ],
+        'lead_authority': 'Final say on PRD structure, prioritization, scope definition'
+    },
+    'BusinessAnalyst': {
+        'primary_responsibilities': [
+            'Analyze technical requirements and validation rules',
+            'Define data structures and calculation logic at high level',
+            'Identify edge cases and error scenarios',
+            'Ensure requirements are technically feasible',
+            'Validate that requirements are complete and testable'
+        ],
+        'secondary_responsibilities': [
+            'Support lead role in requirements writing',
+            'Provide technical perspective on user needs',
+            'Document assumptions and constraints'
+        ],
+        'support_authority': 'Expert input on technical requirements, must approve PRD'
+    },
+    'EngineeringManager': {
+        'primary_responsibilities': [
+            'Break down PRD requirements into specific, actionable development tasks',
+            'Create comprehensive task breakdown with clear dependencies',
+            'Estimate effort and define realistic timeline',
+            'Identify project risks and mitigation strategies',
+            'Create PROJECT_TASKS.md as primary deliverable',
+            'Ensure all PRD requirements are covered by tasks'
+        ],
+        'secondary_responsibilities': [
+            'Ensure tasks are properly scoped for clear progress tracking',
+            'Define project milestones and checkpoints',
+            'Consider testability requirements for each task',
+            'Plan for documentation needs'
+        ],
+        'lead_authority': 'Final say on task breakdown structure, priorities, milestone definitions, and timeline estimates'
+    },
+    'TechnicalLead': {
+        'primary_responsibilities': [
+            'Design system architecture addressing all PRD requirements',
+            'Make technology stack decisions',
+            'Define technical approach and design patterns',
+            'Identify technical risks and dependencies',
+            'Create ARCHITECTURE.md as primary deliverable',
+            'Ensure architecture is feasible and maintainable'
+        ],
+        'secondary_responsibilities': [
+            'Validate technical feasibility of task breakdown',
+            'Provide input on effort estimates for technical tasks',
+            'Identify infrastructure and tooling needs'
+        ],
+        'support_authority': 'Expert input on architecture and technology, must approve plan'
+    },
+    'LeadDeveloper': {
+        'primary_responsibilities': [
+            'Implement features according to task list and architecture',
+            'Write clean, maintainable, tested code',
+            'Follow best practices and coding standards',
+            'Create unit and integration tests',
+            'Document code and usage',
+            'Collaborate with Code Reviewer on quality'
+        ],
+        'secondary_responsibilities': [
+            'Debug and fix issues',
+            'Optimize performance where needed',
+            'Handle edge cases properly'
+        ],
+        'lead_authority': 'Final say on implementation details, code structure, and technical approach'
+    },
+    'CodeReviewer': {
+        'primary_responsibilities': [
+            'Review code for correctness, quality, and bugs',
+            'Test functionality thoroughly',
+            'Verify PRD requirements are met',
+            'Identify edge cases that aren\'t handled',
+            'Provide constructive feedback',
+            'Approve code when ready'
+        ],
+        'secondary_responsibilities': [
+            'Suggest improvements (non-blocking)',
+            'Verify test coverage',
+            'Check documentation quality'
+        ],
+        'support_authority': 'Quality gate - must approve before completion'
+    }
+}
+
+
+# ============================================================================
+# PHASE WORKFLOWS - Standard workflow for each phase
+# ============================================================================
+
+PHASE_WORKFLOWS = {
+    'Requirements': {
+        'phases': [
+            {
+                'name': 'Initial Analysis',
+                'turns': '1-2',
+                'steps': [
+                    'Read USER_REQUEST.md thoroughly',
+                    'Understand the core problem stakeholder is trying to solve',
+                    'Identify what information is clear vs. unclear',
+                    'List initial questions and ambiguities'
+                ],
+                'exit_criteria': 'Complete understanding of what was provided'
+            },
+            {
+                'name': 'Collaborative Analysis',
+                'turns': '3-5',
+                'steps': [
+                    'Discuss with teammate their perspective',
+                    'Share your concerns and questions',
+                    'Identify gaps that would block PRD creation',
+                    'Reach consensus: Enough info to proceed or need clarification?'
+                ],
+                'exit_criteria': 'Team agreement on path forward'
+            },
+            {
+                'name': 'PRD Creation or Clarification Request',
+                'turns': '6-10',
+                'steps': [
+                    'Either write comprehensive PRD.md or create CLARIFICATION_REQUEST.md',
+                    'Get teammate review and approval',
+                    'Signal [[PROJECT_COMPLETE]] when both agree'
+                ],
+                'exit_criteria': 'PRD.md created and approved by both team members, or clarification request delivered'
+            }
+        ]
+    },
+    'Planning': {
+        'phases': [
+            {
+                'name': 'PRD Analysis and Component Identification',
+                'turns': '1-3',
+                'steps': [
+                    'Review all functional requirements',
+                    'Identify system components needed',
+                    'Map requirements to architectural layers'
+                ],
+                'exit_criteria': 'Complete understanding of all requirements; initial component list identified'
+            },
+            {
+                'name': 'Architecture and Task Design',
+                'turns': '4-7',
+                'steps': [
+                    'Design system architecture collaboratively',
+                    'Break down requirements into specific tasks',
+                    'Identify task dependencies',
+                    'Determine critical path'
+                ],
+                'exit_criteria': 'Architecture defined; complete task list created'
+            },
+            {
+                'name': 'Planning Documentation',
+                'turns': '8-12',
+                'steps': [
+                    'Create ARCHITECTURE.md and PROJECT_TASKS.md',
+                    'Define milestones and timeline',
+                    'Identify risks and mitigation plans',
+                    'Get teammate review and approval',
+                    'Signal [[PROJECT_COMPLETE]] when both agree'
+                ],
+                'exit_criteria': 'Complete implementation plan approved by both'
+            }
+        ]
+    },
+    'Implementation': {
+        'phases': [
+            {
+                'name': 'Setup and Planning',
+                'turns': '1-2',
+                'steps': [
+                    'Read PRD.md, TASKS.md, and ARCHITECTURE.md',
+                    'Understand all requirements and tasks',
+                    'Set up project structure',
+                    'Plan implementation order'
+                ],
+                'exit_criteria': 'Ready to start coding'
+            },
+            {
+                'name': 'Core Implementation',
+                'turns': '3-X',
+                'steps': [
+                    'Implement tasks in dependency order',
+                    'Write tests for each feature',
+                    'Self-review before requesting review',
+                    'Fix issues found during self-review'
+                ],
+                'exit_criteria': 'All core features implemented'
+            },
+            {
+                'name': 'Code Review and Refinement',
+                'turns': 'X+1-Y',
+                'steps': [
+                    'Request review from teammate',
+                    'Address feedback and fix bugs',
+                    'Iterate until approval'
+                ],
+                'exit_criteria': 'Teammate approves code'
+            },
+            {
+                'name': 'Final Validation',
+                'turns': 'Y+1-MAX',
+                'steps': [
+                    'Verify all PRD acceptance criteria met',
+                    'Complete documentation',
+                    'Final testing',
+                    'Get teammate final approval',
+                    'Signal [[PROJECT_COMPLETE]]'
+                ],
+                'exit_criteria': 'Complete, tested, approved implementation'
+            }
+        ]
+    }
+}
+
+
+# ============================================================================
+# COLLABORATION PATTERNS - How role pairs work together
+# ============================================================================
+
+COLLABORATION_PATTERNS = {
+    ('ProductManager', 'BusinessAnalyst'): {
+        'lead_focus': 'User needs, problem definition, feature priorities',
+        'support_focus': 'Technical details, calculation logic, validation rules',
+        'lead_defers_on': 'Technical/calculation questions, validation specifications',
+        'lead_leads_on': 'PRD structure, user-facing descriptions, scope boundaries',
+        'autonomous_lead': [
+            'PRD structure and format',
+            'Priority of requirements',
+            'User-facing feature descriptions',
+            'Scope boundaries (MVP vs. future)'
+        ],
+        'requires_consensus': [
+            'Whether to proceed with PRD or request clarification',
+            'Assumptions to make when information is incomplete',
+            'Technical requirement specifications'
+        ]
+    },
+    ('EngineeringManager', 'TechnicalLead'): {
+        'lead_focus': 'Task breakdown, timeline estimation, project structure, milestone planning',
+        'support_focus': 'Architecture design, technology choices, technical feasibility, system design patterns',
+        'lead_defers_on': 'Technology stack decisions, architectural patterns, technical dependencies, feasibility concerns',
+        'lead_leads_on': 'Task priorities, timeline estimates, milestone definitions, deliverable structure',
+        'autonomous_lead': [
+            'Task breakdown structure and granularity',
+            'Task priority ordering',
+            'Milestone definitions and checkpoints',
+            'PROJECT_TASKS.md format and organization',
+            'Effort estimates for individual tasks'
+        ],
+        'requires_consensus': [
+            'Overall architectural approach',
+            'Technology stack choices',
+            'Technical dependencies between tasks',
+            'Feasibility of timeline',
+            'Risk assessment and mitigation strategies',
+            'Final approval before signaling [[PROJECT_COMPLETE]]'
+        ]
+    },
+    ('LeadDeveloper', 'CodeReviewer'): {
+        'lead_focus': 'Implementation, code structure, technical decisions, feature delivery',
+        'support_focus': 'Code quality, bug identification, testing verification, quality assurance',
+        'lead_defers_on': 'Whether code quality is acceptable, when to approve delivery',
+        'lead_leads_on': 'Implementation approach, code organization, technical trade-offs',
+        'autonomous_lead': [
+            'Variable/function names',
+            'Code organization within files',
+            'Implementation approach (within PRD constraints)',
+            'Refactoring decisions for clarity'
+        ],
+        'requires_consensus': [
+            'Code is ready for delivery',
+            'Major refactoring decisions',
+            'Trade-offs between different approaches',
+            'Final approval before signaling [[PROJECT_COMPLETE]]'
+        ]
+    }
+}
+
+
+# ============================================================================
+# DEFINITION OF DONE - Phase-specific completion criteria
+# ============================================================================
+
+DEFINITION_OF_DONE = {
+    'Requirements': {
+        'phase_complete_criteria': [
+            'PRD.md exists and is comprehensive',
+            'All critical requirements are documented',
+            'Edge cases are identified and addressed',
+            'Acceptance criteria are clear and testable',
+            'Assumptions are explicitly documented',
+            '{other_role} has reviewed and approved',
+            'Both team members signal [[PROJECT_COMPLETE]]'
+        ],
+        'signal_conditions': [
+            'PRD.md is written and complete',
+            '{other_role} confirms they agree',
+            'All must-have information is captured',
+            'Planning team can work from this PRD'
+        ]
+    },
+    'Planning': {
+        'phase_complete_criteria': [
+            'PROJECT_TASKS.md exists with comprehensive task breakdown',
+            'ARCHITECTURE.md addresses all PRD requirements',
+            'All functional and non-functional requirements are covered by tasks',
+            'Task dependencies are clearly identified',
+            'Critical path is identified and documented',
+            'Risks are documented with mitigation strategies',
+            '{other_role} has reviewed and approved',
+            'Both team members signal [[PROJECT_COMPLETE]]'
+        ],
+        'signal_conditions': [
+            'All planning deliverables are complete (PROJECT_TASKS.md, ARCHITECTURE.md)',
+            '{other_role} confirms technical feasibility and timeline',
+            'No blocking questions or concerns remain',
+            'Implementation team can work from this plan'
+        ]
+    },
+    'Implementation': {
+        'phase_complete_criteria': [
+            'All features from PRD are implemented',
+            'All tests written and passing',
+            'Code reviewed and approved by {other_role}',
+            'No critical bugs remaining',
+            'Documentation complete (README.md, code comments)',
+            'All PRD acceptance criteria verified',
+            'Both team members signal [[PROJECT_COMPLETE]]'
+        ],
+        'signal_conditions': [
+            'All code is functional and tested',
+            '{other_role} has approved the code quality',
+            'All PRD requirements are demonstrably met',
+            'Project is ready for delivery'
+        ]
+    }
+}
+
+
 @dataclass
 class ProjectConfig:
     """Configuration for the project being created"""
@@ -495,27 +852,111 @@ class InstructionFileGenerator:
         is_lead: bool,
         other_role_name: str
     ) -> str:
-        """Get template content for a specific role"""
-        # This is a simplified version - in production, you'd have
-        # complete templates for each role type stored separately
+        """Get template content for a specific role using defaults"""
 
-        lead_marker = "**LEAD ROLE** - " if is_lead else ""
+        # Get role defaults
+        role_defaults = ROLE_DEFAULTS.get(role_name, {})
+
+        # Build responsibilities sections
+        primary_resp = role_defaults.get('primary_responsibilities', [])
+        secondary_resp = role_defaults.get('secondary_responsibilities', [])
+
+        primary_section = '\n'.join(f'- {resp}' for resp in primary_resp) if primary_resp else '- [TODO: Customize for this role]'
+        secondary_section = '\n'.join(f'- {resp}' for resp in secondary_resp) if secondary_resp else '- [TODO: Add supporting activities]'
+
+        # Build authority section
+        if is_lead:
+            authority = role_defaults.get('lead_authority', '[TODO: Define authority level]')
+            authority_line = f"**LEAD ROLE** - {authority}"
+        else:
+            authority = role_defaults.get('support_authority', '[TODO: Define authority level]')
+            authority_line = authority
+
+        # Build workflow phases from defaults
+        phase_workflows = PHASE_WORKFLOWS.get(phase_name, {}).get('phases', [])
+        workflow_section = ""
+        for i, phase_def in enumerate(phase_workflows, 1):
+            steps_text = '\n  - [ ] '.join(phase_def['steps'])
+            workflow_section += f"""
+**Phase {i}: {phase_def['name']}** (Turn {phase_def['turns']})
+  - [ ] {steps_text}
+- Exit criteria: {phase_def['exit_criteria']}
+
+"""
+
+        if not workflow_section:
+            workflow_section = """**Phase 1: [TODO: Activity Name]** (Turn 1-3)
+- [ ] [TODO: Add steps]
+- Exit criteria: [TODO: Define]
+"""
+
+        # Build collaboration section
+        role_pair = (config.roles[phase_num][0], config.roles[phase_num][1]) if len(config.roles[phase_num]) > 1 else None
+        collab_pattern = COLLABORATION_PATTERNS.get(role_pair, {}) if role_pair else {}
+
+        if collab_pattern and is_lead:
+            lead_focus = collab_pattern.get('lead_focus', '[TODO: Define your focus]')
+            support_focus = collab_pattern.get('support_focus', '[TODO: Define their focus]')
+            lead_defers = collab_pattern.get('lead_defers_on', '[TODO: When to follow their lead]')
+            lead_leads = collab_pattern.get('lead_leads_on', '[TODO: When you have final say]')
+            autonomous = collab_pattern.get('autonomous_lead', [])
+            consensus_required = collab_pattern.get('requires_consensus', [])
+
+            autonomous_text = '\n  - '.join(autonomous) if autonomous else '[TODO: List autonomous decisions]'
+            consensus_text = '\n  - '.join(consensus_required) if consensus_required else '[TODO: List collaborative decisions]'
+
+            collab_section = f"""**With {other_role_name}:**
+- They focus on: {support_focus}
+- You focus on: {lead_focus}
+- Defer to them on: {lead_defers}
+- Lead on: {lead_leads}
+
+**Decision Making:**
+- You can decide autonomously:
+  - {autonomous_text}
+
+- Requires {other_role_name} consensus:
+  - {consensus_text}"""
+        elif collab_pattern:
+            lead_focus = collab_pattern.get('lead_focus', '[TODO: Define their focus]')
+            support_focus = collab_pattern.get('support_focus', '[TODO: Define your focus]')
+            lead_defers = collab_pattern.get('lead_defers_on', '[TODO: When you should lead]')
+            lead_leads = collab_pattern.get('lead_leads_on', '[TODO: When to defer]')
+
+            collab_section = f"""**With {other_role_name}:**
+- They focus on: {lead_focus}
+- You focus on: {support_focus}
+- Defer to them on: {lead_leads}
+- Provide expert input on: {lead_defers}
+
+**Decision Making:**
+- {other_role_name} (lead) makes final decisions on structure and priorities
+- You provide expert input and must approve final deliverable
+- Both must signal [[PROJECT_COMPLETE]] for phase to end"""
+        else:
+            collab_section = f"""**With {other_role_name}:**
+- They focus on: [TODO: Define their focus]
+- You focus on: [TODO: Define your focus]
+- Defer to them on: [TODO: When to follow their lead]
+- Lead on: [TODO: When you have final say]
+
+**Decision Making:**
+- You can decide autonomously: [TODO: List autonomous decisions]
+- Requires {other_role_name} consensus: [TODO: List collaborative decisions]"""
 
         return f"""
 ## Your Role: {role_name} ({phase_name} Phase)
 
 **Primary Responsibilities:**
-- [TODO: Customize for {role_name} role]
-- [Add specific responsibilities]
-- [Add deliverables]
+{primary_section}
 
 **Secondary Responsibilities:**
-- [TODO: Add supporting activities]
+{secondary_section}
 
 **Team Position:**
 - Reports to: Project Stakeholder
 - Collaborates with: {other_role_name}
-- Decision Authority: {lead_marker}[TODO: Define authority level]
+- Decision Authority: {authority_line}
 
 ## Project Context
 
@@ -533,9 +974,7 @@ class InstructionFileGenerator:
 
 ## Workflow Phases
 
-**Phase 1: [TODO: Activity Name]** (Turn 1-3)
-- [ ] [TODO: Add steps]
-- Exit criteria: [TODO: Define]
+{workflow_section.strip()}
 
 ## {config.domain.title()} Domain Guidance
 
@@ -547,25 +986,24 @@ class InstructionFileGenerator:
 
 ## Collaboration Protocols
 
-**With {other_role_name}:**
-- They focus on: [TODO: Define their focus]
-- You focus on: [TODO: Define your focus]
-- Defer to them on: [TODO: When to follow their lead]
-- Lead on: [TODO: When you have final say]
-
-**Decision Making:**
-- You can decide autonomously: [TODO: List autonomous decisions]
-- Requires {other_role_name} consensus: [TODO: List collaborative decisions]
+{collab_section}
 
 ## Common Pitfalls to Avoid
 
-**[Category]:**
-- ⚠️ Don't [TODO: Add anti-patterns]
-- ✅ Do [TODO: Add best practices]
+<!-- TODO: Add project-specific pitfalls and best practices -->
 
 ## Definition of Done
 
-This {phase_name.lower()} phase is complete when:
+{self._build_definition_of_done(phase_name, other_role_name)}
+"""
+
+    def _build_definition_of_done(self, phase_name: str, other_role_name: str) -> str:
+        """Build Definition of Done section from defaults"""
+        dod_defaults = DEFINITION_OF_DONE.get(phase_name, {})
+
+        if not dod_defaults:
+            # Fallback if phase not in defaults
+            return f"""This {phase_name.lower()} phase is complete when:
 - [ ] [TODO: Add specific completion criteria]
 - [ ] {other_role_name} has reviewed and approved
 - [ ] Both team members signal [[PROJECT_COMPLETE]]
@@ -573,8 +1011,21 @@ This {phase_name.lower()} phase is complete when:
 **You may signal [[PROJECT_COMPLETE]] when:**
 1. [TODO: Add condition]
 2. {other_role_name} confirms agreement
-3. All deliverables are complete
-"""
+3. All deliverables are complete"""
+
+        # Build completion criteria checklist
+        criteria = dod_defaults.get('phase_complete_criteria', [])
+        criteria_text = '\n'.join(f'- [ ] {c.format(other_role=other_role_name)}' for c in criteria)
+
+        # Build signal conditions
+        conditions = dod_defaults.get('signal_conditions', [])
+        conditions_text = '\n'.join(f'{i+1}. {c.format(other_role=other_role_name)}' for i, c in enumerate(conditions))
+
+        return f"""This {phase_name.lower()} phase is complete when:
+{criteria_text}
+
+**You may signal [[PROJECT_COMPLETE]] when:**
+{conditions_text}"""
 
     def _customize_template(
         self,
@@ -910,7 +1361,8 @@ python run_orchestrated_discussion.py \\
         }
 
         # Extract functional requirements (FR-1, FR-2, etc.)
-        fr_pattern = r'\*\*?(FR-\d+):?\*\*?\s*(.+?)(?=\n\n|\*\*?FR-|\*\*?NFR-|$)'
+        # Support format: "**Requirement ID:** FR-1  \n**Description:** ..."
+        fr_pattern = r'\*\*Requirement\s+ID:\*\*\s+(FR-\d+)\s*\n\*\*Description:\*\*\s+(.+?)(?=\n\*\*(?:Input|Data|Success|Output|Business)|###|\n\n###|$)'
         fr_matches = re.findall(fr_pattern, prd_content, re.DOTALL | re.IGNORECASE)
         for fr_id, fr_desc in fr_matches:
             data['functional_requirements'].append({
@@ -919,7 +1371,8 @@ python run_orchestrated_discussion.py \\
             })
 
         # Extract non-functional requirements (NFR-1, NFR-2, etc.)
-        nfr_pattern = r'\*\*?(NFR-\d+):?\*\*?\s*(.+?)(?=\n\n|\*\*?FR-|\*\*?NFR-|$)'
+        # Support format: "**Requirement ID:** NFR-1  \n**Description:** ..."
+        nfr_pattern = r'\*\*Requirement\s+ID:\*\*\s+(NFR-\d+)\s*\n\*\*Description:\*\*\s+(.+?)(?=\n\*\*(?:Specifications?|Input|Data|Success|Output)|###|\n\n###|$)'
         nfr_matches = re.findall(nfr_pattern, prd_content, re.DOTALL | re.IGNORECASE)
         for nfr_id, nfr_desc in nfr_matches:
             data['nonfunctional_requirements'].append({
@@ -1014,7 +1467,8 @@ python run_orchestrated_discussion.py \\
 
         # Fill Input Artifacts TODO
         if '[TODO: List required input files]' in content:
-            input_list = '\n'.join(f"- {artifact}" for artifact in prd_data['input_artifacts'])
+            # Don't add "- " prefix since template already has it
+            input_list = '\n- '.join(artifact for artifact in prd_data['input_artifacts'])
             content = content.replace(
                 '[TODO: List required input files]',
                 input_list
@@ -1024,8 +1478,9 @@ python run_orchestrated_discussion.py \\
 
         # Fill Output Artifacts TODO
         if '[TODO: List expected output files]' in content:
+            # Don't add "- " prefix since template already has it
             output_items = prd_data['output_artifacts'] if prd_data['output_artifacts'] else ['ARCHITECTURE.md', 'PROJECT_TASKS.md', 'RISKS.md']
-            output_list = '\n'.join(f"- {artifact}" for artifact in output_items)
+            output_list = '\n- '.join(artifact for artifact in output_items)
             content = content.replace(
                 '[TODO: List expected output files]',
                 output_list
@@ -1055,9 +1510,13 @@ python run_orchestrated_discussion.py \\
                 '**Phase 1: [TODO: Activity Name]**',
                 '**Phase 1: PRD Analysis and Component Identification**'
             )
+            # Get FR count for display
+            fr_count = len(prd_data['functional_requirements'])
+            fr_range = f'FR-1 through FR-{fr_count}' if fr_count > 0 else 'all functional requirements'
+
             content = content.replace(
                 '- [ ] [TODO: Add steps]',
-                '- [ ] Review all functional requirements (FR-1 through FR-{})'.format(len(prd_data['functional_requirements'])) + '\n'
+                f'- [ ] Review {fr_range}\n'
                 '  - [ ] Identify system components needed\n'
                 '  - [ ] Map requirements to architectural layers',
                 1  # Only replace first occurrence

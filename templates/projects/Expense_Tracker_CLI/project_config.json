@@ -1,0 +1,25 @@
+{
+  "project_name": "Expense_Tracker_CLI",
+  "project_path": "/home/dgray/Projects/scratch/Expense_Tracker_CLI",
+  "project_type": "cli",
+  "domain": "financial",
+  "tech_stack": "python",
+  "num_phases": 3,
+  "roles": {
+    "1": [
+      "ProductManager",
+      "BusinessAnalyst"
+    ],
+    "2": [
+      "EngineeringManager",
+      "TechnicalLead"
+    ],
+    "3": [
+      "LeadDeveloper",
+      "CodeReviewer"
+    ]
+  },
+  "description": "A software application to track expenses",
+  "existing_code": false,
+  "existing_code_path": ""
+}
