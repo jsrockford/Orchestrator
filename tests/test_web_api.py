@@ -387,6 +387,58 @@ def test_configure_discussion_stores_config(api_app, orchestrator) -> None:
     assert orchestrator.discussion_config["max_turns"] == 5
 
 
+def test_extend_discussion_updates_config(api_app, orchestrator) -> None:
+    app, get_endpoint = api_app
+
+    class ExtensibleManager:
+        def __init__(self) -> None:
+            self.calls: List[int] = []
+
+        def extend_turn_limit(self, delta: int) -> int:
+            self.calls.append(delta)
+            return 12
+
+    manager = ExtensibleManager()
+    orchestrator.discussion_manager = manager
+    orchestrator.discussion_state = "RUNNING"
+    orchestrator.discussion_config = {"max_turns": 6}
+
+    extend_endpoint = get_endpoint("/api/discussion/extend", "POST")
+    payload = web_api.ExtendDiscussionRequest(extend_by=6)
+    response = run(extend_endpoint(payload, orchestrator))
+
+    assert response["status"] == "extended"
+    assert response["max_turns"] == 12
+    assert orchestrator.discussion_config["max_turns"] == 12
+    assert manager.calls == [6]
+
+
+def test_extend_discussion_requires_active_session(api_app, orchestrator) -> None:
+    app, get_endpoint = api_app
+    extend_endpoint = get_endpoint("/api/discussion/extend", "POST")
+    payload = web_api.ExtendDiscussionRequest(extend_by=2)
+    with pytest.raises(HTTPException) as exc_info:
+        run(extend_endpoint(payload, orchestrator))
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_extend_discussion_propagates_value_errors(api_app, orchestrator) -> None:
+    app, get_endpoint = api_app
+
+    class BrokenManager:
+        def extend_turn_limit(self, delta: int) -> int:
+            raise ValueError("bad delta")  # noqa: ARG002
+
+    orchestrator.discussion_manager = BrokenManager()
+    orchestrator.discussion_state = "PAUSED"
+    extend_endpoint = get_endpoint("/api/discussion/extend", "POST")
+    payload = web_api.ExtendDiscussionRequest(extend_by=3)
+    with pytest.raises(HTTPException) as exc_info:
+        run(extend_endpoint(payload, orchestrator))
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "bad delta" in exc_info.value.detail
+
+
 def test_start_discussion_spawns_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     controllers = {
         "claude": DummyController("claude"),

@@ -20,6 +20,22 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type StreamStatus = 'idle' | 'connecting' | 'streaming' | 'error';
 
+type DiscussionStatusInfo = {
+  turn: number | null;
+  speaker: string | null;
+  topic: string | null;
+  maxTurns: number | null;
+  awaitingTurnExtension: boolean;
+};
+
+const createDefaultDiscussionStatus = (): DiscussionStatusInfo => ({
+  turn: null,
+  speaker: null,
+  topic: null,
+  maxTurns: null,
+  awaitingTurnExtension: false,
+});
+
 function App() {
   const [allConversations] = useState<Conversation[]>([
     { id: 1, title: 'Claude', messages: [] },
@@ -56,13 +72,12 @@ function App() {
     logLevel: 'INFO',
   });
   const [discussionState, setDiscussionState] = useState<DiscussionState>('idle');
-  const [discussionStatus, setDiscussionStatus] = useState<{ turn: number | null; speaker: string | null; topic: string | null }>({
-    turn: null,
-    speaker: null,
-    topic: null,
-  });
+  const [discussionStatus, setDiscussionStatus] = useState<DiscussionStatusInfo>(() => createDefaultDiscussionStatus());
   const [discussionActionPending, setDiscussionActionPending] = useState(false);
   const [discussionError, setDiscussionError] = useState<string | null>(null);
+  const [isExtendModalOpen, setIsExtendModalOpen] = useState(false);
+  const [extendTurnsValue, setExtendTurnsValue] = useState(3);
+  const [extendActionPending, setExtendActionPending] = useState(false);
 
   const socketsRef = useRef<Record<string, WebSocket>>({});
   const closingSocketsRef = useRef<Set<string>>(new Set());
@@ -70,6 +85,13 @@ function App() {
   const activeModelsRef = useRef<string[]>(activeModels);
   const previousDiscussionStateRef = useRef<DiscussionState>('idle');
   const streamingActivityTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
+  const awaitingTurnExtensionRef = useRef(false);
+
+  const resetDiscussionSnapshot = useCallback(() => {
+    setDiscussionStatus(createDefaultDiscussionStatus());
+    awaitingTurnExtensionRef.current = false;
+    setIsExtendModalOpen(false);
+  }, []);
 
   useEffect(() => {
     projectStateRef.current = projectState;
@@ -82,10 +104,10 @@ function App() {
   useEffect(() => {
     if (projectState === 'idle') {
       setDiscussionState('idle');
-      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      resetDiscussionSnapshot();
       setDiscussionError(null);
     }
-  }, [projectState]);
+  }, [projectState, resetDiscussionSnapshot]);
 
   const clearStreamingActivityTimer = useCallback((model: string) => {
     const existing = streamingActivityTimers.current[model];
@@ -317,11 +339,28 @@ function App() {
 
         previousDiscussionStateRef.current = normalizedState;
         setDiscussionState(normalizedState);
+        const managerSnapshot = data.manager ?? {};
+        const turnCount = typeof managerSnapshot.turn_counter === 'number' ? managerSnapshot.turn_counter : null;
+        const speakerName =
+          typeof managerSnapshot.current_agent === 'string' ? managerSnapshot.current_agent : null;
+        const topicValue =
+          typeof data.config?.discussion_topic === 'string' ? data.config.discussion_topic : null;
+        const managerMax = typeof managerSnapshot.max_turns === 'number' ? managerSnapshot.max_turns : null;
+        const configMax = typeof data.config?.max_turns === 'number' ? data.config.max_turns : null;
+        const awaitingExtension = Boolean(managerSnapshot.awaiting_turn_extension);
         setDiscussionStatus({
-          turn: data.manager?.turn_counter ?? null,
-          speaker: data.manager?.current_agent ?? null,
-          topic: data.config?.discussion_topic ?? null,
+          turn: turnCount,
+          speaker: speakerName,
+          topic: topicValue,
+          maxTurns: managerMax ?? configMax ?? null,
+          awaitingTurnExtension: awaitingExtension,
         });
+        if (!awaitingTurnExtensionRef.current && awaitingExtension) {
+          setIsExtendModalOpen(true);
+        } else if (awaitingTurnExtensionRef.current && !awaitingExtension) {
+          setIsExtendModalOpen(false);
+        }
+        awaitingTurnExtensionRef.current = awaitingExtension;
         setDiscussionError(data.error ?? null);
       } catch (error) {
         if (!cancelled) {
@@ -682,7 +721,7 @@ function App() {
 
       setProjectState('running');
       setDiscussionState('idle');
-      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      resetDiscussionSnapshot();
       setDiscussionError(null);
     } catch (error) {
       console.error('Failed to start project:', error);
@@ -705,7 +744,7 @@ function App() {
           console.error('Failed to stop discussion before closing project:', error);
         }
         setDiscussionState('idle');
-        setDiscussionStatus({ turn: null, speaker: null, topic: null });
+        resetDiscussionSnapshot();
       }
 
       const payload = {
@@ -757,9 +796,33 @@ function App() {
       alert(`Failed to stop discussion: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setDiscussionState('idle');
-      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      resetDiscussionSnapshot();
       setDiscussionError(null);
       setDiscussionActionPending(false);
+    }
+  };
+
+  const handleExtendDiscussion = async () => {
+    if (extendActionPending) {
+      return;
+    }
+    if (!Number.isFinite(extendTurnsValue) || extendTurnsValue < 1) {
+      alert('Enter a positive number of turns to extend.');
+      return;
+    }
+    setExtendActionPending(true);
+    try {
+      await postControl('/api/discussion/extend', {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extend_by: extendTurnsValue }),
+      });
+      awaitingTurnExtensionRef.current = false;
+      setIsExtendModalOpen(false);
+    } catch (error) {
+      console.error('Failed to extend discussion:', error);
+      alert(`Failed to extend discussion: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setExtendActionPending(false);
     }
   };
 
@@ -799,13 +862,20 @@ function App() {
       discussionState === 'running' ? 'Discussion running' : 'Discussion paused',
     ];
     if (discussionStatus.turn !== null) {
-      parts.push(`Turn ${discussionStatus.turn}`);
+      if (discussionStatus.maxTurns !== null) {
+        parts.push(`Turn ${discussionStatus.turn}/${discussionStatus.maxTurns}`);
+      } else {
+        parts.push(`Turn ${discussionStatus.turn}`);
+      }
     }
     if (discussionStatus.speaker) {
       parts.push(`Speaker: ${discussionStatus.speaker}`);
     }
     if (discussionStatus.topic) {
       parts.push(`Topic: ${discussionStatus.topic}`);
+    }
+    if (discussionStatus.awaitingTurnExtension) {
+      parts.push('Awaiting turn extension');
     }
     return parts.join(' • ');
   })();
@@ -814,6 +884,53 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#1e1e1e] text-gray-100 flex flex-col">
+      {isExtendModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-gray-700 bg-[#2a2a2a] p-6 shadow-2xl">
+            <h2 className="text-xl font-semibold text-white">Turn Limit Reached</h2>
+            <p className="mt-2 text-sm text-gray-300">
+              The discussion paused automatically after hitting{' '}
+              <span className="font-semibold text-white">
+                turn {discussionStatus.turn ?? '?'}
+                {discussionStatus.maxTurns !== null ? ` / ${discussionStatus.maxTurns}` : ''}
+              </span>
+              . Extend the session or stop it entirely.
+            </p>
+            <div className="mt-4">
+              <label className="block text-sm text-gray-400">Extend by (turns)</label>
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full rounded-md border border-gray-600 bg-[#1b1b1b] px-3 py-2 text-white focus:border-indigo-400 focus:outline-none"
+                value={extendTurnsValue}
+                onChange={e => {
+                  const nextValue = Number(e.target.value);
+                  setExtendTurnsValue(Number.isFinite(nextValue) && nextValue > 0 ? Math.floor(nextValue) : 1);
+                }}
+                disabled={extendActionPending}
+              />
+            </div>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleExtendDiscussion}
+                disabled={extendActionPending}
+              >
+                {extendActionPending ? 'Extending…' : 'Continue Session'}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleStopDiscussion}
+                disabled={discussionActionPending}
+              >
+                Stop Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header className="py-8 text-center border-b border-gray-700">
         <h1 className="text-5xl font-bold text-white tracking-tight">
           Orchestrator

@@ -66,6 +66,14 @@ Component responsibilities:
 ### REST interactions
 All fetches use the native Fetch API (see `App.tsx`): POST bodies are JSON, and errors update `streamErrors` or modal-level status fields. Keep new calls colocated with the component that owns the UI so error feedback is immediate.
 
+### Turn-limit safety valve
+`/api/discussion/status` now returns `manager.awaiting_turn_extension`. When this flag flips to `true`, `App.tsx` sets `discussionState` to paused, opens an in-app modal, and offers two actions:
+
+1. **Continue** – posts `{ "extend_by": N }` to `/api/discussion/extend`, which increases `max_turns` and auto-resumes the discussion.
+2. **Stop** – calls `/api/discussion/stop` so the discussion thread exits cleanly.
+
+The modal stays open until one of those actions completes, guaranteeing that unattended sessions never loop forever at the configured turn limit.
+
 ## 5. Styling & UI Conventions
 
 - Tailwind classes live directly in JSX; global adjustments belong in `src/index.css`.

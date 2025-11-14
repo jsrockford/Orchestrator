@@ -32,6 +32,7 @@ The FastAPI application defined in `src/orchestrator/web_api.py` exposes REST an
 | --- | --- | --- | --- |
 | `POST` | `/api/discussion/configure` | `{ "max_turns": 12, "starting_model": "claude", "participants": ["claude","gemini"], "discussion_topic": "...", "include_history": true, "log_level": "INFO" }` | Persists discussion defaults inside the orchestrator. |
 | `POST` | `/api/discussion/start` | `{ "project_directory": "...", "max_turns": 10, ... }` | Launches a turn-based conversation using `ConversationManager`. |
+| `POST` | `/api/discussion/extend` | `{ "extend_by": 5 }` | Adds more turns to a running/paused discussion (useful when the auto pause on turn limit triggers). |
 | `POST` | `/api/discussion/stop` | `{ "reason": "operator request" }` (optional) | Signals the discussion thread to halt and waits for cleanup. |
 | `GET` | `/api/discussion/status` | — | Returns turn counters, active speaker, topic, and any error string. |
 

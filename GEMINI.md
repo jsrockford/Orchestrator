@@ -2,18 +2,16 @@
 
 ## Project Overview
 
-This project is a proof-of-concept (POC) to develop and test methods for programmatically orchestrating multiple AI CLI tools (including Claude Code, Gemini CLI, Codex, and Qwen) running in a native Ubuntu 24.04 server environment. The primary goal is to create a system that can send automated commands to the AI CLIs, capture and parse their responses, and enable collaborative, multi-agent workflows.
+This project is a multi-AI model software development project focused on programmatically orchestrating multiple AI CLI tools (including Claude Code, Gemini CLI, Codex, and Qwen) running in a native Ubuntu 24.04 server environment. The primary goal is to create a system that can send automated commands to the AI CLIs, capture and parse their responses, and enable collaborative, multi-agent workflows.
 
 ### Gemini's Role
 
-Gemini's role in this development team is advisory, planning, and troubleshooting. Gemini is not permitted to change code files unless specifically asked to by 'Don'
+Gemini's role in this development team is advisory, planning, and troubleshooting. Gemini is not permitted to change code files unless specifically asked to by 'Don'.
 
 The project will be developed in Python and will explore three potential implementation strategies for controlling the CLI session:
 1.  **Tmux-Based Control:** Using `tmux` to manage the session and send commands.
 2.  **Expect-Based Control:** Using an `expect` script or the `pexpect` library to automate interaction.
 3.  **Direct PTY Control:** Using Python's `pty` module to create a pseudo-terminal.
-
-The success of this POC will be determined by the ability to reliably send commands, receive output, and switch between automated and manual control of the Claude Code CLI.
 
 ## Operating Instructions
 

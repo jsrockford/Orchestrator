@@ -3,8 +3,12 @@
 Tests for the conversation manager scaffold.
 """
 
+import threading
+import time
 from collections import deque
 from typing import Any, Deque, Dict, List, Tuple
+
+import pytest
 
 from src.orchestrator.conversation_manager import ConversationManager
 from src.orchestrator.message_router import MessageRouter
@@ -198,6 +202,86 @@ def test_completion_requires_explicit_signal_when_configured() -> None:
     assert metadata.get("completion_signal_effective") is False
     missing = metadata.get("completion_missing_explicit") or []
     assert set(missing) == {"gemini", "qwen"}
+
+
+def test_turn_limit_extension_resumes_discussion() -> None:
+    claude_controller = FakeConversationalController(
+        [
+            "Turn one response (Claude).",
+            "Turn three response (Claude).",
+        ]
+    )
+    gemini_controller = FakeConversationalController(
+        [
+            "Turn two response (Gemini).",
+            "Turn four response (Gemini).",
+        ]
+    )
+
+    orchestrator = DevelopmentTeamOrchestrator(
+        {"claude": claude_controller, "gemini": gemini_controller}
+    )
+    manager = ConversationManager(orchestrator, ["claude", "gemini"])
+
+    results: Dict[str, Any] = {}
+
+    def _run_discussion() -> None:
+        results["conversation"] = manager.facilitate_discussion("Extend turns", max_turns=1)
+
+    worker = threading.Thread(target=_run_discussion, daemon=True)
+    worker.start()
+
+    # Wait for the manager to report that it hit the turn limit.
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not manager._awaiting_turn_extension:  # noqa: SLF001
+        time.sleep(0.01)
+
+    assert manager._awaiting_turn_extension  # noqa: SLF001
+    assert manager.human_control_mode is True
+
+    new_total = manager.extend_turn_limit(2)
+    assert new_total == 3
+    assert manager._awaiting_turn_extension is False  # noqa: SLF001
+
+    # Allow a couple of additional turns to run.
+    deadline = time.time() + 2.0
+    while time.time() < deadline and manager._turn_counter < 2:  # noqa: SLF001
+        time.sleep(0.01)
+
+    assert manager._turn_counter >= 2  # noqa: SLF001
+
+    # Stop the loop gracefully after verifying the resume.
+    orchestrator.should_stop_discussion = True
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+
+    conversation = results.get("conversation")
+    assert conversation is not None
+    assert len(conversation) >= 2
+
+
+def test_extend_turn_limit_requires_positive_delta() -> None:
+    claude_controller = FakeConversationalController(["Turn response"])
+    orchestrator = DevelopmentTeamOrchestrator({"claude": claude_controller})
+    manager = ConversationManager(orchestrator, ["claude"])
+    with pytest.raises(ValueError):
+        manager.extend_turn_limit(0)
+    with pytest.raises(ValueError):
+        manager.extend_turn_limit(-2)
+
+
+def test_snapshot_flags_turn_limit_pause() -> None:
+    claude_controller = FakeConversationalController(["Turn response"])
+    orchestrator = DevelopmentTeamOrchestrator({"claude": claude_controller})
+    manager = ConversationManager(orchestrator, ["claude"])
+    manager._active_max_turns = 1  # noqa: SLF001
+    manager._turn_counter = 1  # noqa: SLF001
+    manager._handle_turn_limit_reached("Topic")  # noqa: SLF001
+
+    snapshot = manager.get_status_snapshot()
+    assert snapshot["awaiting_turn_extension"] is True
+    assert snapshot["max_turns"] == 1
+    assert manager.human_control_mode is True
 
 
 def test_keyword_alignment_does_not_trigger_consensus_when_explicit_required() -> None:

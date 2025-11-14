@@ -72,6 +72,11 @@ class DiscussionConfig(BaseModel):
     log_level: Optional[str] = None
 
 
+class ExtendDiscussionRequest(BaseModel):
+    """Payload for extending an in-flight discussion's turn budget."""
+    extend_by: int = Field(..., ge=1, description="Number of additional turns to allow")
+
+
 class ModelSettingsUpdate(BaseModel):
     """Request body for updating per-model overrides."""
     project_directory: str
@@ -1171,6 +1176,51 @@ def register_discussion_routes(app: FastAPI) -> None:
             "topic": topic,
             "max_turns": max_turns,
             "participants": participants,
+        }
+
+    @app.post("/api/discussion/extend", tags=["discussion"])
+    async def extend_discussion(
+        request: ExtendDiscussionRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        manager = getattr(orchestrator, "discussion_manager", None)
+        state = getattr(orchestrator, "discussion_state", "IDLE")
+        if manager is None or state not in {"RUNNING", "PAUSED"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active discussion to extend",
+            )
+
+        extend_by = int(request.extend_by)
+        if extend_by <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="extend_by must be >= 1",
+            )
+
+        config = orchestrator.discussion_config or {}
+        try:
+            new_total = manager.extend_turn_limit(extend_by)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to extend discussion turns: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to extend discussion turns: {exc}",
+            ) from exc
+
+        config["max_turns"] = new_total
+        orchestrator.discussion_config = config
+
+        return {
+            "status": "extended",
+            "extend_by": extend_by,
+            "max_turns": new_total,
+            "discussion_state": orchestrator.discussion_state,
         }
 
     @app.post("/api/discussion/stop", tags=["discussion"])
