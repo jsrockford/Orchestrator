@@ -20,8 +20,10 @@ Version: 1.0
 
 import os
 import sys
+import argparse
+import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 import json
 
@@ -814,12 +816,343 @@ python run_orchestrated_discussion.py \\
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # ========================================================================
+    # REFINEMENT MODE METHODS
+    # ========================================================================
+
+    def refine_templates(self, args):
+        """Refine existing instruction files based on artifacts"""
+        print("=" * 70)
+        print(f"Orchestrator Template Refinement - Phase {args.phase}")
+        print("=" * 70)
+        print()
+
+        if args.phase == 2:
+            self._refine_phase_2(args)
+        elif args.phase == 3:
+            self._refine_phase_3(args)
+
+    def _refine_phase_2(self, args):
+        """Refine Phase 2 templates using PRD.md"""
+        print("Refining Phase 2 (Planning) templates using PRD.md...")
+        print()
+
+        # Load PRD
+        prd_path = Path(args.prd_file)
+        if not prd_path.exists():
+            raise FileNotFoundError(f"PRD file not found: {prd_path}")
+
+        print(f"Reading PRD from: {prd_path}")
+        with open(prd_path, 'r') as f:
+            prd_content = f.read()
+
+        # Parse PRD to extract key information
+        prd_data = self._parse_prd(prd_content)
+        print(f"  Extracted {len(prd_data['functional_requirements'])} functional requirements")
+        print(f"  Extracted {len(prd_data['nonfunctional_requirements'])} non-functional requirements")
+        print(f"  Found {len(prd_data['data_models'])} data model references")
+        print()
+
+        # Find project directory
+        project_dir = self._find_project_directory(args, prd_path)
+        print(f"Project directory: {project_dir}")
+        print()
+
+        # Load project config
+        config = self._load_project_config(project_dir)
+
+        # Find Phase 2 instruction files
+        phase2_files = self._find_phase_files(project_dir, 2, config)
+
+        if not phase2_files:
+            print("⚠️  No Phase 2 instruction files found.")
+            print(f"   Expected files in: {project_dir}")
+            return
+
+        print(f"Found {len(phase2_files)} Phase 2 instruction files to refine:")
+        for f in phase2_files:
+            print(f"  - {f.name}")
+        print()
+
+        # Refine each file
+        refined_count = 0
+        for file_path in phase2_files:
+            if self._refine_phase2_file(file_path, prd_data, config):
+                refined_count += 1
+
+        print()
+        print("=" * 70)
+        print(f"Phase 2 Refinement Complete!")
+        print("=" * 70)
+        print(f"  {refined_count} file(s) updated")
+        print()
+        print("Next steps:")
+        print("  1. Review the updated files for accuracy")
+        print("  2. Fill remaining Domain/Tech TODOs")
+        print("  3. Run Phase 2 orchestration session")
+        print()
+
+    def _refine_phase_3(self, args):
+        """Refine Phase 3 templates using ARCHITECTURE.md and PROJECT_TASKS.md"""
+        print("⚠️  Phase 3 refinement not yet implemented.")
+        print("   This will be added in Phase C of the implementation.")
+        print()
+
+    def _parse_prd(self, prd_content: str) -> Dict:
+        """Parse PRD.md to extract key information"""
+        data = {
+            'functional_requirements': [],
+            'nonfunctional_requirements': [],
+            'data_models': [],
+            'success_criteria': [],
+            'input_artifacts': ['PRD.md'],
+            'output_artifacts': []
+        }
+
+        # Extract functional requirements (FR-1, FR-2, etc.)
+        fr_pattern = r'\*\*?(FR-\d+):?\*\*?\s*(.+?)(?=\n\n|\*\*?FR-|\*\*?NFR-|$)'
+        fr_matches = re.findall(fr_pattern, prd_content, re.DOTALL | re.IGNORECASE)
+        for fr_id, fr_desc in fr_matches:
+            data['functional_requirements'].append({
+                'id': fr_id.strip(),
+                'description': fr_desc.strip()
+            })
+
+        # Extract non-functional requirements (NFR-1, NFR-2, etc.)
+        nfr_pattern = r'\*\*?(NFR-\d+):?\*\*?\s*(.+?)(?=\n\n|\*\*?FR-|\*\*?NFR-|$)'
+        nfr_matches = re.findall(nfr_pattern, prd_content, re.DOTALL | re.IGNORECASE)
+        for nfr_id, nfr_desc in nfr_matches:
+            data['nonfunctional_requirements'].append({
+                'id': nfr_id.strip(),
+                'description': nfr_desc.strip()
+            })
+
+        # Extract data model references (class names, entity names)
+        # Look for common patterns: Transaction, Account, User, etc.
+        data_model_pattern = r'(?:class|entity|model|table|collection)\s+([A-Z][a-zA-Z0-9_]+)'
+        data_models = set(re.findall(data_model_pattern, prd_content, re.IGNORECASE))
+        data['data_models'] = list(data_models)
+
+        # Extract success criteria
+        success_section = re.search(
+            r'##\s*Success\s*Criteria.*?(?=##|$)',
+            prd_content,
+            re.DOTALL | re.IGNORECASE
+        )
+        if success_section:
+            # Extract bullet points
+            criteria = re.findall(r'[-*]\s*(.+)', success_section.group())
+            data['success_criteria'] = [c.strip() for c in criteria if c.strip()]
+
+        # Infer output artifacts from requirements
+        if any('csv' in req['description'].lower() for req in data['functional_requirements']):
+            data['output_artifacts'].append('CSV report file')
+        if any('api' in req['description'].lower() for req in data['functional_requirements']):
+            data['output_artifacts'].append('API endpoint documentation')
+
+        return data
+
+    def _find_project_directory(self, args, prd_path: Path) -> Path:
+        """Find the project directory containing instruction files"""
+        if args.project_dir:
+            return Path(args.project_dir)
+
+        # Assume PRD.md is in the project root
+        return prd_path.parent
+
+    def _load_project_config(self, project_dir: Path) -> Optional[ProjectConfig]:
+        """Load project_config.json if it exists"""
+        config_file = project_dir / "project_config.json"
+
+        if not config_file.exists():
+            print(f"⚠️  No project_config.json found in {project_dir}")
+            print("   Assuming default 3-phase configuration")
+            return None
+
+        with open(config_file, 'r') as f:
+            config_data = json.load(f)
+
+        return ProjectConfig(
+            project_name=config_data['project_name'],
+            project_path=config_data['project_path'],
+            project_type=config_data['project_type'],
+            domain=config_data['domain'],
+            tech_stack=config_data['tech_stack'],
+            num_phases=config_data['num_phases'],
+            roles=config_data['roles'],
+            description=config_data.get('description', ''),
+            existing_code=config_data.get('existing_code', False),
+            existing_code_path=config_data.get('existing_code_path', '')
+        )
+
+    def _find_phase_files(self, project_dir: Path, phase_num: int, config: Optional[ProjectConfig]) -> List[Path]:
+        """Find all instruction files for a given phase"""
+        if config and phase_num in config.roles:
+            phase_name = self._get_phase_name(phase_num, config.num_phases)
+            phase_files = []
+            for role_name in config.roles[phase_num]:
+                filename = f"ROLE_{role_name}_{phase_name}.md"
+                file_path = project_dir / filename
+                if file_path.exists():
+                    phase_files.append(file_path)
+            return phase_files
+        else:
+            # Fallback: search for files matching pattern
+            phase_name = self._get_phase_name(phase_num, 3)  # Assume 3 phases
+            pattern = f"ROLE_*_{phase_name}.md"
+            return list(project_dir.glob(pattern))
+
+    def _refine_phase2_file(self, file_path: Path, prd_data: Dict, config: Optional[ProjectConfig]) -> bool:
+        """Refine a single Phase 2 instruction file"""
+        print(f"Refining: {file_path.name}...")
+
+        with open(file_path, 'r') as f:
+            content = f.read()
+
+        original_content = content
+        modified = False
+
+        # Fill Input Artifacts TODO
+        if '[TODO: List required input files]' in content:
+            input_list = '\n'.join(f"- {artifact}" for artifact in prd_data['input_artifacts'])
+            content = content.replace(
+                '[TODO: List required input files]',
+                input_list
+            )
+            modified = True
+            print("  ✓ Filled Input Artifacts")
+
+        # Fill Output Artifacts TODO
+        if '[TODO: List expected output files]' in content:
+            output_items = prd_data['output_artifacts'] if prd_data['output_artifacts'] else ['ARCHITECTURE.md', 'PROJECT_TASKS.md', 'RISKS.md']
+            output_list = '\n'.join(f"- {artifact}" for artifact in output_items)
+            content = content.replace(
+                '[TODO: List expected output files]',
+                output_list
+            )
+            modified = True
+            print("  ✓ Filled Output Artifacts")
+
+        # Fill Success Criteria TODO
+        if '[TODO: Define completion criteria]' in content:
+            if prd_data['success_criteria']:
+                criteria_list = '\n'.join(f"- {criterion}" for criterion in prd_data['success_criteria'][:5])  # Limit to 5
+                content = content.replace(
+                    '[TODO: Define completion criteria]',
+                    f"Architecture addresses all PRD requirements:\n{criteria_list}"
+                )
+            else:
+                content = content.replace(
+                    '[TODO: Define completion criteria]',
+                    "All PRD functional and non-functional requirements are addressed in ARCHITECTURE.md"
+                )
+            modified = True
+            print("  ✓ Filled Success Criteria")
+
+        # Fill Workflow Phase Activity Names (basic)
+        if '[TODO: Activity Name]' in content:
+            content = content.replace(
+                '**Phase 1: [TODO: Activity Name]**',
+                '**Phase 1: PRD Analysis and Component Identification**'
+            )
+            content = content.replace(
+                '- [ ] [TODO: Add steps]',
+                '- [ ] Review all functional requirements (FR-1 through FR-{})'.format(len(prd_data['functional_requirements'])) + '\n'
+                '  - [ ] Identify system components needed\n'
+                '  - [ ] Map requirements to architectural layers',
+                1  # Only replace first occurrence
+            )
+            modified = True
+            print("  ✓ Filled Workflow Phase structure")
+
+        if modified:
+            # Write updated content
+            with open(file_path, 'w') as f:
+                f.write(content)
+            print(f"  💾 Saved changes to {file_path.name}")
+            return True
+        else:
+            print(f"  ℹ️  No TODOs found to fill (file may already be customized)")
+            return False
+
 
 def main():
     """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Generate or refine Orchestrator instruction files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Initial generation (Stage 1)
+  python scripts/generate_instruction_files.py
+
+  # Refine Phase 2 templates after PRD exists (Stage 2)
+  python scripts/generate_instruction_files.py --refine --phase 2 --prd-file ./PRD.md
+
+  # Refine Phase 3 templates after ARCHITECTURE exists (Stage 3)
+  python scripts/generate_instruction_files.py --refine --phase 3 \\
+    --architecture-file ./ARCHITECTURE.md --tasks-file ./PROJECT_TASKS.md
+        """
+    )
+
+    parser.add_argument(
+        '--refine',
+        action='store_true',
+        help='Refine existing instruction files instead of generating new ones'
+    )
+
+    parser.add_argument(
+        '--phase',
+        type=int,
+        choices=[2, 3],
+        help='Which phase to refine (2 or 3). Requires --refine.'
+    )
+
+    parser.add_argument(
+        '--prd-file',
+        type=str,
+        help='Path to PRD.md file (for Phase 2 refinement)'
+    )
+
+    parser.add_argument(
+        '--architecture-file',
+        type=str,
+        help='Path to ARCHITECTURE.md file (for Phase 3 refinement)'
+    )
+
+    parser.add_argument(
+        '--tasks-file',
+        type=str,
+        help='Path to PROJECT_TASKS.md file (for Phase 3 refinement)'
+    )
+
+    parser.add_argument(
+        '--project-dir',
+        type=str,
+        help='Project directory containing instruction files (for refinement mode)'
+    )
+
+    args = parser.parse_args()
+
+    # Validate arguments
+    if args.refine:
+        if not args.phase:
+            parser.error("--refine requires --phase")
+        if args.phase == 2 and not args.prd_file:
+            parser.error("Phase 2 refinement requires --prd-file")
+        if args.phase == 3 and not (args.architecture_file and args.tasks_file):
+            parser.error("Phase 3 refinement requires both --architecture-file and --tasks-file")
+
     try:
         generator = InstructionFileGenerator()
-        generator.run()
+
+        if args.refine:
+            # Refinement mode
+            generator.refine_templates(args)
+        else:
+            # Initial generation mode
+            generator.run()
+
     except KeyboardInterrupt:
         print("\n\nGeneration cancelled by user.")
         sys.exit(1)
