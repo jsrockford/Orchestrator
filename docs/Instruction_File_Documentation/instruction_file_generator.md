@@ -10,6 +10,8 @@ The Instruction File Generator (`scripts/generate_instruction_files.py`) is an i
 
 ## Quick Start
 
+### Stage 1: Initial Generation
+
 ```bash
 # From the repository root
 python scripts/generate_instruction_files.py
@@ -21,6 +23,29 @@ The script will:
 3. Help you select roles for each phase
 4. Generate customized instruction files
 5. Create supporting documentation
+
+### Stage 2: Phase 2 Refinement (After PRD Exists)
+
+```bash
+# After completing Phase 1 and creating PRD.md
+python scripts/generate_instruction_files.py --refine --phase 2 --prd-file ./PRD.md
+```
+
+This will:
+1. Parse PRD.md to extract requirements and success criteria
+2. Auto-fill Category 5 TODOs (examples, artifacts, workflow structure) in Phase 2 templates
+3. Preserve all human customizations (Categories 1-4: domain, tech, authority, workflow)
+
+### Stage 3: Phase 3 Refinement (After ARCHITECTURE Exists)
+
+```bash
+# After completing Phase 2 and creating ARCHITECTURE.md
+python scripts/generate_instruction_files.py --refine --phase 3 \
+  --architecture-file ./ARCHITECTURE.md \
+  --tasks-file ./PROJECT_TASKS.md
+```
+
+**Note:** Stage 3 refinement is planned but not yet implemented. See templates/challenges.md for details.
 
 ## What Gets Generated
 
@@ -288,6 +313,226 @@ Where:
 - r = Annual rate (Decimal, e.g., 0.185 for 18.5%)
 - t = Time in years (Decimal)
 ```
+
+## Staged Refinement Workflow (NEW)
+
+The generator now supports a **3-stage workflow** that reduces manual TODO completion by auto-filling examples and patterns as artifacts become available.
+
+### Why Staged Refinement?
+
+**Problem:** When you first generate instruction files, many sections contain TODOs because critical information doesn't exist yet:
+- Phase 2 templates can't reference specific requirements (PRD doesn't exist)
+- Phase 3 templates can't show architecture-specific code examples (ARCHITECTURE doesn't exist)
+
+**Solution:** Run the generator again after each phase completes, using artifacts as input.
+
+### The Complete Workflow
+
+#### Stage 1: Initial Generation (Before Phase 1)
+
+```bash
+python scripts/generate_instruction_files.py
+```
+
+**What happens:**
+- Interactive interview about your project
+- Generates skeleton instruction files for all phases
+- Creates supporting docs (README, SESSION_MAPPING, USER_REQUEST template)
+- All files contain TODOs for content that requires context
+
+**What you do:**
+- Fill **Category 1-4 TODOs** (see TODO Taxonomy below)
+- Create USER_REQUEST.md with your project requirements
+- Run Phase 1 orchestration session
+
+**Phase 1 output:** PRD.md
+
+---
+
+#### Stage 2: Phase 2 Refinement (After PRD Exists)
+
+```bash
+cd /path/to/your/project
+python scripts/generate_instruction_files.py --refine --phase 2 --prd-file ./PRD.md
+```
+
+**What happens:**
+- Reads PRD.md and extracts:
+  - Functional requirements (FR-1, FR-2, etc.)
+  - Non-functional requirements (NFR-1, NFR-2, etc.)
+  - Data models (class/entity names)
+  - Success criteria
+- Updates Phase 2 instruction files by filling:
+  - `[TODO: List required input files]` → "- PRD.md"
+  - `[TODO: List expected output files]` → "- ARCHITECTURE.md\n- PROJECT_TASKS.md"
+  - `[TODO: Define completion criteria]` → Success criteria from PRD
+  - `[TODO: Activity Name]` → "PRD Analysis and Component Identification"
+- **Preserves your customizations** - only replaces exact TODO markers
+
+**Output example:**
+```
+Reading PRD from: ./PRD.md
+  Extracted 5 functional requirements
+  Extracted 3 non-functional requirements
+  Found 4 data model references
+
+Project directory: /home/user/Projects/MyProject
+
+Found 2 Phase 2 instruction files to refine:
+  - ROLE_EngineeringManager_Planning.md
+  - ROLE_TechnicalLead_Planning.md
+
+Refining: ROLE_EngineeringManager_Planning.md...
+  ✓ Filled Input Artifacts
+  ✓ Filled Output Artifacts
+  ✓ Filled Success Criteria
+  ✓ Filled Workflow Phase structure
+  💾 Saved changes
+
+Refining: ROLE_TechnicalLead_Planning.md...
+  ✓ Filled Input Artifacts
+  ✓ Filled Output Artifacts
+  ✓ Filled Success Criteria
+  💾 Saved changes
+
+Phase 2 Refinement Complete!
+  2 file(s) updated
+
+Next steps:
+  1. Review the updated files for accuracy
+  2. Fill remaining Domain/Tech TODOs
+  3. Run Phase 2 orchestration session
+```
+
+**What you do:**
+- Review auto-filled content for accuracy
+- Fill any remaining domain/tech-specific TODOs
+- Run Phase 2 orchestration session
+
+**Phase 2 output:** ARCHITECTURE.md, PROJECT_TASKS.md
+
+---
+
+#### Stage 3: Phase 3 Refinement (After ARCHITECTURE Exists)
+
+```bash
+cd /path/to/your/project
+python scripts/generate_instruction_files.py --refine --phase 3 \
+  --architecture-file ./ARCHITECTURE.md \
+  --tasks-file ./PROJECT_TASKS.md
+```
+
+**Status:** Planned but not yet implemented.
+
+**When implemented, it will:**
+- Parse ARCHITECTURE.md for component structure, tech choices, data models
+- Parse PROJECT_TASKS.md for task breakdown
+- Fill Phase 3 TODOs with:
+  - Code examples based on chosen architecture
+  - Technology-specific testing patterns
+  - Task-derived workflow phases
+
+---
+
+### TODO Taxonomy (What Gets Auto-Filled vs. Manual)
+
+Staged refinement follows a clear taxonomy of which TODOs can be automated:
+
+| Category | Owner | When Filled | Auto-Fillable? |
+|----------|-------|-------------|----------------|
+| **Cat 1: Domain** | Domain expert | Stage 1 | ❌ No - Requires expertise (regulations, compliance, domain patterns) |
+| **Cat 2: Tech Stack** | Lead dev/architect | Stage 1 | ❌ No - Requires expertise (framework patterns, best practices) |
+| **Cat 3: Authority** | PM/team lead | Stage 1 | ❌ No - Requires team knowledge (decision-making rules, governance) |
+| **Cat 4: Workflow** | PM | Stage 1 | ❌ No - Requires project planning (phase structure, checkpoints) |
+| **Cat 5: Examples** | Auto or manual | Stage 2/3 | ✅ Yes - Can extract from PRD/ARCHITECTURE (file names, success criteria, basic structure) |
+
+**Key principle:** Staged refinement fills **Category 5 TODOs** (examples, artifacts, patterns) while leaving **Categories 1-4** (domain, tech, authority, workflow) for human experts.
+
+### Command Reference
+
+**Help:**
+```bash
+python scripts/generate_instruction_files.py --help
+```
+
+**Stage 1 (Initial):**
+```bash
+python scripts/generate_instruction_files.py
+```
+
+**Stage 2 (Refine Phase 2):**
+```bash
+python scripts/generate_instruction_files.py \
+  --refine \
+  --phase 2 \
+  --prd-file ./PRD.md \
+  [--project-dir ./path/to/project]  # Optional: defaults to PRD parent directory
+```
+
+**Stage 3 (Refine Phase 3):** *(Coming soon)*
+```bash
+python scripts/generate_instruction_files.py \
+  --refine \
+  --phase 3 \
+  --architecture-file ./ARCHITECTURE.md \
+  --tasks-file ./PROJECT_TASKS.md \
+  [--project-dir ./path/to/project]
+```
+
+### What Refinement Preserves
+
+**Safe operations:**
+- ✅ Only replaces exact TODO marker strings (e.g., `[TODO: List required input files]`)
+- ✅ Leaves all custom text untouched
+- ✅ Preserves formatting and structure
+- ✅ Never modifies sections without TODO markers
+
+**Example:**
+
+**Before refinement (you added custom content):**
+```markdown
+**Input Artifacts:**
+- PRD.md (already added by you manually)
+- Reference documents from stakeholder
+
+**Output Artifacts:**
+- [TODO: List expected output files]
+```
+
+**After refinement:**
+```markdown
+**Input Artifacts:**
+- PRD.md (already added by you manually)
+- Reference documents from stakeholder
+
+**Output Artifacts:**
+- ARCHITECTURE.md
+- PROJECT_TASKS.md
+- RISKS.md
+```
+
+Notice: Your custom "Reference documents" line is preserved, TODO is replaced.
+
+### Benefits of Staged Refinement
+
+1. **Reduces manual work:** Category 5 TODOs auto-filled from artifacts (30-40% of TODOs)
+2. **Context-aware templates:** Phase 2/3 templates reference actual project files (PRD.md, ARCHITECTURE.md)
+3. **Maintains quality:** Categories 1-4 still require human expertise where it matters
+4. **Safe updates:** Preserves your customizations, only fills TODOs
+5. **Iterative improvement:** Can re-run refinement as artifacts evolve
+
+### Limitations
+
+**What refinement CANNOT do:**
+- ❌ Add domain-specific guidance (financial regulations, healthcare compliance)
+- ❌ Add technology-specific patterns (React hooks, Python async best practices)
+- ❌ Predict common pitfalls (requires experience)
+- ❌ Make authority decisions (who has final say on architecture)
+- ❌ Extract complex logic from natural language requirements
+
+**Why:** These require deep contextual knowledge beyond what can be reliably parsed from text.
+
+For details on why automation has limits, see `templates/challenges.md`.
 
 ## Using Generated Files
 
@@ -613,16 +858,26 @@ Phase 3 Input: PRD.md, TASKS.md, TECH_DECISIONS.md
 Phase 3 Output: Code files, tests, documentation
 ```
 
+## Implemented Features
+
+✅ **Staged Refinement** (v1.1):
+- Phase 2 refinement using PRD.md (auto-fills Category 5 TODOs)
+- Command-line argument parsing for refine mode
+- Safe TODO replacement that preserves customizations
+- PRD parsing to extract requirements, data models, success criteria
+
 ## Future Enhancements
 
 Planned improvements to the generator:
 
-1. **More Role Templates**: Pre-built templates for all common roles
-2. **Domain Libraries**: Pre-written domain guidance for financial, gaming, etc.
-3. **Tech Stack Libraries**: Pre-written examples for Python, React, etc.
-4. **Project Import**: Import existing project config and regenerate
-5. **Template Marketplace**: Share and discover community templates
-6. **AI-Assisted Customization**: Use AI to help complete TODO sections
+1. **Phase 3 Refinement**: Complete Stage 3 with ARCHITECTURE.md parsing (in progress)
+2. **More Role Templates**: Pre-built templates for all common roles
+3. **Domain Libraries**: Pre-written domain guidance for financial, gaming, etc.
+4. **Tech Stack Libraries**: Pre-written examples for Python, React, etc.
+5. **Project Import**: Import existing project config and regenerate
+6. **Template Marketplace**: Share and discover community templates
+7. **AI-Assisted Customization**: Use AI to help complete TODO sections
+8. **Backup/Diff Mode**: Show what will change before applying refinements
 
 ## Related Documentation
 
