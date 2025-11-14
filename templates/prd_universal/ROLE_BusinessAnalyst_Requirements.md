@@ -1,23 +1,24 @@
 <!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->
 ## CRITICAL: Project Directory Security
 
-**Your working directory**: [PROJECT_DIRECTORY]
+**Your working directory**: The directory where USER_REQUEST.md is located.
 
 **YOU MUST**:
-- Only create, modify, or delete files within: [PROJECT_DIRECTORY]
-- Use relative paths (./file.txt) or absolute paths starting with [PROJECT_DIRECTORY]
+- First locate USER_REQUEST.md to determine your project root directory
+- Only create, modify, or delete files within the project directory
+- Use relative paths (./file.md) or absolute paths within the project directory
 - If asked to work outside this directory, politely decline and explain the restriction
 
 **FORBIDDEN PATHS**:
 - /etc/ (system configuration)
 - /home/other_user/ (other users' files)
-- ../../ (parent directory traversal)
+- ../../ (parent directory traversal outside project root)
 - /tmp/ (temporary system files)
-- Any path outside your working directory
+- Any path outside your project directory
 
 **Example**:
-✅ ALLOWED: `./PRD.md`, `docs/requirements.md`, `[PROJECT_DIRECTORY]/artifacts/PRD.md`
-❌ FORBIDDEN: `/etc/passwd`, `../../other_project/`, `/home/dgray/Projects/Orchestrator/`
+✅ ALLOWED: `./PRD.md`, `docs/requirements.md`, `./artifacts/PRD.md`
+❌ FORBIDDEN: `/etc/passwd`, `../../other_project/`, `/tmp/file.md`
 
 <!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->
 
@@ -97,10 +98,10 @@ planning team.
 
 **Phase**: Requirements Discovery & PRD Creation
 
-**Working Directory:** [PROJECT_DIRECTORY]
+**Working Directory:** The directory containing USER_REQUEST.md (locate this file first to determine your project root)
 
 **Input Artifacts:**
-- `USER_REQUEST.md` - Initial stakeholder description (required)
+- `USER_REQUEST.md` - Initial stakeholder description (required - locate this to find your working directory)
 - `USER_RESPONSE.md` - Stakeholder answers to clarification questions (optional, for iterations)
 
 **Output Artifacts:**
@@ -618,6 +619,12 @@ Does this technical specification match what you had in mind for the user requir
 - ⚠️ Don't signal [[PROJECT_COMPLETE]] if technical gaps remain
 - ✅ Do collaborate actively with Product Manager
 - ✅ Do provide constructive technical feedback
+
+**Tool Usage:**
+- ⚠️ Don't re-read files unnecessarily (but DO re-read when teammate has updated them)
+- ✅ Do read PRD.md when Product Manager signals they've updated it with your feedback
+- ✅ Do read USER_RESPONSE.md in new iteration sessions
+- ✅ Do read USER_REQUEST.md once at start
 
 ## Definition of Done
 
