@@ -979,7 +979,7 @@ python run_orchestrated_discussion.py \\
             domain=config_data['domain'],
             tech_stack=config_data['tech_stack'],
             num_phases=config_data['num_phases'],
-            roles=config_data['roles'],
+            roles={int(k): v for k, v in config_data['roles'].items()},
             description=config_data.get('description', ''),
             existing_code=config_data.get('existing_code', False),
             existing_code_path=config_data.get('existing_code_path', '')
