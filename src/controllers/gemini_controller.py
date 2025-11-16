@@ -4,7 +4,7 @@ Gemini CLI Controller
 Wrapper around TmuxController configured specifically for Gemini CLI.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 from .tmux_controller import TmuxController
 from ..utils.config_loader import get_config
 
@@ -15,7 +15,8 @@ class GeminiController(TmuxController):
     def __init__(
         self,
         session_name: Optional[str] = None,
-        working_dir: Optional[str] = None
+        working_dir: Optional[str] = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize GeminiController with Gemini-specific configuration.
@@ -23,6 +24,7 @@ class GeminiController(TmuxController):
         Args:
             session_name: Name of tmux session (uses config default if not specified)
             working_dir: Working directory (defaults to current dir)
+            config_overrides: Optional per-run configuration overrides.
         """
         # Load Gemini configuration
         config = get_config()
@@ -35,6 +37,9 @@ class GeminiController(TmuxController):
         gemini_config["submit_key"] = "C-m"
         gemini_config["text_enter_delay"] = 0.5
         gemini_config["post_text_delay"] = 0.5
+
+        if config_overrides:
+            gemini_config.update(config_overrides)
 
         # Use configured session name if not specified
         if session_name is None:

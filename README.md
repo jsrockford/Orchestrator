@@ -8,28 +8,33 @@ This project provides an orchestration layer that coordinates multiple AI CLI to
 
 ### Key Features
 
-- **Multi-AI Orchestration**: Coordinate conversations between Claude Code, Gemini CLI, Codex (Aider), and Qwen CLI
-- **Web UI Interface**: React-based frontend for visual monitoring and control of AI sessions
-- **Integrated API Server**: FastAPI REST/WebSocket endpoints embedded in orchestrator for seamless web integration
-- **Tmux-Based Control**: Programmatic command injection and output capture via tmux sessions
-- **Automation-Aware**: Automatically pauses when humans attach to sessions, resumes when they detach
-- **Turn-Based Conversations**: Managed turn-taking with consensus and conflict detection
-- **Message Routing**: Cross-AI communication with context preservation
-- **Clean Output Parsing**: Filters CLI UI elements to produce readable transcripts
-- **Session Lifecycle Management**: One-command setup, execution, and teardown
-- **Human Control Channel**: Named pipe-based control for pause/resume and manual intervention
+- **Multi-AI Orchestration**: Coordinate conversations between Claude Code, Gemini CLI, Codex (Aider), and Qwen CLI.
+- **Web UI Interface**: A comprehensive React-based frontend for visual monitoring and real-time control of AI sessions.
+- **Integrated API Server**: FastAPI REST/WebSocket endpoints embedded in the main orchestrator for seamless web integration.
+- **Advanced Orchestration Logic**:
+    - **Turn-Based Conversations**: Managed turn-taking with consensus and conflict detection.
+    - **Completion Detection**: Automatically detects when a project is complete based on explicit signals (`[[PROJECT_COMPLETE]]`) or consensus.
+    - **Loop Detection**: Identifies and flags repetitive, looping behavior from agents to prevent stalls.
+- **Tmux-Based Control**: Programmatic command injection and output capture via tmux sessions.
+- **Human-in-the-Loop**:
+    - **Automation-Aware Pausing**: Automatically pauses automation when a human attaches to a tmux session and resumes on detach.
+    - **Named Pipe Control Channel**: A dedicated control channel (`/tmp/orchestrator_control`) allows for pausing, resuming, and injecting commands without attaching to tmux.
+- **Clean Output Parsing**: Advanced parsing that handles CLI UI elements, ANSI codes, and uses explicit delimiters (`<<<RESPONSE_START>>>`) for robust transcript generation.
+- **Resilient Session Management**: Features health checks and auto-restarting capabilities to recover from session failures.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              Orchestration Engine                        │
-│  (Command Dispatch, Queue Management, Automation Pause)  │
+│ (Dispatch, Automation, API Server, Discussion Management)│
+│                 - orchestrator.py                        │
+│                 - web_api.py                             │
 └────────────┬─────────────────────────┬──────────────────┘
              │                         │
 ┌────────────▼──────────┐  ┌──────────▼──────────────────┐
 │  Conversation Manager │  │     Context Manager         │
-│  (Turn-taking, Flow)  │  │  (State, History, Memory)   │
+│ (Turn-taking, Loops)  │  │  (State, History, Memory)   │
 └────────────┬──────────┘  └──────────┬──────────────────┘
              │                         │
              └──────────┬──────────────┘
@@ -41,7 +46,7 @@ This project provides an orchestration layer that coordinates multiple AI CLI to
                         │
 ┌───────────────────────▼───────────────────────┐
 │           Controller Infrastructure           │
-│  TmuxController → ClaudeController/Gemini     │
+│      SessionBackend ➞ TmuxController ➞ AI     │
 └───────────────────────────────────────────────┘
 ```
 
@@ -53,38 +58,30 @@ Orchestrator/
 │   ├── controllers/           # Session management and CLI control
 │   │   ├── session_backend.py    # Abstract backend interface
 │   │   ├── tmux_controller.py    # Tmux implementation
-│   │   ├── claude_controller.py  # Claude Code wrapper
-│   │   ├── gemini_controller.py  # Gemini CLI wrapper
-│   │   ├── codex_controller.py   # Codex (Aider) wrapper
-│   │   └── qwen_controller.py    # Qwen CLI wrapper
+│   │   └── ... (claude, gemini, etc.)
 │   ├── orchestrator/          # Core orchestration logic
-│   │   ├── orchestrator.py       # Command dispatch & queue management
+│   │   ├── orchestrator.py       # Main class, holds controllers, starts API
 │   │   ├── web_api.py            # FastAPI REST/WebSocket endpoints
-│   │   ├── conversation_manager.py  # Turn-taking & consensus detection
+│   │   ├── conversation_manager.py  # Turn-taking, consensus, loop detection
 │   │   ├── context_manager.py    # History & state persistence
 │   │   ├── message_router.py     # AI-to-AI message routing
 │   │   └── control_channel.py    # Human control via named pipe
 │   └── utils/                 # Supporting utilities
 │       ├── output_parser.py      # CLI output cleaning
-│       ├── retry.py              # Retry logic with backoff
-│       ├── health_check.py       # Session health monitoring
-│       └── auto_restart.py       # Automatic session recovery
+│       ├── config_loader.py      # YAML configuration loader
+│       └── ... (retry, health_check, etc.)
 ├── frontend/                  # React web UI (Vite + Tailwind)
 │   ├── src/
-│   │   ├── components/           # UI components
-│   │   │   ├── ConversationWindow.tsx  # AI session display
-│   │   │   ├── ControlButton.tsx       # Session controls
-│   │   │   ├── PromptInput.tsx         # Message input
-│   │   │   └── ...
-│   │   └── App.tsx               # Main application
+│   │   ├── components/           # UI components (ConversationWindow, etc.)
+│   │   └── App.tsx               # Main application component
 │   └── package.json
-├── scripts/
-│   ├── run_api_server.py         # Start integrated API server
-│   └── orchestrator_control.sh   # Manual control helper
+├── backend/                 # Scripts for managing the integrated FastAPI server
+│   ├── start_backend.sh
+│   └── stop_backend.sh
 ├── examples/
 │   └── run_orchestrated_discussion.py  # Main CLI tool
 ├── config.yaml                # Session configuration
-└── logs/                      # Conversation transcripts
+└── logs/                      # Conversation transcripts and logs
 ```
 
 ## Installation
@@ -104,7 +101,7 @@ Orchestrator/
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd OrchestratorTest
+cd Orchestrator
 ```
 
 2. Activate the virtual environment (if using one):
@@ -145,49 +142,75 @@ qwen:
 
 ## Usage
 
+The primary way to run the application is through the integrated Web UI, which provides real-time monitoring and control over all AI sessions and discussions.
+
 ### Running the Application (Web UI)
 
-To run the full application with the web interface, you need to start both the backend API server and the frontend development server.
+To run the full application, you need to start both the backend API server and the frontend development server.
 
-#### Backend (API Server)
+#### 1. Start the Backend (API Server)
 
-The backend is an integrated FastAPI server that runs as part of the main orchestrator application. Use the provided scripts to manage it.
+The backend is a FastAPI server integrated into the main orchestrator application. It should be run from the project's root directory.
 
-- **To Start the Backend:**
-  ```bash
-  # From the project root
-  ./backend/start_backend.sh
-  ```
-  This will start the server in the background. Logs are saved to `backend/logs/backend.log`.
+```bash
+# Make sure your Python virtual environment is active
+source venv/bin/activate
+
+# Start the server (runs in foreground)
+python scripts/run_api_server.py --host 0.0.0.0 --port 9100
+```
+
+**Alternative:** Use the provided shell script to run in background (binds to port `9100` by default):
+```bash
+./backend/start_backend.sh
+```
+This script runs `python scripts/run_api_server.py --host 0.0.0.0 --port 9100` in the background using `nohup` and stores its PID. Logs are saved to `backend/logs/backend.log`.
 
 - **To Stop the Backend:**
-  ```bash
-  # From the project root
-  ./backend/stop_backend.sh
-  ```
+  - If running in foreground: Press Ctrl+C
+  - If running via start_backend.sh:
+    ```bash
+    ./backend/stop_backend.sh
+    ```
 
-#### Frontend (Web UI)
+#### 2. Start the Frontend (Web UI)
 
-The frontend is a React application built with Vite.
+The frontend is a React application built with Vite (served on port `9101`). It should be started from its own directory.
 
-- **To Start the Frontend:**
-  ```bash
-  # From the project root
-  ./frontend/start-dev.sh
-  ```
-  This will open a new terminal window for the Vite development server.
+```bash
+# In a new terminal, from the project root
+./frontend/start-dev.sh
+```
+This script opens a new `gnome-terminal` window and runs the Vite development server.
 
 - **To Stop the Frontend:**
   ```bash
-  # From the project root
   ./frontend/stop-dev.sh
   ```
 
-Once both servers are running, you can access the web interface by opening your browser to `http://localhost:5173` (the port may vary if 5173 is in use).
+Once both servers are running, you can access the web interface by opening your browser to `http://localhost:9101`. From the UI, you can select a project directory, choose which AI models to activate, and start a collaborative discussion. FastAPI’s interactive docs live at `http://localhost:9100/docs` (Swagger UI) and `http://localhost:9100/redoc`; the schema is available at `http://localhost:9100/openapi.json`.
+
+#### 3. Convenience Scripts
+
+To launch both services with a single command during development:
+
+```bash
+./start_all.sh
+```
+
+This helper activates the virtualenv, starts the FastAPI server on port `9100` in the background, waits a few seconds, and then starts the Vite dev server on port `9101`. When you are finished, stop everything cleanly with:
+
+```bash
+./stop_all.sh
+```
+
+Under the hood it calls the existing frontend/backend stop scripts so both servers shut down gracefully.
 
 ### CLI Mode: Automated Discussion
 
-Run a complete orchestrated discussion with automatic setup and cleanup:
+For headless operation, you can run an orchestrated discussion directly from the command line.
+
+Run a complete automated discussion with setup and cleanup:
 
 ```bash
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
@@ -199,21 +222,21 @@ PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
 ```
 
 **Flags:**
-- `--auto-start`: Automatically launch tmux sessions if they don't exist
-- `--kill-existing`: Kill any existing Claude/Gemini sessions before starting
-- `--cleanup-after`: Kill sessions after the discussion completes
-- `--log-file`: Save conversation transcript to a file
+- `--auto-start`: Automatically launch tmux sessions if they don't exist.
+- `--kill-existing`: Kill any existing Claude/Gemini sessions before starting.
+- `--cleanup-after`: Kill sessions after the discussion completes.
+- `--log-file`: Save conversation transcript to a file.
 
 ### Manual Session Control
 
 Start sessions manually for observation:
 
 ```bash
-# Terminal 1: Start Claude via sandboxed wrapper
-tmux new-session -s claude safe_claude --dangerously-skip-permissions
+# Terminal 1: Start Claude using the executable configured in config.yaml
+tmux new-session -s claude "claude --dangerously-skip-permissions"
 
 # Terminal 2: Start Gemini (screen reader mode produces linear text)
-tmux new-session -s gemini safe_gemini --yolo --screenReader
+tmux new-session -s gemini "gemini --yolo --screenReader"
 
 # Terminal 3: Run orchestrated discussion (reuses existing sessions)
 PYTHONPATH=. python3 examples/run_orchestrated_discussion.py \
@@ -291,38 +314,59 @@ resumes automatically unless manually paused via the control channel.
 
 ## Configuration
 
-Edit `config.yaml` to customize behavior:
+Edit `config.yaml` to customize behavior. The configuration is highly detailed, allowing for fine-tuning of session behavior, response validation, and orchestration logic.
 
 ```yaml
-claude:
-  executable: claude
-  executable_args:
-    - "--dangerously-skip-permissions"
-  startup_timeout: 10
-  response_marker: "●"
-  ready_indicators:
-    - "────────────────────────"
-    - "? for shortcuts"
-  submit_key: "Enter"
-  text_enter_delay: 0.1
-
+# Example AI configuration for Gemini
 gemini:
-  executable: gemini
-  executable_args:
-    - "--yolo"
-    - "--screenReader"
-  startup_timeout: 20
-  response_marker: "✦"
+  startup_timeout: 60
+  response_timeout: 500
+  ready_check_interval: 0.5
+  ready_stable_checks: 6
   ready_indicators:
     - "Type your message or @path/to/file"
     - "Model:"
-  submit_key: "C-m"
-  text_enter_delay: 0.5
+  loading_indicators:
+    - "⠦"
+    - "⠼"
+    - "Enhancing..."
+  submit_key: "C-m" # Ctrl-M is more reliable in tmux
+  executable: "gemini"
+  executable_args:
+    - "--yolo"
 
-tmux:
-  claude_session: claude
-  gemini_session: gemini
-  capture_lines: 200         # Lines to capture per output read
+# Example for advanced orchestration features
+completion_detection:
+  enabled: true
+  mode: "hybrid"  # Use both explicit signals and passive phrases
+  explicit_signal: "[[PROJECT_COMPLETE]]"
+  fallback_phrases:
+    - "project is complete"
+    - "all objectives have been met"
+  consensus:
+    threshold: 0.66 # 2/3 of participants must signal completion
+    recency_window: 2
+
+control_channel:
+  enabled: true
+  pipe_path: "/tmp/orchestrator_control"
+  status:
+    write_file: true
+    file_path: "/tmp/orchestrator_status.txt"
+
+loop_detection:
+  enabled: true
+  tool_loops:
+    enabled: true
+    repeat_threshold: 4 # Flag after 4 identical tool calls
+    history_window: 6
+
+post_completion_validation:
+  enabled: true
+  require_test_mentions: true
+  test_file_globs:
+    - "test_*.py"
+    - "tests/test_*.py"
 ```
 
 ## Testing
@@ -524,17 +568,18 @@ def determine_next_speaker(self, context):
 
 ## Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** - Claude Code agent instructions
-- **[GEMINI.md](GEMINI.md)** - Gemini CLI agent instructions
-- **[AGENTS.md](AGENTS.md)** - Codex (Aider) agent instructions
-- **[QWEN.md](QWEN.md)** - Qwen CLI agent instructions
-- **[Tasks.md](Tasks.md)** - Development task tracking
-- **[WebDevTasks.md](WebDevTasks.md)** - Web UI integration task tracking
-- **[MessageBoard.md](MessageBoard.md)** - Team discussion and technical decisions
-- **[CodexConcerns.md](CodexConcerns.md)** - Architecture discussion and decisions
-- **[TIMING_GUIDE.md](TIMING_GUIDE.md)** - Performance tuning guide
-- **[docs/Human_Control_Guide.md](docs/Human_Control_Guide.md)** - Control channel usage guide
-- **[examples/README.md](examples/README.md)** - Example usage patterns
+- **[docs/README.md](docs/README.md)** – Documentation hub and navigation links
+- **[docs/architecture.md](docs/architecture.md)** – System overview, data flow, and components
+- **[docs/backend/development_guide.md](docs/backend/development_guide.md)** – Backend setup, API/CI workflows, and controller tips
+- **[docs/backend/api_reference.md](docs/backend/api_reference.md)** – FastAPI route reference plus OpenAPI schema notes
+- **[docs/frontend/development_guide.md](docs/frontend/development_guide.md)** – Web UI architecture, state flows, and styling conventions
+- **[docs/deployment.md](docs/deployment.md)** – Environment, networking, and operational checklists
+- **[docs/Documentation_Guidelines.md](docs/Documentation_Guidelines.md)** – Layered documentation standards we follow
+- **[docs/onboarding.md](docs/onboarding.md)** – Quick-start guide for new AI sessions (doc order, startup scripts, etiquette)
+- **[AGENTS.md](AGENTS.md)** / **[CLAUDE.md](CLAUDE.md)** / **[GEMINI.md](GEMINI.md)** – Agent-specific instructions
+- **[Tasks.md](Tasks.md)** and **[WebDevTasks.md](WebDevTasks.md)** – Task tracking checklists
+- **[MessageBoard.md](MessageBoard.md)** – Collaboration log for decisions and status updates
+- **[examples/README.md](examples/README.md)** – CLI usage patterns and helper scripts
 
 ## Success Criteria
 

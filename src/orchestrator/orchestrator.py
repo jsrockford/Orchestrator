@@ -15,6 +15,7 @@ import logging
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import uvicorn
@@ -75,6 +76,7 @@ class DevelopmentTeamOrchestrator:
             "orchestrator.control_channel",
             "orchestrator.context",
         )
+        self._project_model_overrides: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
         if controllers:
             for name, controller in controllers.items():
@@ -89,7 +91,7 @@ class DevelopmentTeamOrchestrator:
         self,
         *,
         host: str = "127.0.0.1",
-        port: int = 8000,
+        port: int = 9100,
         log_level: str = "info",
         access_log: bool = False,
     ) -> Dict[str, Any]:
@@ -198,6 +200,72 @@ class DevelopmentTeamOrchestrator:
         self.controllers.pop(name, None)
         self._pending.pop(name, None)
         self.controller_metadata.pop(name, None)
+
+    # ------------------------------------------------------------------ #
+    # Model configuration overrides
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _normalize_model_key(name: str) -> str:
+        candidate = str(name or "").strip().lower()
+        if not candidate:
+            raise ValueError("Model name is required")
+        return candidate
+
+    def _normalize_project_key(self, project_directory: str | Path) -> str:
+        if project_directory is None:
+            raise ValueError("Project directory is required")
+        path = Path(project_directory)
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError as exc:  # pragma: no cover - filesystem dependent
+            raise ValueError(f"Invalid project directory: {exc}") from exc
+        return str(resolved)
+
+    def set_model_config_overrides(
+        self,
+        project_directory: str | Path,
+        model_name: str,
+        overrides: Dict[str, Any],
+    ) -> None:
+        """Persist per-project overrides for a specific model."""
+        project_key = self._normalize_project_key(project_directory)
+        model_key = self._normalize_model_key(model_name)
+
+        if not overrides:
+            self.clear_model_config_overrides(project_directory, model_name)
+            return
+
+        project_overrides = self._project_model_overrides.setdefault(project_key, {})
+        project_overrides[model_key] = dict(overrides)
+
+    def get_model_config_overrides(
+        self,
+        project_directory: str | Path,
+        model_name: str,
+    ) -> Dict[str, Any]:
+        """Return a shallow copy of the overrides for the requested project/model."""
+        project_key = self._normalize_project_key(project_directory)
+        model_key = self._normalize_model_key(model_name)
+        project_overrides = self._project_model_overrides.get(project_key, {})
+        overrides = project_overrides.get(model_key, {})
+        return dict(overrides)
+
+    def clear_model_config_overrides(
+        self,
+        project_directory: str | Path,
+        model_name: str,
+    ) -> bool:
+        """Remove stored overrides for the requested project/model."""
+        project_key = self._normalize_project_key(project_directory)
+        model_key = self._normalize_model_key(model_name)
+        project_overrides = self._project_model_overrides.get(project_key)
+        if not project_overrides or model_key not in project_overrides:
+            return False
+        project_overrides.pop(model_key, None)
+        if not project_overrides:
+            self._project_model_overrides.pop(project_key, None)
+        return True
         self.logger.debug("Unregistered controller '%s'", name)
 
     def get_controller_status(self, name: str) -> Dict[str, Any]:

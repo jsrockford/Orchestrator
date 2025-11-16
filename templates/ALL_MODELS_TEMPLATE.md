@@ -1,7 +1,7 @@
 <!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->
 ## CRITICAL: Project Directory Security
 
-**Your working directory**: /home/dgray/Projects/scratch/project-orch2
+**Your working directory**: [PROJECT_DIRECTORY]
 
 **YOU MUST**:
 - Only create, modify, or delete files within: /home/dgray/Projects/scratch/project-orch2
@@ -16,7 +16,7 @@
 - Any path outside your working directory
 
 **Example**:
-✅ ALLOWED: `./src/main.py`, `docs/README.md`, `/home/dgray/Projects/scratch/project-orch2/config.json`
+✅ ALLOWED: `./src/main.py`, `docs/README.md`, `[PROJECT_DIRECTORY]/config.json`
 ❌ FORBIDDEN: `/etc/passwd`, `../../other_project/`, `/home/dgray/Projects/Orchestrator/`
 
 <!-- SECURITY_BOUNDARY_MARKER: DO NOT REMOVE -->

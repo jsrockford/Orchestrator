@@ -88,6 +88,8 @@ class ConversationManager:
             name: {"last_turn": None, "last_timestamp": None} for name in self.participants
         }
         self._status_error: Optional[str] = None
+        self._awaiting_turn_extension: bool = False
+        self._paused_for_turn_limit: bool = False
 
         completion_cfg = get_config().get_section("completion_detection") or {}
         self._completion_enabled: bool = bool(completion_cfg.get("enabled", False))
@@ -260,10 +262,23 @@ class ConversationManager:
         self._refresh_status_snapshot(force=True)
 
         conversation: List[Dict[str, Any]] = []
-        for _ in range(max_turns):
+        while True:
             if getattr(self.orchestrator, "should_stop_discussion", False):
                 self.logger.info("Stop requested; ending discussion on '%s'", topic)
                 break
+
+            if (
+                self._active_max_turns is not None
+                and self._turn_counter >= self._active_max_turns
+            ):
+                if getattr(self.orchestrator, "should_stop_discussion", False):
+                    self.logger.info("Stop requested while awaiting turn extension on '%s'", topic)
+                    break
+                self._handle_turn_limit_reached(topic)
+                time.sleep(0.5)
+                self._refresh_status_snapshot()
+                self._check_control_commands()
+                continue
 
             if not self._wait_for_discussion_resumption():
                 self.logger.info("Discussion paused indefinitely; stopping '%s'", topic)
@@ -554,6 +569,59 @@ class ConversationManager:
 
         return conversation
 
+    def extend_turn_limit(self, extend_by: int) -> int:
+        """Increase the active turn limit by ``extend_by`` turns."""
+        try:
+            delta = int(extend_by)
+        except (TypeError, ValueError) as exc:  # noqa: BLE001
+            raise ValueError("extend_by must be an integer") from exc
+
+        if delta <= 0:
+            raise ValueError("extend_by must be >= 1")
+
+        if self._active_max_turns is None:
+            self._active_max_turns = delta
+        else:
+            self._active_max_turns += delta
+
+        new_total = self._active_max_turns
+        self.logger.info("Turn limit extended by %s; new max_turns=%s", delta, new_total)
+
+        if self._awaiting_turn_extension:
+            self._awaiting_turn_extension = False
+            if self._paused_for_turn_limit and self.human_control_mode:
+                self.human_control_mode = False
+            self._paused_for_turn_limit = False
+
+            if getattr(self.orchestrator, "discussion_state", "").upper() == "PAUSED":
+                setattr(self.orchestrator, "discussion_state", "RUNNING")
+
+            self._refresh_status_snapshot(force=True)
+        else:
+            self._refresh_status_snapshot()
+
+        return new_total
+
+    def _handle_turn_limit_reached(self, topic: str) -> None:
+        """Pause automation when the configured turn budget has been exhausted."""
+        if self._awaiting_turn_extension:
+            return
+
+        self._awaiting_turn_extension = True
+        self._paused_for_turn_limit = True
+        if not self.human_control_mode:
+            self.human_control_mode = True
+
+        if getattr(self.orchestrator, "discussion_state", "").upper() == "RUNNING":
+            setattr(self.orchestrator, "discussion_state", "PAUSED")
+
+        self.logger.info(
+            "Max turns (%s) reached for '%s'; awaiting extension or stop",
+            self._active_max_turns,
+            topic,
+        )
+        self._refresh_status_snapshot(force=True)
+
     def inject_message(
         self,
         role: str,
@@ -705,6 +773,7 @@ class ConversationManager:
             "human_control_mode": self.human_control_mode,
             "pending_injections": len(self._injected_messages),
             "max_turns": self._active_max_turns,
+            "awaiting_turn_extension": self._awaiting_turn_extension,
             "last_activity_at": self._last_activity_at,
             "run_started_at": self._run_started_at,
         }

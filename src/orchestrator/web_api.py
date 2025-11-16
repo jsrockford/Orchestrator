@@ -5,18 +5,20 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Sequence, Type, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..controllers import ClaudeController, CodexController, GeminiController, QwenController
 from ..controllers.session_backend import SessionBackendError, SessionNotFoundError
 from ..utils.exceptions import SessionAlreadyExists
 from ..utils.logger import get_logger
+from ..utils.config_loader import get_config
 
 if TYPE_CHECKING:
     from .orchestrator import DevelopmentTeamOrchestrator
@@ -70,6 +72,17 @@ class DiscussionConfig(BaseModel):
     log_level: Optional[str] = None
 
 
+class ExtendDiscussionRequest(BaseModel):
+    """Payload for extending an in-flight discussion's turn budget."""
+    extend_by: int = Field(..., ge=1, description="Number of additional turns to allow")
+
+
+class ModelSettingsUpdate(BaseModel):
+    """Request body for updating per-model overrides."""
+    project_directory: str
+    overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
 # Mapping of model names to their instruction files
 INSTRUCTION_FILES = {
     "Claude": "CLAUDE.md",
@@ -85,6 +98,244 @@ CONTROLLER_FACTORIES: Dict[str, Type[Any]] = {
     "qwen": QwenController,
 }
 
+MODEL_SETTING_FIELDS: List[Dict[str, Any]] = [
+    {
+        "key": "pane_width",
+        "label": "Pane Width (columns)",
+        "description": "Width of the tmux pane allocated to the model session.",
+        "type": "number",
+        "value_type": "int",
+        "min": 80,
+        "max": 400,
+        "step": 5,
+    },
+    {
+        "key": "pane_height",
+        "label": "Pane Height (rows)",
+        "description": "Height of the tmux pane allocated to the model session.",
+        "type": "number",
+        "value_type": "int",
+        "min": 20,
+        "max": 120,
+        "step": 1,
+        "fallback_default": 50,
+    },
+    {
+        "key": "startup_timeout",
+        "label": "Startup Timeout (seconds)",
+        "description": "Maximum time to wait for the CLI to finish booting.",
+        "type": "number",
+        "value_type": "float",
+        "min": 5,
+        "max": 900,
+        "step": 1,
+    },
+    {
+        "key": "response_timeout",
+        "label": "Response Timeout (seconds)",
+        "description": "Maximum time to wait for a command response before aborting.",
+        "type": "number",
+        "value_type": "float",
+        "min": 30,
+        "max": 3600,
+        "step": 5,
+    },
+    {
+        "key": "ready_check_interval",
+        "label": "Ready Check Interval (seconds)",
+        "description": "Delay between consecutive ready-state sampling passes.",
+        "type": "number",
+        "value_type": "float",
+        "min": 0.1,
+        "max": 5.0,
+        "step": 0.1,
+    },
+    {
+        "key": "ready_stable_checks",
+        "label": "Ready Stable Checks",
+        "description": "Number of consecutive calm samples required before sending the next command.",
+        "type": "number",
+        "value_type": "int",
+        "min": 1,
+        "max": 10,
+        "step": 1,
+    },
+    {
+        "key": "ready_stabilization_delay",
+        "label": "Ready Stabilization Delay (seconds)",
+        "description": "Extra delay after ready indicators before injecting the first command.",
+        "type": "number",
+        "value_type": "float",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.1,
+    },
+    {
+        "key": "text_enter_delay",
+        "label": "Text Enter Delay (seconds)",
+        "description": "Delay between pasting text and submitting it.",
+        "type": "number",
+        "value_type": "float",
+        "min": 0.0,
+        "max": 2.0,
+        "step": 0.1,
+    },
+    {
+        "key": "post_text_delay",
+        "label": "Post Text Delay (seconds)",
+        "description": "Additional pause after sending text before continuing.",
+        "type": "number",
+        "value_type": "float",
+        "min": 0.0,
+        "max": 2.0,
+        "step": 0.1,
+        "fallback_default": 0.0,
+    },
+    {
+        "key": "debug_wait_logging",
+        "label": "Debug Wait Logging",
+        "description": "Enable verbose logging for wait-for-ready loops.",
+        "type": "boolean",
+        "value_type": "boolean",
+        "fallback_default": False,
+    },
+    {
+        "key": "pause_on_manual_clients",
+        "label": "Pause On Manual Clients",
+        "description": "Automatically pause automation when you attach to the tmux session.",
+        "type": "boolean",
+        "value_type": "boolean",
+        "fallback_default": False,
+    },
+    {
+        "key": "tool_timeout",
+        "label": "Tool Timeout (seconds)",
+        "description": "Maximum time Gemini tools are allowed to run before aborting.",
+        "type": "number",
+        "value_type": "float",
+        "min": 5,
+        "max": 120,
+        "step": 1,
+        "models": ["gemini"],
+    },
+]
+
+MODEL_SETTING_FIELD_MAP: Dict[str, Dict[str, Any]] = {
+    field["key"]: field for field in MODEL_SETTING_FIELDS
+}
+
+
+def iter_model_setting_fields(model_key: str) -> List[Dict[str, Any]]:
+    """Return the subset of fields applicable to the requested model."""
+    selected: List[Dict[str, Any]] = []
+    for field in MODEL_SETTING_FIELDS:
+        models = field.get("models")
+        if models and model_key not in models:
+            continue
+        selected.append(field)
+    return selected
+
+
+def convert_setting_value(field_meta: Dict[str, Any], raw_value: Any, *, allow_none: bool) -> Any:
+    """Convert the incoming value to the expected Python type."""
+    if raw_value is None:
+        if allow_none:
+            return None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Value for '{field_meta['key']}' is required",
+        )
+
+    value_type = field_meta.get("value_type", "float")
+    try:
+        if value_type == "boolean":
+            if isinstance(raw_value, bool):
+                value = raw_value
+            elif isinstance(raw_value, str):
+                normalized = raw_value.strip().lower()
+                if normalized in {"true", "1", "yes", "on"}:
+                    value = True
+                elif normalized in {"false", "0", "no", "off"}:
+                    value = False
+                else:
+                    raise ValueError(raw_value)
+            elif isinstance(raw_value, (int, float)):
+                value = bool(raw_value)
+            else:
+                raise ValueError(raw_value)
+        elif value_type == "int":
+            value = int(float(raw_value))
+        elif value_type == "float":
+            value = float(raw_value)
+        else:
+            value = str(raw_value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid value for '{field_meta['key']}': {raw_value!r}",
+        ) from None
+
+    min_value = field_meta.get("min")
+    max_value = field_meta.get("max")
+    if (
+        isinstance(value, (int, float))
+        and min_value is not None
+        and value < min_value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Value for '{field_meta['key']}' must be >= {min_value}",
+        )
+    if (
+        isinstance(value, (int, float))
+        and max_value is not None
+        and value > max_value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Value for '{field_meta['key']}' must be <= {max_value}",
+        )
+
+    return value
+
+
+def get_field_default_value(field_meta: Dict[str, Any], config_section: Dict[str, Any]) -> Any:
+    """Derive the baseline default for a field from the config or fallback."""
+    raw_default = config_section.get(field_meta["key"])
+    if raw_default is None and "fallback_default" in field_meta:
+        raw_default = field_meta["fallback_default"]
+    if raw_default is None:
+        return None
+    return convert_setting_value(field_meta, raw_default, allow_none=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for graceful startup and shutdown.
+
+    This ensures WebSocket tasks and other async resources are properly
+    cleaned up when the server shuts down, preventing "Event loop is closed"
+    errors and pending task warnings.
+    """
+    # Startup
+    logger.info("FastAPI application starting up")
+    yield
+    # Shutdown
+    logger.info("FastAPI application shutting down, cancelling pending tasks")
+
+    # Cancel all pending tasks gracefully
+    tasks = [task for task in asyncio.all_tasks() if not task.done()]
+    if tasks:
+        logger.debug("Cancelling %d pending tasks during shutdown", len(tasks))
+        for task in tasks:
+            task.cancel()
+
+        # Wait for tasks to complete cancellation
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    logger.info("FastAPI shutdown complete")
+
 
 def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
     """
@@ -94,7 +345,11 @@ def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
         orchestrator: Live orchestrator instance used to satisfy API requests.
     """
 
-    app = FastAPI(title="Development Team Orchestrator API", version="0.1.0")
+    app = FastAPI(
+        title="Development Team Orchestrator API",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
     app.state.orchestrator = orchestrator
 
     app.add_middleware(
@@ -113,6 +368,7 @@ def create_app(orchestrator: "DevelopmentTeamOrchestrator") -> FastAPI:
     register_control_routes(app)
     register_discussion_routes(app)
     register_instruction_routes(app)
+    register_settings_routes(app)
     register_filesystem_routes(app)
     register_stream_routes(app)
 
@@ -195,6 +451,12 @@ def normalize_model_names(models: Sequence[str]) -> List[str]:
         )
 
     return normalized
+
+
+def normalize_single_model_name(model_name: str) -> str:
+    """Normalize a single model identifier."""
+    result = normalize_model_names([model_name])
+    return result[0]
 
 
 def resolve_project_directory(path_str: str) -> Path:
@@ -645,7 +907,11 @@ def register_control_routes(app: FastAPI) -> None:
                 continue
 
             try:
-                controller = factory(working_dir=str(project_dir))
+                overrides = orchestrator.get_model_config_overrides(project_dir, model_name)
+                controller = factory(
+                    working_dir=str(project_dir),
+                    config_overrides=overrides or None,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to initialize controller '%s': %s", model_name, exc)
                 failed.append({"model": model_name, "error": str(exc)})
@@ -912,6 +1178,51 @@ def register_discussion_routes(app: FastAPI) -> None:
             "participants": participants,
         }
 
+    @app.post("/api/discussion/extend", tags=["discussion"])
+    async def extend_discussion(
+        request: ExtendDiscussionRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        manager = getattr(orchestrator, "discussion_manager", None)
+        state = getattr(orchestrator, "discussion_state", "IDLE")
+        if manager is None or state not in {"RUNNING", "PAUSED"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active discussion to extend",
+            )
+
+        extend_by = int(request.extend_by)
+        if extend_by <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="extend_by must be >= 1",
+            )
+
+        config = orchestrator.discussion_config or {}
+        try:
+            new_total = manager.extend_turn_limit(extend_by)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to extend discussion turns: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to extend discussion turns: {exc}",
+            ) from exc
+
+        config["max_turns"] = new_total
+        orchestrator.discussion_config = config
+
+        return {
+            "status": "extended",
+            "extend_by": extend_by,
+            "max_turns": new_total,
+            "discussion_state": orchestrator.discussion_state,
+        }
+
     @app.post("/api/discussion/stop", tags=["discussion"])
     async def stop_discussion(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
         thread = orchestrator.discussion_thread
@@ -1025,6 +1336,100 @@ def register_instruction_routes(app: FastAPI) -> None:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=str(exc),
             )
+
+
+def register_settings_routes(app: FastAPI) -> None:
+    """Attach model settings overrides endpoints to the FastAPI app."""
+
+    @app.get("/api/settings/model/{model_name}", tags=["settings"])
+    async def get_model_settings(
+        model_name: str,
+        project_directory: str = Query(..., description="Absolute project directory path"),
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        model_key = normalize_single_model_name(model_name)
+        project_dir = resolve_project_directory(project_directory)
+        config_loader = get_config()
+        config_section = dict(config_loader.get_section(model_key) or {})
+        overrides = orchestrator.get_model_config_overrides(project_dir, model_key)
+
+        fields_payload: List[Dict[str, Any]] = []
+        for field_meta in iter_model_setting_fields(model_key):
+            default_value = get_field_default_value(field_meta, config_section)
+            effective_value = overrides.get(field_meta["key"], default_value)
+            fields_payload.append(
+                {
+                    "key": field_meta["key"],
+                    "label": field_meta["label"],
+                    "description": field_meta.get("description"),
+                    "type": field_meta.get("type", "number"),
+                    "value_type": field_meta.get("value_type", "float"),
+                    "min": field_meta.get("min"),
+                    "max": field_meta.get("max"),
+                    "step": field_meta.get("step"),
+                    "default": default_value,
+                    "value": effective_value,
+                    "overridden": field_meta["key"] in overrides,
+                }
+            )
+
+        return {
+            "model": model_key,
+            "project_directory": str(project_dir),
+            "fields": fields_payload,
+            "notes": "Overrides apply the next time the model session starts.",
+        }
+
+    @app.post("/api/settings/model/{model_name}", tags=["settings"])
+    async def update_model_settings(
+        model_name: str,
+        payload: ModelSettingsUpdate,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        model_key = normalize_single_model_name(model_name)
+        project_dir = resolve_project_directory(payload.project_directory)
+        overrides_payload = payload.overrides or {}
+
+        allowed_fields = {
+            field["key"]: field
+            for field in iter_model_setting_fields(model_key)
+        }
+        normalized_overrides: Dict[str, Any] = {}
+        for key, raw_value in overrides_payload.items():
+            field_meta = allowed_fields.get(key)
+            if field_meta is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Field '{key}' is not configurable for model '{model_key}'",
+                )
+            normalized_overrides[key] = convert_setting_value(
+                field_meta,
+                raw_value,
+                allow_none=False,
+            )
+
+        orchestrator.set_model_config_overrides(project_dir, model_key, normalized_overrides)
+        return {
+            "status": "updated",
+            "model": model_key,
+            "project_directory": str(project_dir),
+            "overrides": normalized_overrides,
+        }
+
+    @app.delete("/api/settings/model/{model_name}", tags=["settings"])
+    async def reset_model_settings(
+        model_name: str,
+        project_directory: str = Query(..., description="Absolute project directory path"),
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        model_key = normalize_single_model_name(model_name)
+        project_dir = resolve_project_directory(project_directory)
+        cleared = orchestrator.clear_model_config_overrides(project_dir, model_key)
+        return {
+            "status": "cleared" if cleared else "noop",
+            "model": model_key,
+            "project_directory": str(project_dir),
+        }
 
 
 def register_filesystem_routes(app: FastAPI) -> None:
@@ -1249,10 +1654,18 @@ async def stream_controller_output(
     except WebSocketDisconnect:
         logger.debug("WebSocket disconnected for model '%s'", model_name)
     except asyncio.CancelledError:
-        raise
+        # Graceful cancellation during shutdown
+        logger.debug("WebSocket task cancelled for model '%s' during shutdown", model_name)
+        try:
+            await websocket.close(code=1001, reason="Server shutting down")
+        except Exception:  # noqa: BLE001
+            pass  # Connection may already be closed
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error streaming %s: %s", model_name, exc)
-        await websocket.close(code=1011)
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # noqa: BLE001
+            pass  # Connection may already be closed
 
 
 def register_stream_routes(app: FastAPI) -> None:

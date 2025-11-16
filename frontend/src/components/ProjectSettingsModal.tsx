@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Folder, File, ArrowUp } from 'lucide-react';
 import { DiscussionSettings } from '../types';
 
@@ -9,6 +9,7 @@ interface ProjectSettingsModalProps {
   discussionSettings: DiscussionSettings;
   availableModels: string[];
   onSave: (directory: string, settings: DiscussionSettings) => Promise<void> | void;
+  apiBaseUrl: string;
 }
 
 interface FileSystemItem {
@@ -24,6 +25,7 @@ const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
   discussionSettings,
   availableModels,
   onSave,
+  apiBaseUrl,
 }) => {
   const [currentPath, setCurrentPath] = useState(projectDirectory);
   const [contents, setContents] = useState<FileSystemItem[]>([]);
@@ -31,10 +33,11 @@ const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
   const [localSettings, setLocalSettings] = useState<DiscussionSettings>(discussionSettings);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const baseUrl = apiBaseUrl.replace(/\/$/, '');
 
-  const browsePath = (path: string) => {
+  const browsePath = useCallback((path: string) => {
     console.log("Browsing to:", path);
-    fetch('http://localhost:8000/api/fs/browse', {
+    fetch(`${baseUrl}/api/fs/browse`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
@@ -55,7 +58,7 @@ const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
         setContents(sortedContents);
       })
       .catch(err => console.error("Error browsing path:", err));
-  };
+  }, [baseUrl]);
 
   useEffect(() => {
     if (isOpen) {
@@ -68,13 +71,13 @@ const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
         startingModel: fallbackModel,
       });
     }
-  }, [isOpen, projectDirectory, discussionSettings, availableModels]);
+  }, [isOpen, projectDirectory, discussionSettings, availableModels, browsePath]);
 
   const handleCreateFolder = () => {
     if (newFolderName.trim()) {
       const folderData = { path: currentPath, folderName: newFolderName };
       console.log("Creating folder with data:", folderData);
-      fetch('http://localhost:8000/api/fs/create-folder', {
+      fetch(`${baseUrl}/api/fs/create-folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(folderData),
@@ -98,7 +101,7 @@ const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
     setSaveError(null);
     try {
       // First, prepare instruction files in the project directory
-      const prepareResponse = await fetch('http://localhost:8000/api/fs/prepare-project', {
+      const prepareResponse = await fetch(`${baseUrl}/api/fs/prepare-project`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: currentPath }),

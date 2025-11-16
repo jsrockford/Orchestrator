@@ -51,8 +51,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="TCP port for uvicorn (default: 8000)",
+        default=9100,
+        help="TCP port for uvicorn (default: 9100)",
     )
     parser.add_argument(
         "--models",

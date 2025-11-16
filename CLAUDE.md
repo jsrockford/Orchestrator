@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a proof-of-concept for programmatically interacting with Claude Code CLI running in WSL while maintaining manual user interaction capability. The goal is to test and validate methods for sending automated commands, capturing responses, and enabling multi-AI orchestration.
+This is a working orchestration system for programmatically interacting with multiple AI CLI models including Claude Code, Codex, Gemini CLI, and Qwen CLI, while maintaining manual user interaction capability. The system enables multi-AI orchestration with automated command handling, response capture, and collaborative task management.
 
 ## Critical Working Directory Rules
 
@@ -28,7 +28,7 @@ This is a proof-of-concept for programmatically interacting with Claude Code CLI
 
 ## Architecture
 
-The POC implements three controller approaches to interact with Claude Code:
+The system implements three controller approaches to interact with AI CLI models:
 
 1. **Tmux-Based Control** (Primary approach)
    - Creates isolated tmux sessions for Claude Code
@@ -55,20 +55,23 @@ The POC implements three controller approaches to interact with Claude Code:
 ## Project Structure
 
 ```
-claude-interaction-poc/
-├── src/
+Orchestrator/
+├── backend/                       # FastAPI server (port 9100)
 │   ├── main.py                    # Entry point
-│   ├── controllers/               # Three controller implementations
+│   ├── controllers/               # Controller implementations for AI CLIs
 │   │   ├── tmux_controller.py
 │   │   ├── expect_controller.py
 │   │   └── pty_controller.py
-│   ├── utils/
-│   │   ├── output_parser.py       # Response parsing logic
-│   │   └── logger.py
-│   └── tests/                     # Test suites (basic, complex, switching, errors)
+│   └── utils/
+│       ├── output_parser.py       # Response parsing logic
+│       └── logger.py
+├── frontend/                      # React/Vite dev server (port 9101)
+├── scripts/                       # Utility scripts
+├── docs/                          # Documentation
 ├── config.yaml                    # Session timeouts, prompts, test commands
 ├── logs/                          # Debug and interaction logs
-└── examples/                      # Sample interaction scripts
+├── MessageBoard.md                # Collaboration log (append-only)
+└── Tasks.md                       # Task tracking
 ```
 
 ## Development Approach
@@ -113,12 +116,12 @@ Critical parameters:
 - Tmux must be installed in WSL
 - Claude Code must be properly configured in WSL PATH
 
-## Questions to Answer Through Implementation
-1. Does Claude Code have a consistent prompt pattern for detecting ready state?
-2. How does Claude indicate processing vs awaiting input?
-3. What is the maximum reliable command length?
-4. How does rapid command queuing affect response quality?
-5. Can we detect streaming response completion reliably?
+## Key Implementation Considerations
+1. Each AI CLI model may have different prompt patterns for detecting ready state
+2. Response timing and processing indicators vary by model
+3. Command length limitations may differ between AI models
+4. Response quality can be affected by rapid command queuing
+5. Streaming response completion detection requires model-specific handling
 
 ## Task Completion Protocol
 **IMPORTANT**: When completing tasks or phases of work:

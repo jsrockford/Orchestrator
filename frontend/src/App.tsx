@@ -5,13 +5,36 @@ import PromptInput from './components/PromptInput';
 import SessionModelSelector from './components/SessionModelSelector';
 import EditInstructionsModal from './components/EditInstructionsModal';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
+import ModelSettingsModal from './components/ModelSettingsModal';
 import { DiscussionSettings, DiscussionState } from './types';
 
-const DEFAULT_API_BASE = 'http://localhost:8000';
+const DEFAULT_API_BASE = 'http://localhost:9100';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE).replace(/\/$/, '');
 const MAX_OUTPUT_CHARS = 60000;
+const STREAM_ACTIVITY_IDLE_MS = 1500;
+const AUTO_RESUME_MAX_ATTEMPTS = 3;
+const AUTO_RESUME_STATUS_POLLS = 5;
+const AUTO_RESUME_POLL_DELAY_MS = 400;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type StreamStatus = 'idle' | 'connecting' | 'streaming' | 'error';
+
+type DiscussionStatusInfo = {
+  turn: number | null;
+  speaker: string | null;
+  topic: string | null;
+  maxTurns: number | null;
+  awaitingTurnExtension: boolean;
+};
+
+const createDefaultDiscussionStatus = (): DiscussionStatusInfo => ({
+  turn: null,
+  speaker: null,
+  topic: null,
+  maxTurns: null,
+  awaitingTurnExtension: false,
+});
 
 function App() {
   const [allConversations] = useState<Conversation[]>([
@@ -28,6 +51,8 @@ function App() {
   const [editingModelName, setEditingModelName] = useState('');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [projectDirectory, setProjectDirectory] = useState('/home/dgray/Projects/Orchestrator');
+  const [isModelSettingsModalOpen, setIsModelSettingsModalOpen] = useState(false);
+  const [modelSettingsModelName, setModelSettingsModelName] = useState('');
   const [sessionOutputs, setSessionOutputs] = useState<Record<string, string>>(
     () => Object.fromEntries(allConversations.map(c => [c.title, '']))
   );
@@ -38,6 +63,7 @@ function App() {
     () => Object.fromEntries(allConversations.map(c => [c.title, null]))
   );
   const [projectActionPending, setProjectActionPending] = useState(false);
+  const [promptActionPending, setPromptActionPending] = useState(false);
   const [discussionSettings, setDiscussionSettings] = useState<DiscussionSettings>({
     maxTurns: 10,
     startingModel: 'Claude',
@@ -46,19 +72,26 @@ function App() {
     logLevel: 'INFO',
   });
   const [discussionState, setDiscussionState] = useState<DiscussionState>('idle');
-  const [discussionStatus, setDiscussionStatus] = useState<{ turn: number | null; speaker: string | null; topic: string | null }>({
-    turn: null,
-    speaker: null,
-    topic: null,
-  });
+  const [discussionStatus, setDiscussionStatus] = useState<DiscussionStatusInfo>(() => createDefaultDiscussionStatus());
   const [discussionActionPending, setDiscussionActionPending] = useState(false);
   const [discussionError, setDiscussionError] = useState<string | null>(null);
+  const [isExtendModalOpen, setIsExtendModalOpen] = useState(false);
+  const [extendTurnsValue, setExtendTurnsValue] = useState(3);
+  const [extendActionPending, setExtendActionPending] = useState(false);
 
   const socketsRef = useRef<Record<string, WebSocket>>({});
   const closingSocketsRef = useRef<Set<string>>(new Set());
   const projectStateRef = useRef(projectState);
   const activeModelsRef = useRef<string[]>(activeModels);
   const previousDiscussionStateRef = useRef<DiscussionState>('idle');
+  const streamingActivityTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
+  const awaitingTurnExtensionRef = useRef(false);
+
+  const resetDiscussionSnapshot = useCallback(() => {
+    setDiscussionStatus(createDefaultDiscussionStatus());
+    awaitingTurnExtensionRef.current = false;
+    setIsExtendModalOpen(false);
+  }, []);
 
   useEffect(() => {
     projectStateRef.current = projectState;
@@ -71,16 +104,52 @@ function App() {
   useEffect(() => {
     if (projectState === 'idle') {
       setDiscussionState('idle');
-      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      resetDiscussionSnapshot();
       setDiscussionError(null);
     }
-  }, [projectState]);
+  }, [projectState, resetDiscussionSnapshot]);
+
+  const clearStreamingActivityTimer = useCallback((model: string) => {
+    const existing = streamingActivityTimers.current[model];
+    if (existing) {
+      clearTimeout(existing);
+      streamingActivityTimers.current[model] = null;
+    }
+  }, []);
+
+  const scheduleStreamingIdleReset = useCallback((model: string) => {
+    clearStreamingActivityTimer(model);
+    streamingActivityTimers.current[model] = setTimeout(() => {
+      setStreamStatuses(prev => {
+        if (prev[model] !== 'streaming') {
+          return prev;
+        }
+        return { ...prev, [model]: 'ready' };
+      });
+      streamingActivityTimers.current[model] = null;
+    }, STREAM_ACTIVITY_IDLE_MS);
+  }, [clearStreamingActivityTimer]);
+
+  const markModelStreaming = useCallback((model: string) => {
+    setStreamStatuses(prev => ({ ...prev, [model]: 'streaming' }));
+    scheduleStreamingIdleReset(model);
+  }, [scheduleStreamingIdleReset]);
 
   const clampOutput = useCallback((text: string) => {
     if (text.length <= MAX_OUTPUT_CHARS) {
       return text;
     }
     return text.slice(-MAX_OUTPUT_CHARS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(streamingActivityTimers.current).forEach(timer => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
+    };
   }, []);
 
   const toWebSocketUrl = useCallback((path: string) => {
@@ -101,9 +170,10 @@ function App() {
       }
       delete socketsRef.current[model];
     }
+    clearStreamingActivityTimer(model);
     setStreamStatuses(prev => ({ ...prev, [model]: status }));
     setStreamErrors(prev => ({ ...prev, [model]: null }));
-  }, []);
+  }, [clearStreamingActivityTimer]);
 
   const closeAllSockets = useCallback((status: StreamStatus = 'idle') => {
     Object.keys(socketsRef.current).forEach(model => {
@@ -128,6 +198,7 @@ function App() {
       socket = new WebSocket(toWebSocketUrl(`/ws/session/${modelSlug}`));
     } catch (error) {
       console.error(`Unable to create WebSocket for ${model}:`, error);
+      clearStreamingActivityTimer(model);
       setStreamStatuses(prev => ({ ...prev, [model]: 'error' }));
       setStreamErrors(prev => ({ ...prev, [model]: 'WebSocket initialization failed' }));
       return;
@@ -138,11 +209,13 @@ function App() {
     setStreamStatuses(prev => ({ ...prev, [model]: 'connecting' }));
 
     socket.onopen = () => {
-      setStreamStatuses(prev => ({ ...prev, [model]: 'streaming' }));
+      clearStreamingActivityTimer(model);
+      setStreamStatuses(prev => ({ ...prev, [model]: 'ready' }));
       setStreamErrors(prev => ({ ...prev, [model]: null }));
     };
 
     socket.onerror = () => {
+      clearStreamingActivityTimer(model);
       setStreamStatuses(prev => ({ ...prev, [model]: 'error' }));
       setStreamErrors(prev => ({ ...prev, [model]: 'WebSocket error' }));
     };
@@ -158,6 +231,7 @@ function App() {
 
         if (eventType === 'error') {
           const message = typeof data.message === 'string' ? data.message : 'Stream error';
+          clearStreamingActivityTimer(model);
           setStreamStatuses(prev => ({ ...prev, [model]: 'error' }));
           setStreamErrors(prev => ({ ...prev, [model]: message }));
           return;
@@ -169,6 +243,9 @@ function App() {
             [model]: clampOutput(content),
           }));
           setStreamErrors(prev => ({ ...prev, [model]: null }));
+          if (eventType === 'reset') {
+            markModelStreaming(model);
+          }
         } else if (eventType === 'append') {
           setSessionOutputs(prev => {
             const existing = prev[model] ?? '';
@@ -178,6 +255,7 @@ function App() {
             };
           });
           setStreamErrors(prev => ({ ...prev, [model]: null }));
+          markModelStreaming(model);
         }
       } catch (error) {
         console.error('Failed to parse stream message:', error);
@@ -187,6 +265,7 @@ function App() {
     socket.onclose = () => {
       const wasPlanned = closingSocketsRef.current.delete(model);
       delete socketsRef.current[model];
+      clearStreamingActivityTimer(model);
       if (!wasPlanned) {
         const nextStatus: StreamStatus = projectStateRef.current === 'idle' ? 'idle' : 'error';
         setStreamStatuses(prev => ({ ...prev, [model]: nextStatus }));
@@ -200,7 +279,7 @@ function App() {
         setStreamErrors(prev => ({ ...prev, [model]: null }));
       }
     };
-  }, [clampOutput, toWebSocketUrl]);
+  }, [clampOutput, toWebSocketUrl, clearStreamingActivityTimer, markModelStreaming]);
 
   useEffect(() => {
     if (projectState === 'idle') {
@@ -260,11 +339,28 @@ function App() {
 
         previousDiscussionStateRef.current = normalizedState;
         setDiscussionState(normalizedState);
+        const managerSnapshot = data.manager ?? {};
+        const turnCount = typeof managerSnapshot.turn_counter === 'number' ? managerSnapshot.turn_counter : null;
+        const speakerName =
+          typeof managerSnapshot.current_agent === 'string' ? managerSnapshot.current_agent : null;
+        const topicValue =
+          typeof data.config?.discussion_topic === 'string' ? data.config.discussion_topic : null;
+        const managerMax = typeof managerSnapshot.max_turns === 'number' ? managerSnapshot.max_turns : null;
+        const configMax = typeof data.config?.max_turns === 'number' ? data.config.max_turns : null;
+        const awaitingExtension = Boolean(managerSnapshot.awaiting_turn_extension);
         setDiscussionStatus({
-          turn: data.manager?.turn_counter ?? null,
-          speaker: data.manager?.current_agent ?? null,
-          topic: data.config?.discussion_topic ?? null,
+          turn: turnCount,
+          speaker: speakerName,
+          topic: topicValue,
+          maxTurns: managerMax ?? configMax ?? null,
+          awaitingTurnExtension: awaitingExtension,
         });
+        if (!awaitingTurnExtensionRef.current && awaitingExtension) {
+          setIsExtendModalOpen(true);
+        } else if (awaitingTurnExtensionRef.current && !awaitingExtension) {
+          setIsExtendModalOpen(false);
+        }
+        awaitingTurnExtensionRef.current = awaitingExtension;
         setDiscussionError(data.error ?? null);
       } catch (error) {
         if (!cancelled) {
@@ -282,6 +378,11 @@ function App() {
   }, [projectState]);
 
   const handleSendPrompt = async (prompt: string, coderIds: number[]) => {
+    if (promptActionPending) {
+      console.warn('Prompt send already in progress');
+      return;
+    }
+
     const modelNames = coderIds
       .map(id => allConversations.find(c => c.id === id)?.title)
       .filter(Boolean) as string[];
@@ -291,13 +392,33 @@ function App() {
       return;
     }
 
+    const uniqueModelNames = Array.from(new Set(modelNames));
+    const modelSlugs = uniqueModelNames.map(name => name.trim().toLowerCase());
+    const shouldAutoPause = projectState === 'running';
+    const discussionWasRunning = discussionState === 'running';
+    let autoPaused = false;
+
+    setPromptActionPending(true);
+
     try {
+      if (shouldAutoPause) {
+        for (const slug of modelSlugs) {
+          await postKey(slug, 'Escape');
+        }
+        await postControl('/api/control/pause');
+        autoPaused = true;
+        setProjectState('paused');
+        if (discussionWasRunning) {
+          setDiscussionState('paused');
+        }
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/control/send-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          models: modelNames,
+          models: uniqueModelNames,
           submit: true
         })
       });
@@ -309,7 +430,6 @@ function App() {
       const data = await response.json();
       console.log('Prompt sent:', data);
 
-      // Check for any failures and show errors
       const failures = Object.entries(data.results)
         .filter(([_, result]: [string, any]) => !result.success)
         .map(([model, result]: [string, any]) => `${model}: ${result.error}`);
@@ -321,6 +441,82 @@ function App() {
     } catch (error) {
       console.error('Failed to send prompt:', error);
       alert(`Error sending prompt: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (autoPaused) {
+        const fetchDiscussionStateSnapshot = async (): Promise<DiscussionState> => {
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/discussion/status`);
+            if (!response.ok) {
+              return 'idle';
+            }
+            const data = await response.json();
+            const normalized = String(data.discussion_state ?? 'idle').toLowerCase();
+            if (normalized === 'running' || normalized === 'paused' || normalized === 'idle') {
+              return normalized as DiscussionState;
+            }
+            return 'idle';
+          } catch {
+            return 'idle';
+          }
+        };
+
+        let resumeState: DiscussionState | null = discussionWasRunning ? 'paused' : null;
+        let resumeConfirmed = false;
+        let lastResumeError: unknown = null;
+
+        for (let attempt = 0; attempt < AUTO_RESUME_MAX_ATTEMPTS && !resumeConfirmed; attempt += 1) {
+          try {
+            await postControl('/api/control/resume');
+          } catch (resumeError) {
+            lastResumeError = resumeError;
+            await sleep(AUTO_RESUME_POLL_DELAY_MS);
+            continue;
+          }
+
+          if (!discussionWasRunning) {
+            resumeConfirmed = true;
+            break;
+          }
+
+          let stableState: DiscussionState | null = null;
+          let latestState: DiscussionState | null = null;
+
+          for (let check = 0; check < AUTO_RESUME_STATUS_POLLS; check += 1) {
+            await sleep(AUTO_RESUME_POLL_DELAY_MS);
+            latestState = await fetchDiscussionStateSnapshot();
+
+            if (latestState === 'running' || latestState === 'idle') {
+              stableState = latestState;
+              continue;
+            }
+
+            if (latestState === 'paused') {
+              stableState = null;
+            }
+          }
+
+          if (stableState && stableState !== 'paused') {
+            resumeState = stableState;
+            resumeConfirmed = true;
+          } else if (latestState && latestState !== 'paused') {
+            resumeState = latestState;
+            resumeConfirmed = true;
+          } else {
+            await sleep(AUTO_RESUME_POLL_DELAY_MS);
+          }
+        }
+
+        if (resumeConfirmed) {
+          setProjectState('running');
+          if (discussionWasRunning && resumeState) {
+            setDiscussionState(resumeState);
+          }
+        } else {
+          console.error('Failed to resume after prompt:', lastResumeError);
+          alert('Prompt sent, but automatic resume could not be confirmed. Please click Resume manually.');
+        }
+      }
+      setPromptActionPending(false);
     }
   };
 
@@ -525,7 +721,7 @@ function App() {
 
       setProjectState('running');
       setDiscussionState('idle');
-      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      resetDiscussionSnapshot();
       setDiscussionError(null);
     } catch (error) {
       console.error('Failed to start project:', error);
@@ -548,7 +744,7 @@ function App() {
           console.error('Failed to stop discussion before closing project:', error);
         }
         setDiscussionState('idle');
-        setDiscussionStatus({ turn: null, speaker: null, topic: null });
+        resetDiscussionSnapshot();
       }
 
       const payload = {
@@ -600,15 +796,44 @@ function App() {
       alert(`Failed to stop discussion: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setDiscussionState('idle');
-      setDiscussionStatus({ turn: null, speaker: null, topic: null });
+      resetDiscussionSnapshot();
       setDiscussionError(null);
       setDiscussionActionPending(false);
+    }
+  };
+
+  const handleExtendDiscussion = async () => {
+    if (extendActionPending) {
+      return;
+    }
+    if (!Number.isFinite(extendTurnsValue) || extendTurnsValue < 1) {
+      alert('Enter a positive number of turns to extend.');
+      return;
+    }
+    setExtendActionPending(true);
+    try {
+      await postControl('/api/discussion/extend', {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extend_by: extendTurnsValue }),
+      });
+      awaitingTurnExtensionRef.current = false;
+      setIsExtendModalOpen(false);
+    } catch (error) {
+      console.error('Failed to extend discussion:', error);
+      alert(`Failed to extend discussion: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setExtendActionPending(false);
     }
   };
 
   const handleEditInstructions = (modelName: string) => {
     setEditingModelName(modelName);
     setIsEditModalOpen(true);
+  };
+
+  const handleConfigureModelSettings = (modelName: string) => {
+    setModelSettingsModelName(modelName);
+    setIsModelSettingsModalOpen(true);
   };
 
   const activeConversations = allConversations.filter(c => activeModels.includes(c.title));
@@ -622,7 +847,7 @@ function App() {
     if (streamStatus === 'error') {
       return 'error';
     }
-    if (streamStatus === 'connecting') {
+    if (streamStatus === 'streaming') {
       return 'processing';
     }
     return 'ready';
@@ -637,7 +862,11 @@ function App() {
       discussionState === 'running' ? 'Discussion running' : 'Discussion paused',
     ];
     if (discussionStatus.turn !== null) {
-      parts.push(`Turn ${discussionStatus.turn}`);
+      if (discussionStatus.maxTurns !== null) {
+        parts.push(`Turn ${discussionStatus.turn}/${discussionStatus.maxTurns}`);
+      } else {
+        parts.push(`Turn ${discussionStatus.turn}`);
+      }
     }
     if (discussionStatus.speaker) {
       parts.push(`Speaker: ${discussionStatus.speaker}`);
@@ -645,11 +874,63 @@ function App() {
     if (discussionStatus.topic) {
       parts.push(`Topic: ${discussionStatus.topic}`);
     }
+    if (discussionStatus.awaitingTurnExtension) {
+      parts.push('Awaiting turn extension');
+    }
     return parts.join(' • ');
   })();
 
+  const promptInputDisabled = projectState === 'idle' || projectActionPending;
+
   return (
     <div className="min-h-screen bg-[#1e1e1e] text-gray-100 flex flex-col">
+      {isExtendModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-gray-700 bg-[#2a2a2a] p-6 shadow-2xl">
+            <h2 className="text-xl font-semibold text-white">Turn Limit Reached</h2>
+            <p className="mt-2 text-sm text-gray-300">
+              The discussion paused automatically after hitting{' '}
+              <span className="font-semibold text-white">
+                turn {discussionStatus.turn ?? '?'}
+                {discussionStatus.maxTurns !== null ? ` / ${discussionStatus.maxTurns}` : ''}
+              </span>
+              . Extend the session or stop it entirely.
+            </p>
+            <div className="mt-4">
+              <label className="block text-sm text-gray-400">Extend by (turns)</label>
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full rounded-md border border-gray-600 bg-[#1b1b1b] px-3 py-2 text-white focus:border-indigo-400 focus:outline-none"
+                value={extendTurnsValue}
+                onChange={e => {
+                  const nextValue = Number(e.target.value);
+                  setExtendTurnsValue(Number.isFinite(nextValue) && nextValue > 0 ? Math.floor(nextValue) : 1);
+                }}
+                disabled={extendActionPending}
+              />
+            </div>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleExtendDiscussion}
+                disabled={extendActionPending}
+              >
+                {extendActionPending ? 'Extending…' : 'Continue Session'}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-red-500 px-4 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleStopDiscussion}
+                disabled={discussionActionPending}
+              >
+                Stop Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header className="py-8 text-center border-b border-gray-700">
         <h1 className="text-5xl font-bold text-white tracking-tight">
           Orchestrator
@@ -723,6 +1004,7 @@ function App() {
               status={getStatusForCoder(conversation.title)}
               projectState={projectState}
               onEditInstructions={handleEditInstructions}
+              onConfigureSettings={handleConfigureModelSettings}
               output={sessionOutputs[conversation.title] ?? ''}
               streamStatus={streamStatuses[conversation.title] ?? 'idle'}
               errorMessage={streamErrors[conversation.title] ?? null}
@@ -738,7 +1020,8 @@ function App() {
           selectedCoders={selectedCoders}
           onSelectedCodersChange={setSelectedCoders}
           onSendPrompt={handleSendPrompt}
-          disabled={projectState === 'idle' || discussionState === 'running'}
+          disabled={promptInputDisabled}
+          sending={promptActionPending}
         />
       )}
 
@@ -747,6 +1030,7 @@ function App() {
         onClose={() => setIsEditModalOpen(false)}
         modelName={editingModelName}
         projectDirectory={projectDirectory}
+        apiBaseUrl={API_BASE_URL}
       />
 
       <ProjectSettingsModal
@@ -756,6 +1040,18 @@ function App() {
         discussionSettings={discussionSettings}
         availableModels={allConversations.map(c => c.title)}
         onSave={handleSaveSettings}
+        apiBaseUrl={API_BASE_URL}
+      />
+
+      <ModelSettingsModal
+        isOpen={isModelSettingsModalOpen}
+        onClose={() => {
+          setIsModelSettingsModalOpen(false);
+          setModelSettingsModelName('');
+        }}
+        modelName={modelSettingsModelName}
+        projectDirectory={projectDirectory}
+        apiBaseUrl={API_BASE_URL}
       />
     </div>
   );

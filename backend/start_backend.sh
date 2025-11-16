@@ -12,7 +12,7 @@ cd /home/dgray/Projects/Orchestrator
 source venv/bin/activate
 
 # Start the server in the background
-nohup python scripts/run_api_server.py --host 0.0.0.0 --port 8000 > "$LOG_FILE" 2>&1 &
+nohup python scripts/run_api_server.py --host 0.0.0.0 --port 9100 > "$LOG_FILE" 2>&1 &
 
 # Store the PID
 echo $! > "$PID_FILE"

@@ -56,7 +56,7 @@ gemini:
   pane_height: 50
 
   # Response timing
-  response_timeout: 75      # Max seconds to wait for command response
+  response_timeout: 900      # Max seconds to wait for command response
   tool_timeout: 15          # Additional time for tool execution
   ready_check_interval: 0.5  # Seconds between output stability checks
   ready_stable_checks: 6     # Consecutive stable checks required
@@ -137,7 +137,7 @@ qwen:
   pane_height: 50
 
   # Response timing
-  response_timeout: 500
+  response_timeout: 900
   ready_check_interval: 0.5
   ready_stable_checks: 4
   debug_wait_logging: false

@@ -1,0 +1,1080 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Development Team Orchestrator API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "description": "Return a simple heartbeat payload for readiness probes.",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/pause": {
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Pause",
+        "operationId": "pause_api_control_pause_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Pause Api Control Pause Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/resume": {
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Resume",
+        "operationId": "resume_api_control_resume_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Resume Api Control Resume Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/{model_name}/key/{key_name}": {
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Send Key",
+        "operationId": "send_key_api_control__model_name__key__key_name__post",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          },
+          {
+            "name": "key_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Send Key Api Control  Model Name  Key  Key Name  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/send-prompt": {
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Send Prompt",
+        "description": "Send a prompt to one or more AI models.\n\nReturns a dict with per-model results indicating success/failure.",
+        "operationId": "send_prompt_api_control_send_prompt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Send Prompt Api Control Send Prompt Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/status": {
+      "get": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Control Status",
+        "operationId": "control_status_api_control_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Control Status Api Control Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/start-sessions": {
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Start Sessions",
+        "operationId": "start_sessions_api_control_start_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartSessionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Start Sessions Api Control Start Sessions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/stop-sessions": {
+      "post": {
+        "tags": [
+          "control"
+        ],
+        "summary": "Stop Sessions",
+        "operationId": "stop_sessions_api_control_stop_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopSessionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Stop Sessions Api Control Stop Sessions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discussion/configure": {
+      "post": {
+        "tags": [
+          "discussion"
+        ],
+        "summary": "Configure Discussion",
+        "operationId": "configure_discussion_api_discussion_configure_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Configure Discussion Api Discussion Configure Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discussion/start": {
+      "post": {
+        "tags": [
+          "discussion"
+        ],
+        "summary": "Start Discussion",
+        "operationId": "start_discussion_api_discussion_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Start Discussion Api Discussion Start Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discussion/stop": {
+      "post": {
+        "tags": [
+          "discussion"
+        ],
+        "summary": "Stop Discussion",
+        "operationId": "stop_discussion_api_discussion_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Stop Discussion Api Discussion Stop Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discussion/status": {
+      "get": {
+        "tags": [
+          "discussion"
+        ],
+        "summary": "Discussion Status",
+        "operationId": "discussion_status_api_discussion_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Discussion Status Api Discussion Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/instructions/{model_name}": {
+      "get": {
+        "tags": [
+          "instructions"
+        ],
+        "summary": "Get Instruction File",
+        "description": "Fetch the instruction file for a given model.\n\nArgs:\n    model_name: Model identifier (e.g., \"Claude\", \"Gemini\")\n    project_directory: Optional base directory (defaults to repository root)\n\nReturns:\n    Dictionary with \"content\" key containing the file contents",
+        "operationId": "get_instruction_file_api_instructions__model_name__get",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          },
+          {
+            "name": "project_directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Directory"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Get Instruction File Api Instructions  Model Name  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "instructions"
+        ],
+        "summary": "Save Instruction File",
+        "description": "Save the instruction file for a given model.\n\nArgs:\n    model_name: Model identifier\n    instruction_file: Request body with content and optional project_directory\n\nReturns:\n    Success message",
+        "operationId": "save_instruction_file_api_instructions__model_name__post",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstructionFile"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Save Instruction File Api Instructions  Model Name  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/model/{model_name}": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Model Settings",
+        "operationId": "get_model_settings_api_settings_model__model_name__get",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          },
+          {
+            "name": "project_directory",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Absolute project directory path",
+              "title": "Project Directory"
+            },
+            "description": "Absolute project directory path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Model Settings Api Settings Model  Model Name  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Model Settings",
+        "operationId": "update_model_settings_api_settings_model__model_name__post",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelSettingsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Model Settings Api Settings Model  Model Name  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Reset Model Settings",
+        "operationId": "reset_model_settings_api_settings_model__model_name__delete",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          },
+          {
+            "name": "project_directory",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Absolute project directory path",
+              "title": "Project Directory"
+            },
+            "description": "Absolute project directory path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reset Model Settings Api Settings Model  Model Name  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/fs/browse": {
+      "post": {
+        "tags": [
+          "filesystem"
+        ],
+        "summary": "Browse Filesystem",
+        "description": "Browse filesystem directory contents.\n\nArgs:\n    directory_path: Request body with path to browse\n\nReturns:\n    Dictionary with \"path\" and \"contents\" (list of files/folders)",
+        "operationId": "browse_filesystem_api_fs_browse_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryPath"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Browse Filesystem Api Fs Browse Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/fs/prepare-project": {
+      "post": {
+        "tags": [
+          "filesystem"
+        ],
+        "summary": "Prepare Project",
+        "description": "Prepare a project directory by creating instruction files if they don't exist.\n\nThis should be called when the user selects a project directory in the UI,\nBEFORE clicking \"Open Project\", so the files exist for customization.\n\nArgs:\n    directory_path: Request body with path field\n\nReturns:\n    Status of file preparation",
+        "operationId": "prepare_project_api_fs_prepare_project_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryPath"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Prepare Project Api Fs Prepare Project Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/fs/create-folder": {
+      "post": {
+        "tags": [
+          "filesystem"
+        ],
+        "summary": "Create Folder",
+        "description": "Create a new folder in the specified directory.\n\nArgs:\n    new_folder: Request body with path and folderName\n\nReturns:\n    Success message",
+        "operationId": "create_folder_api_fs_create_folder_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewFolder"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Create Folder Api Fs Create Folder Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DirectoryPath": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "DirectoryPath",
+        "description": "Request body for filesystem browsing."
+      },
+      "DiscussionConfig": {
+        "properties": {
+          "max_turns": {
+            "type": "integer",
+            "title": "Max Turns",
+            "default": 10
+          },
+          "starting_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starting Model"
+          },
+          "participants": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Participants"
+          },
+          "discussion_topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discussion Topic"
+          },
+          "include_history": {
+            "type": "boolean",
+            "title": "Include History",
+            "default": true
+          },
+          "log_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Level"
+          }
+        },
+        "type": "object",
+        "title": "DiscussionConfig",
+        "description": "Configuration payload for orchestrated discussions."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InstructionFile": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "project_directory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Directory"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "InstructionFile",
+        "description": "Request body for saving instruction files."
+      },
+      "ModelSettingsUpdate": {
+        "properties": {
+          "project_directory": {
+            "type": "string",
+            "title": "Project Directory"
+          },
+          "overrides": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_directory"
+        ],
+        "title": "ModelSettingsUpdate",
+        "description": "Request body for updating per-model overrides."
+      },
+      "NewFolder": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "folderName": {
+            "type": "string",
+            "title": "Foldername"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "folderName"
+        ],
+        "title": "NewFolder",
+        "description": "Request body for creating new folders."
+      },
+      "PromptRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "submit": {
+            "type": "boolean",
+            "title": "Submit",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt",
+          "models"
+        ],
+        "title": "PromptRequest",
+        "description": "Request body for sending prompts to AI models."
+      },
+      "StartSessionsRequest": {
+        "properties": {
+          "project_directory": {
+            "type": "string",
+            "title": "Project Directory"
+          },
+          "models": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_directory"
+        ],
+        "title": "StartSessionsRequest",
+        "description": "Payload describing which sessions to start and where."
+      },
+      "StopSessionsRequest": {
+        "properties": {
+          "models": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "title": "StopSessionsRequest",
+        "description": "Payload describing which sessions to stop."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
