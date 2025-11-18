@@ -295,7 +295,7 @@ tail -f artifacts/prd_session/conversation.log
 grep "PROJECT_COMPLETE" artifacts/prd_session/conversation.log
 
 # Count turns
-grep -c "<<<RESPONSE_START>>>" artifacts/prd_session/conversation.log
+grep -c "**[[RESPONSE_START]]**" artifacts/prd_session/conversation.log
 ```
 
 ### Look for Key Indicators

@@ -1,8 +1,31 @@
 # Instruction File Generator Guide
 
-**Version**: 1.0
-**Last Updated**: 2025-11-13
+**Version**: 1.2
+**Last Updated**: 2025-11-16
 **Purpose**: Documentation for the interactive instruction file generation script
+
+## Changelog
+
+**v1.2** (2025-11-16):
+- ✅ Implemented Phase 3 refinement using ARCHITECTURE.md, PROJECT_TASKS.md, and RISKS.md
+- ✅ Added RISKS.md parsing to extract critical/high risks and mitigation strategies
+- ✅ Added ARCHITECTURE.md parsing to extract tech stack, components, design patterns, directory structure
+- ✅ Enhanced PROJECT_TASKS.md parsing to support ### section format with **ID:** blocks
+- ✅ Added prominent response delimiter reminders to prevent missing_output errors
+- ✅ Auto-fills Technology Guidance section with extracted tech stack and components
+- ✅ Auto-fills Common Pitfalls section with risks and mitigations from RISKS.md
+- ✅ Auto-fills Workflow Phases with milestone names and specific TASK-IDs
+
+**v1.1** (2025-11-13):
+- ✅ Implemented Phase 2 refinement using PRD.md
+- ✅ Added staged refinement workflow
+- ✅ Command-line argument parsing for refine mode
+
+**v1.0** (Initial):
+- ✅ Interactive project interview
+- ✅ Automatic instruction file generation
+- ✅ Support for 2-phase and 3-phase workflows
+- ✅ Role selection and template customization
 
 ## Overview
 
@@ -39,13 +62,19 @@ This will:
 ### Stage 3: Phase 3 Refinement (After ARCHITECTURE Exists)
 
 ```bash
-# After completing Phase 2 and creating ARCHITECTURE.md
+# After completing Phase 2 and creating ARCHITECTURE.md, PROJECT_TASKS.md, and RISKS.md
 python scripts/generate_instruction_files.py --refine --phase 3 \
   --architecture-file ./ARCHITECTURE.md \
-  --tasks-file ./PROJECT_TASKS.md
+  --tasks-file ./PROJECT_TASKS.md \
+  --risks-file ./RISKS.md
 ```
 
-**Note:** Stage 3 refinement is planned but not yet implemented. See templates/challenges.md for details.
+This will:
+1. Parse ARCHITECTURE.md to extract tech stack, components, design patterns, directory structure
+2. Parse PROJECT_TASKS.md to extract tasks, milestones, effort estimates
+3. Parse RISKS.md to extract critical/high risks and mitigation strategies
+4. Auto-fill Category 5 TODOs in Phase 3 templates (examples, artifacts, workflow structure)
+5. Preserve all human customizations (Categories 1-4: domain, tech, authority, workflow)
 
 ## What Gets Generated
 
@@ -409,7 +438,7 @@ Next steps:
 - Fill any remaining domain/tech-specific TODOs
 - Run Phase 2 orchestration session
 
-**Phase 2 output:** ARCHITECTURE.md, PROJECT_TASKS.md
+**Phase 2 output:** ARCHITECTURE.md, PROJECT_TASKS.md, RISKS.md
 
 ---
 
@@ -419,18 +448,88 @@ Next steps:
 cd /path/to/your/project
 python scripts/generate_instruction_files.py --refine --phase 3 \
   --architecture-file ./ARCHITECTURE.md \
-  --tasks-file ./PROJECT_TASKS.md
+  --tasks-file ./PROJECT_TASKS.md \
+  --risks-file ./RISKS.md
 ```
 
-**Status:** Planned but not yet implemented.
+**What happens:**
+- Reads ARCHITECTURE.md and extracts:
+  - Technology stack (Python version, libraries, frameworks)
+  - Components and modules to implement
+  - Design patterns to follow
+  - Directory structure
+- Reads PROJECT_TASKS.md and extracts:
+  - All tasks with IDs (TASK-001, TASK-002, etc.)
+  - Milestones and phases
+  - Effort estimates
+  - High-priority tasks
+- Reads RISKS.md and extracts:
+  - Critical and High severity risks
+  - Mitigation strategies
+  - Risk-to-task mappings
+- Updates Phase 3 instruction files by filling:
+  - `[TODO: List required input files]` → "PRD.md\n- ARCHITECTURE.md\n- PROJECT_TASKS.md\n- RISKS.md"
+  - `[TODO: List expected output files]` → Source code, tests, README, requirements
+  - `[TODO: Define completion criteria]` → All requirements implemented, all tasks complete, tests passing
+  - `<!-- TODO: Add technology-specific patterns -->` → Tech stack, components, design patterns, directory structure
+  - `<!-- TODO: Add project-specific pitfalls -->` → Critical/High risks with mitigation strategies
+  - `[TODO: Activity Name]` → Task-driven workflow with milestone names and specific TASK-IDs
+- **Preserves your customizations** - only replaces exact TODO markers
 
-**When implemented, it will:**
-- Parse ARCHITECTURE.md for component structure, tech choices, data models
-- Parse PROJECT_TASKS.md for task breakdown
-- Fill Phase 3 TODOs with:
-  - Code examples based on chosen architecture
-  - Technology-specific testing patterns
-  - Task-derived workflow phases
+**Output example:**
+```
+Reading ARCHITECTURE.md from: ./scratch/ARCHITECTURE.md
+Reading PROJECT_TASKS.md from: ./scratch/PROJECT_TASKS.md
+Reading RISKS.md from: ./scratch/RISKS.md
+  Extracted 8 technology stack items
+  Extracted 5 components
+  Extracted 35 tasks (256 hours)
+  Extracted 3 milestones
+  Extracted 2 critical risks, 4 high risks
+
+Project directory: /home/user/Projects/MyProject
+
+Found 2 Phase 3 instruction files to refine:
+  - ROLE_LeadDeveloper_Implementation.md
+  - ROLE_CodeReviewer_Implementation.md
+
+Refining: ROLE_LeadDeveloper_Implementation.md...
+  ✓ Filled Input Artifacts
+  ✓ Filled Output Artifacts
+  ✓ Filled Success Criteria
+  ✓ Filled Technology Guidance
+  ✓ Filled Common Pitfalls from RISKS.md
+  ✓ Filled Workflow Phase structure with tasks
+  💾 Saved changes
+
+Refining: ROLE_CodeReviewer_Implementation.md...
+  ✓ Filled Input Artifacts
+  ✓ Filled Output Artifacts
+  ✓ Filled Success Criteria
+  ✓ Filled Technology Guidance
+  ✓ Filled Common Pitfalls from RISKS.md
+  💾 Saved changes
+
+Phase 3 Refinement Complete!
+  2 file(s) updated
+
+Next steps:
+  1. Review the updated files for accuracy
+  2. Fill remaining Domain/Tech TODOs if any
+  3. Run Phase 3 orchestration session
+
+IMPORTANT: Ensure all AI models use response delimiters:
+  <<<RESPONSE_START>>>
+  [your response here]
+  <<<RESPONSE_END>>>
+```
+
+**What you do:**
+- Review auto-filled content for accuracy
+- Fill any remaining domain/tech-specific TODOs
+- Run Phase 3 orchestration session
+
+**Phase 3 output:** Source code, tests, documentation, completed project
 
 ---
 
@@ -469,14 +568,15 @@ python scripts/generate_instruction_files.py \
   [--project-dir ./path/to/project]  # Optional: defaults to PRD parent directory
 ```
 
-**Stage 3 (Refine Phase 3):** *(Coming soon)*
+**Stage 3 (Refine Phase 3):**
 ```bash
 python scripts/generate_instruction_files.py \
   --refine \
   --phase 3 \
   --architecture-file ./ARCHITECTURE.md \
   --tasks-file ./PROJECT_TASKS.md \
-  [--project-dir ./path/to/project]
+  --risks-file ./RISKS.md \
+  [--project-dir ./path/to/project]  # Optional: defaults to ARCHITECTURE parent directory
 ```
 
 ### What Refinement Preserves
@@ -860,17 +960,22 @@ Phase 3 Output: Code files, tests, documentation
 
 ## Implemented Features
 
-✅ **Staged Refinement** (v1.1):
-- Phase 2 refinement using PRD.md (auto-fills Category 5 TODOs)
+✅ **Staged Refinement** (v1.2):
+- **Phase 2 refinement** using PRD.md (auto-fills Category 5 TODOs)
+- **Phase 3 refinement** using ARCHITECTURE.md, PROJECT_TASKS.md, and RISKS.md (auto-fills Category 5 TODOs)
 - Command-line argument parsing for refine mode
 - Safe TODO replacement that preserves customizations
 - PRD parsing to extract requirements, data models, success criteria
+- ARCHITECTURE parsing to extract tech stack, components, design patterns, directory structure
+- PROJECT_TASKS parsing to extract tasks, milestones, effort estimates (supports ### section format with **ID:** blocks)
+- RISKS parsing to extract critical/high risks and mitigation strategies
+- Prominent delimiter reminders to prevent missing_output errors
 
 ## Future Enhancements
 
 Planned improvements to the generator:
 
-1. **Phase 3 Refinement**: Complete Stage 3 with ARCHITECTURE.md parsing (in progress)
+1. **Enhanced Parsing**: Support more PRD/ARCHITECTURE formats and edge cases
 2. **More Role Templates**: Pre-built templates for all common roles
 3. **Domain Libraries**: Pre-written domain guidance for financial, gaming, etc.
 4. **Tech Stack Libraries**: Pre-written examples for Python, React, etc.
@@ -900,5 +1005,5 @@ If you encounter issues:
 
 **Script Location**: `scripts/generate_instruction_files.py`
 **Generated Files Location**: `templates/projects/[YourProjectName]/`
-**Version**: 1.0
+**Version**: 1.2
 **Author**: Orchestrator Development Team

@@ -1344,9 +1344,85 @@ python run_orchestrated_discussion.py \\
         print()
 
     def _refine_phase_3(self, args):
-        """Refine Phase 3 templates using ARCHITECTURE.md and PROJECT_TASKS.md"""
-        print("⚠️  Phase 3 refinement not yet implemented.")
-        print("   This will be added in Phase C of the implementation.")
+        """Refine Phase 3 templates using ARCHITECTURE.md, PROJECT_TASKS.md, and RISKS.md"""
+        print("Refining Phase 3 (Implementation) templates...")
+        print()
+
+        # Load all three Phase 2 artifacts
+        arch_path = Path(args.architecture_file)
+        tasks_path = Path(args.tasks_file)
+        risks_path = Path(args.risks_file)
+
+        for path, name in [(arch_path, "ARCHITECTURE.md"), (tasks_path, "PROJECT_TASKS.md"), (risks_path, "RISKS.md")]:
+            if not path.exists():
+                raise FileNotFoundError(f"{name} file not found: {path}")
+
+        print(f"Reading ARCHITECTURE.md from: {arch_path}")
+        with open(arch_path, 'r') as f:
+            arch_content = f.read()
+
+        print(f"Reading PROJECT_TASKS.md from: {tasks_path}")
+        with open(tasks_path, 'r') as f:
+            tasks_content = f.read()
+
+        print(f"Reading RISKS.md from: {risks_path}")
+        with open(risks_path, 'r') as f:
+            risks_content = f.read()
+
+        # Parse all three files
+        arch_data = self._parse_architecture(arch_content)
+        tasks_data = self._parse_project_tasks(tasks_content)
+        risks_data = self._parse_risks(risks_content)
+
+        print(f"  Extracted {len(arch_data['tech_stack'])} technology stack items")
+        print(f"  Extracted {len(arch_data['components'])} components")
+        print(f"  Extracted {tasks_data['total_tasks']} tasks ({tasks_data['total_effort_hours']} hours)")
+        print(f"  Extracted {len(tasks_data['milestones'])} milestones")
+        print(f"  Extracted {len(risks_data['critical_risks'])} critical risks, {len(risks_data['high_risks'])} high risks")
+        print()
+
+        # Find project directory
+        project_dir = self._find_project_directory(args, arch_path)
+        print(f"Project directory: {project_dir}")
+        print()
+
+        # Load project config
+        config = self._load_project_config(project_dir)
+
+        # Find Phase 3 instruction files
+        phase3_files = self._find_phase_files(project_dir, 3, config)
+
+        if not phase3_files:
+            print("⚠️  No Phase 3 instruction files found.")
+            print(f"   Expected files in: {project_dir}")
+            return
+
+        print(f"Found {len(phase3_files)} Phase 3 instruction files to refine:")
+        for f in phase3_files:
+            print(f"  - {f.name}")
+        print()
+
+        # Refine each file
+        refined_count = 0
+        for file_path in phase3_files:
+            if self._refine_phase3_file(file_path, arch_data, tasks_data, risks_data, config):
+                refined_count += 1
+
+        print()
+        print("=" * 70)
+        print(f"Phase 3 Refinement Complete!")
+        print("=" * 70)
+        print(f"  {refined_count} file(s) updated")
+        print()
+        print("Next steps:")
+        print("  1. Review the updated files for accuracy")
+        print("  2. Fill remaining Domain/Tech TODOs if any")
+        print("  3. Run Phase 3 orchestration session")
+        print()
+        print("IMPORTANT: Ensure all AI models use response delimiters:")
+        print("  <<<RESPONSE_START>>>")
+        print("  [your response here]")
+        print("  <<<RESPONSE_END>>>")
         print()
 
     def _parse_prd(self, prd_content: str) -> Dict:
@@ -1402,6 +1478,213 @@ python run_orchestrated_discussion.py \\
             data['output_artifacts'].append('CSV report file')
         if any('api' in req['description'].lower() for req in data['functional_requirements']):
             data['output_artifacts'].append('API endpoint documentation')
+
+        return data
+
+    def _parse_architecture(self, arch_content: str) -> Dict:
+        """Parse ARCHITECTURE.md to extract key information"""
+        data = {
+            'tech_stack': [],
+            'components': [],
+            'modules': [],
+            'design_patterns': [],
+            'directory_structure': [],
+            'dependencies': []
+        }
+
+        # Extract technology stack
+        tech_section = re.search(
+            r'##\s*(?:Technology\s*Stack|Tech\s*Stack|Technologies).*?(?=##|$)',
+            arch_content,
+            re.DOTALL | re.IGNORECASE
+        )
+        if tech_section:
+            # Look for Python version
+            python_version = re.search(r'Python\s+(3\.\d+(?:\.\d+)?)', tech_section.group(), re.IGNORECASE)
+            if python_version:
+                data['tech_stack'].append(f"Python {python_version.group(1)}")
+
+            # Extract libraries/frameworks mentioned
+            lib_patterns = [
+                r'(?:library|package|framework|module):\s*`?([a-zA-Z0-9_-]+)`?',
+                r'`([a-zA-Z0-9_-]+)`\s*(?:library|package|framework)',
+                r'-\s*`?([a-zA-Z0-9_-]+)`?\s*(?:for|:)'
+            ]
+            for pattern in lib_patterns:
+                libs = re.findall(pattern, tech_section.group(), re.IGNORECASE)
+                data['tech_stack'].extend(libs)
+
+        # Extract components/modules
+        component_section = re.search(
+            r'##\s*(?:Components?|Modules?|System\s*Architecture).*?(?=##|$)',
+            arch_content,
+            re.DOTALL | re.IGNORECASE
+        )
+        if component_section:
+            # Look for component descriptions (### or **Component Name**)
+            components = re.findall(r'###\s+(.+?)(?:\n|$)', component_section.group())
+            data['components'].extend([c.strip() for c in components])
+
+            # Look for module names (Python module paths)
+            modules = re.findall(r'`([a-z_][a-z0-9_/]*\.py)`', component_section.group())
+            data['modules'].extend(modules)
+
+        # Extract design patterns
+        pattern_keywords = ['singleton', 'factory', 'observer', 'strategy', 'decorator', 'adapter', 'facade', 'mvc', 'mvvm']
+        for keyword in pattern_keywords:
+            if re.search(rf'\b{keyword}\b', arch_content, re.IGNORECASE):
+                data['design_patterns'].append(keyword.title())
+
+        # Extract directory structure
+        dir_section = re.search(
+            r'(?:```|```text|```bash)\s*(.*?(?:src/|lib/|app/).*?)```',
+            arch_content,
+            re.DOTALL
+        )
+        if dir_section:
+            lines = [l.strip() for l in dir_section.group(1).split('\n') if l.strip() and '/' in l]
+            data['directory_structure'] = lines[:10]  # Limit to 10 lines
+
+        # Extract dependencies (requirements)
+        dep_section = re.search(
+            r'(?:dependencies|requirements|libraries needed).*?(?:```|```text)\s*(.*?)```',
+            arch_content,
+            re.DOTALL | re.IGNORECASE
+        )
+        if dep_section:
+            deps = [l.strip() for l in dep_section.group(1).split('\n') if l.strip()]
+            data['dependencies'] = deps[:15]  # Limit to 15
+
+        return data
+
+    def _parse_project_tasks(self, tasks_content: str) -> Dict:
+        """Parse PROJECT_TASKS.md to extract key information"""
+        data = {
+            'tasks': [],
+            'milestones': [],
+            'high_priority_tasks': [],
+            'total_tasks': 0,
+            'total_effort_hours': 0
+        }
+
+        # Task sections use Markdown headings (### P1.1 ...) with ID/metadata blocks.
+        task_section_pattern = r'###\s+.+?(?=\n###\s+|$)'
+        for section in re.findall(task_section_pattern, tasks_content, re.DOTALL):
+            id_match = re.search(r'\*\*ID:\*\*\s*(TASK-\d+)', section, re.IGNORECASE)
+            if not id_match:
+                continue
+
+            task_id = id_match.group(1).strip()
+
+            # Extract description block or fallback to heading line
+            desc_match = re.search(r'\*\*Description:?\*\*\s*(.+?)(?=\n\*\*|$)', section, re.DOTALL | re.IGNORECASE)
+            if desc_match:
+                description = re.sub(r'\s+', ' ', desc_match.group(1)).strip()
+            else:
+                header_match = re.match(r'###\s+(.+)', section)
+                description = header_match.group(1).strip() if header_match else task_id
+
+            # Effort estimate (numbers only)
+            effort_match = re.search(r'\*\*Estimated\s+Effort:?\*\*\s*(\d+)', section, re.IGNORECASE)
+            effort = int(effort_match.group(1)) if effort_match else 0
+
+            # Priority
+            priority_match = re.search(r'\*\*Priority:?\*\*\s*(\w+)', section, re.IGNORECASE)
+            priority = priority_match.group(1).strip().lower() if priority_match else 'medium'
+            is_high_priority = priority in ('high', 'critical')
+
+            task_info = {
+                'id': task_id,
+                'description': description[:150],
+                'effort_hours': effort,
+                'is_high_priority': is_high_priority
+            }
+
+            data['tasks'].append(task_info)
+            data['total_effort_hours'] += effort
+
+            if is_high_priority:
+                data['high_priority_tasks'].append(task_info)
+
+        data['total_tasks'] = len(data['tasks'])
+
+        # Extract milestone info from dedicated section and phase headings
+        milestone_section = re.search(r'##\s*Milestone\s*Overview.*?(?=##|$)', tasks_content, re.DOTALL | re.IGNORECASE)
+        if milestone_section:
+            overview_matches = re.findall(r'-\s*(M\d+):\s*(.+)', milestone_section.group(), re.IGNORECASE)
+            for ms_id, ms_desc in overview_matches:
+                data['milestones'].append({
+                    'id': ms_id.strip(),
+                    'description': ms_desc.strip()[:100]
+                })
+
+        phase_matches = re.findall(r'##\s+Phase\s+\d+:\s*(.+?)\s*\((M\d+)\)', tasks_content)
+        for desc, ms_id in phase_matches:
+            data['milestones'].append({
+                'id': ms_id.strip(),
+                'description': desc.strip()[:100]
+            })
+
+        return data
+
+    def _parse_risks(self, risks_content: str) -> Dict:
+        """Parse RISKS.md to extract key information"""
+        data = {
+            'critical_risks': [],
+            'high_risks': [],
+            'all_risks': [],
+            'mitigation_strategies': []
+        }
+
+        # Extract risk entries
+        # Format: ### Risk 1: Risk Name or **Risk ID:** RISK-001
+        risk_pattern = r'(?:###\s*Risk\s*\d+:|##\s*Risk\s*\d+:|\*\*Risk\s*(?:ID|Name):\*\*)\s*(.+?)(?=(?:###\s*Risk|##\s*Risk|##\s*[A-Z])|$)'
+        risk_matches = re.findall(risk_pattern, risks_content, re.DOTALL | re.IGNORECASE)
+
+        for risk_content in risk_matches:
+            # Extract risk name/title (first line)
+            lines = [l.strip() for l in risk_content.split('\n') if l.strip()]
+            risk_name = lines[0] if lines else 'Unknown Risk'
+
+            # Extract severity/priority
+            severity_match = re.search(
+                r'(?:severity|priority|level|overall):\s*(critical|high|medium|low)',
+                risk_content,
+                re.IGNORECASE
+            )
+            severity = severity_match.group(1).lower() if severity_match else 'medium'
+
+            # Extract mitigation strategies
+            mitigation_section = re.search(
+                r'(?:mitigation|strategy|strategies|approach).*?(?=\n##|\n\*\*|$)',
+                risk_content,
+                re.DOTALL | re.IGNORECASE
+            )
+            mitigations = []
+            if mitigation_section:
+                # Extract bullet points
+                mits = re.findall(r'[-*]\s*(.+)', mitigation_section.group())
+                mitigations = [m.strip()[:100] for m in mits[:3]]  # First 3 mitigations, max 100 chars each
+
+            risk_info = {
+                'name': risk_name.strip()[:100],
+                'severity': severity,
+                'mitigations': mitigations,
+                'full_content': risk_content[:300]  # First 300 chars for context
+            }
+
+            data['all_risks'].append(risk_info)
+
+            if severity == 'critical':
+                data['critical_risks'].append(risk_info)
+            elif severity == 'high':
+                data['high_risks'].append(risk_info)
+
+            # Collect all unique mitigation strategies
+            data['mitigation_strategies'].extend(mitigations)
+
+        # Deduplicate mitigation strategies
+        data['mitigation_strategies'] = list(set(data['mitigation_strategies']))[:10]  # Top 10 unique
 
         return data
 
@@ -1534,6 +1817,197 @@ python run_orchestrated_discussion.py \\
             print(f"  ℹ️  No TODOs found to fill (file may already be customized)")
             return False
 
+    def _refine_phase3_file(
+        self,
+        file_path: Path,
+        arch_data: Dict,
+        tasks_data: Dict,
+        risks_data: Dict,
+        config: Optional[ProjectConfig]
+    ) -> bool:
+        """Refine a single Phase 3 instruction file"""
+        print(f"Refining: {file_path.name}...")
+
+        with open(file_path, 'r') as f:
+            content = f.read()
+
+        original_content = content
+        modified = False
+
+        # Fill Input Artifacts TODO
+        if '[TODO: List required input files]' in content:
+            input_artifacts = ['PRD.md', 'ARCHITECTURE.md', 'PROJECT_TASKS.md', 'RISKS.md']
+            input_list = '\n- '.join(artifact for artifact in input_artifacts)
+            content = content.replace(
+                '[TODO: List required input files]',
+                input_list
+            )
+            modified = True
+            print("  ✓ Filled Input Artifacts")
+
+        # Fill Output Artifacts TODO
+        if '[TODO: List expected output files]' in content:
+            output_artifacts = [
+                'Source code files (according to ARCHITECTURE.md)',
+                'Unit tests (one per module/component)',
+                'Integration tests',
+                'README.md (installation and usage)',
+                'requirements.txt or equivalent'
+            ]
+            if arch_data['modules']:
+                # Add specific modules if we found them
+                output_artifacts.insert(1, f"Primary modules: {', '.join(arch_data['modules'][:3])}")
+
+            output_list = '\n- '.join(artifact for artifact in output_artifacts)
+            content = content.replace(
+                '[TODO: List expected output files]',
+                output_list
+            )
+            modified = True
+            print("  ✓ Filled Output Artifacts")
+
+        # Fill Success Criteria TODO
+        if '[TODO: Define completion criteria]' in content:
+            criteria_items = [
+                'All functional requirements from PRD.md are implemented',
+                f'All {tasks_data["total_tasks"]} tasks from PROJECT_TASKS.md are complete',
+                'All tests passing',
+                'Code reviewed and approved by Code Reviewer',
+                'Critical and High risks from RISKS.md are mitigated'
+            ]
+            criteria_text = '\n'.join(f'- {item}' for item in criteria_items)
+            content = content.replace(
+                '[TODO: Define completion criteria]',
+                criteria_text
+            )
+            modified = True
+            print("  ✓ Filled Success Criteria")
+
+        # Fill Technology Guidance TODO
+        tech_section_marker = '<!-- TODO: Add technology-specific patterns and examples -->'
+        if tech_section_marker in content:
+            tech_guidance = self._build_tech_guidance(arch_data)
+            content = content.replace(tech_section_marker, tech_guidance)
+            modified = True
+            print("  ✓ Filled Technology Guidance")
+
+        # Fill Common Pitfalls TODO
+        pitfalls_marker = '<!-- TODO: Add project-specific pitfalls and best practices -->'
+        if pitfalls_marker in content:
+            pitfalls_section = self._build_pitfalls_section(risks_data)
+            content = content.replace(pitfalls_marker, pitfalls_section)
+            modified = True
+            print("  ✓ Filled Common Pitfalls from RISKS.md")
+
+        # Fill Workflow Phase Activities
+        if '[TODO: Activity Name]' in content:
+            # Replace with task-driven workflow
+            if tasks_data['milestones']:
+                first_milestone = tasks_data['milestones'][0]
+                content = content.replace(
+                    '**Phase 1: [TODO: Activity Name]**',
+                    f'**Phase 1: {first_milestone["id"]} - {first_milestone["description"][:50]}**'
+                )
+            else:
+                content = content.replace(
+                    '**Phase 1: [TODO: Activity Name]**',
+                    '**Phase 1: Setup and Initial Implementation**'
+                )
+
+            # Add example tasks from PROJECT_TASKS.md
+            first_tasks = tasks_data['tasks'][:5]  # First 5 tasks
+            task_checklist = '\n  - [ ] '.join([f'{t["id"]}: {t["description"][:80]}' for t in first_tasks])
+
+            content = content.replace(
+                '- [ ] [TODO: Add steps]',
+                f'- [ ] {task_checklist}',
+                1  # Only replace first occurrence
+            )
+            modified = True
+            print("  ✓ Filled Workflow Phase structure with tasks")
+
+        if modified:
+            # Write updated content
+            with open(file_path, 'w') as f:
+                f.write(content)
+            print(f"  💾 Saved changes to {file_path.name}")
+            return True
+        else:
+            print(f"  ℹ️  No TODOs found to fill (file may already be customized)")
+            return False
+
+    def _build_tech_guidance(self, arch_data: Dict) -> str:
+        """Build technology-specific guidance from architecture data"""
+        guidance = []
+
+        if arch_data['tech_stack']:
+            guidance.append("**Technology Stack:**")
+            for tech in arch_data['tech_stack'][:10]:  # Top 10
+                guidance.append(f"- {tech}")
+            guidance.append("")
+
+        if arch_data['components']:
+            guidance.append("**Key Components to Implement:**")
+            for component in arch_data['components'][:8]:  # Top 8
+                guidance.append(f"- {component}")
+            guidance.append("")
+
+        if arch_data['design_patterns']:
+            guidance.append("**Design Patterns to Follow:**")
+            for pattern in arch_data['design_patterns']:
+                guidance.append(f"- {pattern}")
+            guidance.append("")
+
+        if arch_data['directory_structure']:
+            guidance.append("**Directory Structure:**")
+            guidance.append("```")
+            for line in arch_data['directory_structure']:
+                guidance.append(line)
+            guidance.append("```")
+            guidance.append("")
+
+        if not guidance:
+            guidance.append("Refer to ARCHITECTURE.md for detailed technology specifications.")
+
+        return '\n'.join(guidance)
+
+    def _build_pitfalls_section(self, risks_data: Dict) -> str:
+        """Build common pitfalls section from risks data"""
+        pitfalls = []
+
+        pitfalls.append("**Common Pitfalls to Avoid (from RISKS.md):**")
+        pitfalls.append("")
+
+        # Add critical risks as pitfalls
+        if risks_data['critical_risks']:
+            pitfalls.append("**Critical Risk Areas:**")
+            for risk in risks_data['critical_risks'][:3]:  # Top 3
+                pitfalls.append(f"- **{risk['name']}**")
+                if risk['mitigations']:
+                    pitfalls.append(f"  - Mitigation: {risk['mitigations'][0]}")
+            pitfalls.append("")
+
+        # Add high risks as pitfalls
+        if risks_data['high_risks']:
+            pitfalls.append("**High Risk Areas:**")
+            for risk in risks_data['high_risks'][:4]:  # Top 4
+                pitfalls.append(f"- **{risk['name']}**")
+                if risk['mitigations']:
+                    pitfalls.append(f"  - Mitigation: {risk['mitigations'][0]}")
+            pitfalls.append("")
+
+        # Add general mitigation strategies
+        if risks_data['mitigation_strategies']:
+            pitfalls.append("**Best Practices:**")
+            for strategy in risks_data['mitigation_strategies'][:5]:  # Top 5
+                pitfalls.append(f"- {strategy}")
+            pitfalls.append("")
+
+        if len(pitfalls) == 2:  # Only header added
+            pitfalls.append("Refer to RISKS.md for detailed risk analysis and mitigation strategies.")
+
+        return '\n'.join(pitfalls)
+
 
 def main():
     """Main entry point"""
@@ -1550,7 +2024,8 @@ Examples:
 
   # Refine Phase 3 templates after ARCHITECTURE exists (Stage 3)
   python scripts/generate_instruction_files.py --refine --phase 3 \\
-    --architecture-file ./ARCHITECTURE.md --tasks-file ./PROJECT_TASKS.md
+    --architecture-file ./ARCHITECTURE.md --tasks-file ./PROJECT_TASKS.md \\
+    --risks-file ./RISKS.md
         """
     )
 
@@ -1586,6 +2061,12 @@ Examples:
     )
 
     parser.add_argument(
+        '--risks-file',
+        type=str,
+        help='Path to RISKS.md file (for Phase 3 refinement)'
+    )
+
+    parser.add_argument(
         '--project-dir',
         type=str,
         help='Project directory containing instruction files (for refinement mode)'
@@ -1599,8 +2080,8 @@ Examples:
             parser.error("--refine requires --phase")
         if args.phase == 2 and not args.prd_file:
             parser.error("Phase 2 refinement requires --prd-file")
-        if args.phase == 3 and not (args.architecture_file and args.tasks_file):
-            parser.error("Phase 3 refinement requires both --architecture-file and --tasks-file")
+        if args.phase == 3 and not (args.architecture_file and args.tasks_file and args.risks_file):
+            parser.error("Phase 3 refinement requires --architecture-file, --tasks-file, and --risks-file")
 
     try:
         generator = InstructionFileGenerator()

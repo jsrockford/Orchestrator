@@ -429,9 +429,24 @@ def test_tool_loop_detection_not_triggered_below_threshold() -> None:
         assert "loop_detected" not in metadata
 
 
-def test_detect_conflict_on_disagreement_keyword() -> None:
+def test_detect_conflict_keywords_disabled_by_default() -> None:
     orchestrator = DevelopmentTeamOrchestrator({})
     manager = ConversationManager(orchestrator, ["claude"])
+
+    conversation = [
+        {"speaker": "claude", "response": "Proposal A looks solid."},
+        {"speaker": "gemini", "response": "I disagree with that direction."},
+    ]
+    conflict, reason = manager.detect_conflict(conversation)
+
+    assert conflict is False
+    assert reason == ""
+
+
+def test_detect_conflict_keywords_fire_when_enabled() -> None:
+    orchestrator = DevelopmentTeamOrchestrator({})
+    manager = ConversationManager(orchestrator, ["claude"])
+    manager._conflict_keyword_detection_enabled = True  # noqa: SLF001
 
     conversation = [
         {"speaker": "claude", "response": "Proposal A looks solid."},
@@ -446,12 +461,69 @@ def test_detect_conflict_on_disagreement_keyword() -> None:
 def test_detect_conflict_ignores_code_block_keywords() -> None:
     orchestrator = DevelopmentTeamOrchestrator({})
     manager = ConversationManager(orchestrator, ["claude"])
+    manager._conflict_keyword_detection_enabled = True  # noqa: SLF001
 
     conversation = [
         {"speaker": "claude", "response": "Initial analysis."},
         {
             "speaker": "gemini",
             "response": "```python\nraise ValueError('Input cannot be empty')\n```",
+        },
+    ]
+
+    conflict, reason = manager.detect_conflict(conversation)
+
+    assert conflict is False
+    assert reason == ""
+
+
+def test_detect_conflict_ignores_blocker_references_in_docs() -> None:
+    orchestrator = DevelopmentTeamOrchestrator({})
+    manager = ConversationManager(orchestrator, ["claude"])
+    manager._conflict_blocker_detection_enabled = True  # noqa: SLF001
+
+    conversation = [
+        {"speaker": "claude", "response": "Initial analysis."},
+        {
+            "speaker": "gemini",
+            "response": "Please consult @PROJECT_TASKS.md where the integration tasks are marked as blockers for QA.",
+        },
+    ]
+
+    conflict, reason = manager.detect_conflict(conversation)
+
+    assert conflict is False
+    assert reason == ""
+
+
+def test_detect_conflict_triggers_on_explicit_blocker_statement() -> None:
+    orchestrator = DevelopmentTeamOrchestrator({})
+    manager = ConversationManager(orchestrator, ["claude"])
+    manager._conflict_blocker_detection_enabled = True  # noqa: SLF001
+
+    conversation = [
+        {"speaker": "claude", "response": "Initial analysis."},
+        {
+            "speaker": "gemini",
+            "response": "This deployment path is a blocker for our progress and we cannot proceed until the config issue is fixed.",
+        },
+    ]
+
+    conflict, reason = manager.detect_conflict(conversation)
+
+    assert conflict is True
+    assert "indicates disagreement" in reason
+
+
+def test_detect_conflict_blocker_detection_disabled_by_default() -> None:
+    orchestrator = DevelopmentTeamOrchestrator({})
+    manager = ConversationManager(orchestrator, ["claude"])
+
+    conversation = [
+        {"speaker": "claude", "response": "Initial analysis."},
+        {
+            "speaker": "gemini",
+            "response": "This deployment path is a blocker for our progress and we cannot proceed until the config issue is fixed.",
         },
     ]
 
@@ -514,6 +586,8 @@ def test_conflict_notification_updates_context_manager() -> None:
         context_manager=context_manager,
     )
 
+    manager._conflict_keyword_detection_enabled = True  # noqa: SLF001
+
     conversation = manager.facilitate_discussion("Decide between plans", max_turns=4)
 
     assert len(conversation) == 2
@@ -522,9 +596,10 @@ def test_conflict_notification_updates_context_manager() -> None:
     assert "disagree" in context_manager.conflicts[0]["reason"]
 
 
-def test_detect_conflict_matches_stronger_phrases() -> None:
+def test_detect_conflict_matches_stronger_phrases_when_enabled() -> None:
     orchestrator = DevelopmentTeamOrchestrator({})
     manager = ConversationManager(orchestrator, ["claude"])
+    manager._conflict_keyword_detection_enabled = True  # noqa: SLF001
 
     conversation = [
         {"speaker": "claude", "response": "Proposal summary."},

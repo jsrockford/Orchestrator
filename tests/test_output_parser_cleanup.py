@@ -137,13 +137,39 @@ def test_split_prompt_and_response_keeps_multiline_response(parser):
 def test_extract_delimited_response_returns_inner_block(parser):
     raw = """
 system preamble
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 Final answer payload.
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 """
     extracted = parser.extract_delimited_response(raw)
 
     assert extracted == "Final answer payload."
+
+
+def test_extract_delimited_response_supports_legacy_markers(parser):
+    raw = """
+system preamble
+<<<RESPONSE_START>>>
+Backward compatibility payload.
+<<<RESPONSE_END>>>
+"""
+    extracted = parser.extract_delimited_response(raw)
+
+    assert extracted == "Backward compatibility payload."
+
+
+def test_extract_delimited_response_handles_claude_ui_wrapping(parser):
+    raw = """
+● <<>>
+
+  HELLO
+  Payload survives UI wrappers.
+
+  <<>>
+"""
+    extracted = parser.extract_delimited_response(raw)
+
+    assert extracted == "HELLO\n  Payload survives UI wrappers."
 
 
 def test_split_prompt_and_response_prefers_delimited_section(parser):
@@ -152,12 +178,47 @@ def test_split_prompt_and_response_prefers_delimited_section(parser):
 
 ● Here's a working draft, refining as we go.
   Internal reasoning: checking metrics.
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 Production is green across all regions; no action needed.
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 """
     parsed = parser.split_prompt_and_response(snippet)
 
     assert parsed.used_response_delimiter is True
     assert parsed.response == "Production is green across all regions; no action needed."
-    assert '<<<RESPONSE_START>>>' not in parsed.cleaned_output
+    assert '**[[RESPONSE_START]]**' not in parsed.cleaned_output
+
+
+def test_split_prompt_and_response_accepts_legacy_delimiters(parser):
+    snippet = """
+> Provide the production summary.
+
+● Here's a working draft, refining as we go.
+  Internal reasoning: checking metrics.
+<<<RESPONSE_START>>>
+Legacy delimiters remain supported.
+<<<RESPONSE_END>>>
+"""
+    parsed = parser.split_prompt_and_response(snippet)
+
+    assert parsed.used_response_delimiter is True
+    assert parsed.response == "Legacy delimiters remain supported."
+
+
+def test_split_prompt_and_response_accepts_claude_ui_delimiters(parser):
+    snippet = """
+> Provide the production summary.
+
+● Here's a working draft, refining as we go.
+  Internal reasoning: checking metrics.
+● <<>>
+
+  HELLO
+  Claude UI delimiters detected.
+
+  <<>>
+"""
+    parsed = parser.split_prompt_and_response(snippet)
+
+    assert parsed.used_response_delimiter is True
+    assert "Claude UI delimiters detected." in parsed.response

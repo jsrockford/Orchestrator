@@ -94,3 +94,6 @@ don_private/
 .claude/
 
 repomix-output.xml
+
+/templates/projects/
+/templates/hold/

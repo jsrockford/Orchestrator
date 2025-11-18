@@ -33,9 +33,9 @@ response in delimiters. NO EXCEPTIONS.
 
 **FORMAT:**
 ```
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 Your actual response here
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 ```
 
 **Why this matters:**
@@ -48,10 +48,10 @@ Your actual response here
 ```
 [Your internal reasoning and tool usage here...]
 
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 I've reviewed the requirements from a technical perspective and identified
 that we need more specificity on the validation rules. Here's what I found...
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 ```
 
 ## 2. PROJECT COMPLETION SIGNAL
@@ -61,7 +61,7 @@ agree it's ready, signal completion by including:
 
 **[[PROJECT_COMPLETE]]**
 
-Place this INSIDE your <<<RESPONSE_START>>> delimiters.
+Place this INSIDE your **[[RESPONSE_START]]** delimiters.
 
 The orchestrator requires 66% consensus to end the discussion.
 Only signal when you genuinely believe the PRD is ready for the
@@ -554,7 +554,7 @@ Before signaling [[PROJECT_COMPLETE]]:
 
 **Good Technical Feedback:**
 ```markdown
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 I've reviewed the PRD and found a few technical gaps:
 
 **Section 5 (Inputs):**
@@ -572,12 +572,12 @@ I've reviewed the PRD and found a few technical gaps:
   - Suggest: "Results match Excel PMT function to 2 decimal places"
 
 These need clarification before implementation team can proceed.
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 ```
 
 **Supporting Product Manager:**
 ```markdown
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 Product Manager, I think you've captured the user requirements well. Let me add the technical specifications:
 
 For the interest calculation requirement, I suggest we specify:
@@ -586,7 +586,7 @@ For the interest calculation requirement, I suggest we specify:
 - Precision: Calculate with full precision, display rounded to 2 places
 
 Does this technical specification match what you had in mind for the user requirement?
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 ```
 
 ## Common Pitfalls to Avoid
@@ -686,7 +686,7 @@ This phase is complete when:
 
 **Communication Reminder:** Always wrap your responses in delimiters:
 ```
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 Your message here
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 ```

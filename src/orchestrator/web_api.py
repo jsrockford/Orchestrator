@@ -543,9 +543,9 @@ response in delimiters. NO EXCEPTIONS.
 
 **FORMAT:**
 ```
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 Your actual response here
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 ```
 
 **Why this matters:**
@@ -558,11 +558,11 @@ Your actual response here
 ```
 [Your internal reasoning and tool usage here...]
 
-<<<RESPONSE_START>>>
+**[[RESPONSE_START]]**
 I've reviewed the code and found the following issues:
 1. The collision detection needs adjustment
 2. Please update line 42 to fix the boundary check
-<<<RESPONSE_END>>>
+**[[RESPONSE_END]]**
 ```
 
 ## 2. PROJECT COMPLETION SIGNAL
@@ -572,7 +572,7 @@ agree the work is complete, signal completion by including:
 
 **[[PROJECT_COMPLETE]]**
 
-Place this INSIDE your <<<RESPONSE_START>>> delimiters.
+Place this INSIDE your **[[RESPONSE_START]]** delimiters.
 
 The orchestrator requires 66% consensus to end the discussion.
 Only signal when you genuinely believe the project is done.

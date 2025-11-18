@@ -74,6 +74,15 @@ class ConversationManager:
         self._conflict_code_pattern = re.compile(r"```.*?```", re.DOTALL)
         self._conflict_inline_code_pattern = re.compile(r"`[^`]*`")
         self._conflict_quoted_pattern = re.compile(r"\"[^\"]*\"|'[^']*'")
+        self._conflict_doc_reference_pattern = re.compile(r"@[A-Za-z0-9_\-/\.]*\.md")
+        self._conflict_marker_pattern = re.compile(r"\[\[[A-Z0-9_]+\]\]")
+        conflict_cfg = get_config().get_section("conflict_detection") or {}
+        self._conflict_keyword_detection_enabled = bool(
+            conflict_cfg.get("keyword_detection_enabled", False)
+        )
+        self._conflict_blocker_detection_enabled = bool(
+            conflict_cfg.get("blocker_detection_enabled", False)
+        )
         tmux_cfg = get_config().get_section("tmux") or {}
         self._capture_tail_limit: int = int(tmux_cfg.get("capture_lines", 500) or 500)
         self._fallback_notices: Set[str] = set()
@@ -908,17 +917,36 @@ class ConversationManager:
         latest = conversation[-1]
         previous = conversation[-2]
 
-        response_normalized = self._normalize_for_conflict_text(latest.get("response") or "")
-        conflict_keywords = ("disagree", "blocker", "conflict", "reject")
+        response_raw = latest.get("response") or ""
+        response_normalized = self._normalize_for_conflict_text(response_raw)
+        conflict_keywords = ("disagree", "conflict", "reject")
         conflict_phrases = ("cannot agree", "cannot accept", "cannot support", "cannot proceed", "cannot endorse")
 
-        for keyword in conflict_keywords:
-            if keyword in response_normalized:
-                return True, f"Keyword '{keyword}' indicates disagreement"
+        if self._conflict_keyword_detection_enabled:
+            for keyword in conflict_keywords:
+                idx = response_normalized.find(keyword)
+                if idx != -1:
+                    snippet = self._extract_conflict_snippet(response_normalized, idx, idx + len(keyword))
+                    return True, f"Keyword '{keyword}' indicates disagreement (context: {snippet})"
 
-        for phrase in conflict_phrases:
-            if phrase in response_normalized:
-                return True, f"Phrase '{phrase}' indicates disagreement"
+            for phrase in conflict_phrases:
+                idx = response_normalized.find(phrase)
+                if idx != -1:
+                    snippet = self._extract_conflict_snippet(response_normalized, idx, idx + len(phrase))
+                    return True, f"Phrase '{phrase}' indicates disagreement (context: {snippet})"
+
+        if self._conflict_blocker_detection_enabled:
+            blocker_patterns = (
+                re.compile(r"\b(?:is|are|remains|became|becomes)\s+(?:a\s+)?blocker(?:s)?\b"),
+                re.compile(r"\b(?:blocker|blocking|blocks?)\b.*\b(can(?:not|'t)|unable|stuck|blocked)\b"),
+                re.compile(r"\b(can(?:not|'t)|unable|stuck|blocked)\b.*\b(?:blocker|blocking|blocks?)\b"),
+                re.compile(r"\b(blocks?|blocking)\s+(?:my|our|the)\s+(?:progress|work|ability|plan)\b"),
+            )
+            for pattern in blocker_patterns:
+                match = pattern.search(response_normalized)
+                if match:
+                    snippet = self._extract_conflict_snippet(response_normalized, match.start(), match.end())
+                    return True, f"Phrase '{match.group(0)}' indicates disagreement (context: {snippet})"
 
         stance_latest = self._extract_stance(latest)
         stance_previous = self._extract_stance(previous)
@@ -1571,7 +1599,7 @@ class ConversationManager:
         if controller_name in self._delimiter_warnings:
             return
         self.logger.warning(
-            "Controller '%s' response lacked <<<RESPONSE_START>>> delimiters; using heuristic fallback parsing.",
+            "Controller '%s' response lacked [[RESPONSE_START]] delimiters; using heuristic fallback parsing.",
             controller_name,
         )
         self._delimiter_warnings.add(controller_name)
@@ -2682,7 +2710,27 @@ class ConversationManager:
         scrubbed = self._conflict_code_pattern.sub(" ", text)
         scrubbed = self._conflict_inline_code_pattern.sub(" ", scrubbed)
         scrubbed = self._conflict_quoted_pattern.sub(" ", scrubbed)
-        return scrubbed.lower()
+        scrubbed = self._conflict_doc_reference_pattern.sub(" ", scrubbed)
+        scrubbed = self._conflict_marker_pattern.sub(" ", scrubbed)
+        scrubbed = scrubbed.lower()
+        return " ".join(scrubbed.split())
+
+    def _extract_conflict_snippet(self, text: str, start: int, end: int, *, max_length: int = 80) -> str:
+        """
+        Return a trimmed snippet around the matched keyword so logs explain the trigger.
+        """
+        if not text:
+            return ""
+
+        prefix = "…" if start > 0 else ""
+        suffix = "…" if end < len(text) else ""
+        window_start = max(0, start - 30)
+        window_end = min(len(text), end + 30)
+        snippet = text[window_start:window_end].strip()
+        if len(snippet) > max_length:
+            snippet = snippet[: max_length - 1].rstrip() + "…"
+            suffix = ""
+        return f"{prefix}{snippet}{suffix}"
 
     def _ensure_router_registration(self, participant: str) -> None:
         if self.message_router is None:

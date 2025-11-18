@@ -93,8 +93,26 @@ class OutputParser:
 
     PROMPT_MARKERS = ('>', '›')
     RESPONSE_MARKERS = ('●', '✦', '•')
-    RESPONSE_DELIMITER_PATTERN = re.compile(
+    # Explicit delimiter patterns (formatted + backward-compatible legacy tokens)
+    BOLD_RESPONSE_DELIMITER_PATTERN = re.compile(
+        r'\*\*\s*\[\[RESPONSE_START\]\]\s*\*\*(.*?)\*\*\s*\[\[RESPONSE_END\]\]\s*\*\*',
+        re.DOTALL | re.IGNORECASE,
+    )
+    BRACKET_RESPONSE_DELIMITER_PATTERN = re.compile(
+        r'\[\[\s*RESPONSE_START\s*\]\](.*?)\[\[\s*RESPONSE_END\s*\]\]',
+        re.DOTALL | re.IGNORECASE,
+    )
+    LEGACY_RESPONSE_DELIMITER_PATTERN = re.compile(
         r'<<<RESPONSE_START>>>(.*?)<<<RESPONSE_END>>>', re.DOTALL | re.IGNORECASE
+    )
+    CLAUDE_UI_RESPONSE_DELIMITER_PATTERN = re.compile(
+        r'(?:[•●]\s*)?<<>>\s*(.*?)\s*<<>>', re.DOTALL
+    )
+    RESPONSE_DELIMITER_PATTERNS = (
+        BOLD_RESPONSE_DELIMITER_PATTERN,
+        BRACKET_RESPONSE_DELIMITER_PATTERN,
+        LEGACY_RESPONSE_DELIMITER_PATTERN,
+        CLAUDE_UI_RESPONSE_DELIMITER_PATTERN,
     )
 
     def clean_output(self, text: str, strip_ui: bool = True, strip_trailing_prompts: bool = False) -> str:
@@ -137,12 +155,20 @@ class OutputParser:
         Returns:
             Extracted response content or None when delimiters are absent.
         """
+        match = self._find_response_delimiter(text)
+        if match:
+            return self._normalize_delimited_content(match.group(1))
+        return None
+
+    def _find_response_delimiter(self, text: Optional[str]) -> Optional[re.Match]:
+        """Return the first delimiter match found in text."""
         if not text:
             return None
-        match = self.RESPONSE_DELIMITER_PATTERN.search(text)
-        if not match:
-            return None
-        return self._normalize_delimited_content(match.group(1))
+        for pattern in self.RESPONSE_DELIMITER_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                return match
+        return None
 
     def _normalize_line(self, line: str) -> Optional[str]:
         """Normalize or drop a single line of CLI output."""
@@ -419,12 +445,12 @@ class OutputParser:
         used_delimiter = False
         delimited_response: Optional[str] = None
         if raw:
-            match = self.RESPONSE_DELIMITER_PATTERN.search(raw)
+            match = self._find_response_delimiter(raw)
             if match:
                 used_delimiter = True
                 delimited_response = self._normalize_delimited_content(match.group(1))
         if not used_delimiter and cleaned:
-            match = self.RESPONSE_DELIMITER_PATTERN.search(cleaned)
+            match = self._find_response_delimiter(cleaned)
             if match:
                 used_delimiter = True
                 delimited_response = self._normalize_delimited_content(match.group(1))
@@ -657,7 +683,10 @@ class OutputParser:
         def _replace(match: re.Match) -> str:
             return self._normalize_delimited_content(match.group(1))
 
-        return self.RESPONSE_DELIMITER_PATTERN.sub(_replace, text)
+        updated = text
+        for pattern in self.RESPONSE_DELIMITER_PATTERNS:
+            updated = pattern.sub(_replace, updated)
+        return updated
 
     @staticmethod
     def _normalize_delimited_content(content: str) -> str:

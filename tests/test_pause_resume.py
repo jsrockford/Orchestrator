@@ -305,9 +305,9 @@ def test_complete_manual_pause_records_turn(monkeypatch, patched_manager):
 
     response_snapshot = [
         "header",
-        "<<<RESPONSE_START>>>",
+        "**[[RESPONSE_START]]**",
         "Manual response",
-        "<<<RESPONSE_END>>>",
+        "**[[RESPONSE_END]]**",
     ]
 
     monkeypatch.setattr(
