@@ -1260,7 +1260,7 @@ function App() {
         onClose={() => setIsSettingsModalOpen(false)}
         projectDirectory={projectDirectory}
         discussionSettings={discussionSettings}
-        availableModels={allConversations.map(c => c.title)}
+        availableModels={allConversations.filter(c => c.title !== 'Human').map(c => c.title)}
         onSave={handleSaveSettings}
         apiBaseUrl={API_BASE_URL}
       />
