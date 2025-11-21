@@ -77,6 +77,11 @@ class ExtendDiscussionRequest(BaseModel):
     extend_by: int = Field(..., ge=1, description="Number of additional turns to allow")
 
 
+class HumanSubmitRequest(BaseModel):
+    """Payload for human participant submitting their turn response."""
+    response: str = Field(..., description="Human's response text")
+
+
 class ModelSettingsUpdate(BaseModel):
     """Request body for updating per-model overrides."""
     project_directory: str
@@ -416,7 +421,11 @@ def normalize_key_name(key_name: str) -> str:
 
 
 def normalize_model_names(models: Sequence[str]) -> List[str]:
-    """Normalize and validate requested model identifiers."""
+    """
+    Normalize and validate requested model identifiers.
+
+    Phase 3: HitL - Allows 'human' as a special participant type alongside AI models.
+    """
     if not models:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -434,10 +443,17 @@ def normalize_model_names(models: Sequence[str]) -> List[str]:
         if not candidate:
             continue
 
+        # Phase 3: HitL - Allow 'human' as a valid participant
+        if candidate == "human":
+            if candidate not in seen:
+                normalized.append(candidate)
+                seen.add(candidate)
+            continue
+
         if candidate not in CONTROLLER_FACTORIES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unknown model '{raw}'. Supported models: {', '.join(sorted(CONTROLLER_FACTORIES))}",
+                detail=f"Unknown model '{raw}'. Supported models: {', '.join(sorted(CONTROLLER_FACTORIES))}, human",
             )
 
         if candidate not in seen:
@@ -894,6 +910,18 @@ def register_control_routes(app: FastAPI) -> None:
         failed: List[Dict[str, str]] = []
 
         for model_name in requested:
+            # Phase 3: HitL - Special handling for human participant
+            if model_name == "human":
+                # Human doesn't need a controller; register with None
+                orchestrator.register_controller(
+                    "human",
+                    None,  # type: ignore
+                    metadata={"type": "human", "has_controller": False},
+                )
+                started.append("human")
+                logger.info("Registered human participant (no controller)")
+                continue
+
             existing = orchestrator.controllers.get(model_name)
             if existing and controller_session_active(existing):
                 already_running.append(model_name)
@@ -1246,6 +1274,174 @@ def register_discussion_routes(app: FastAPI) -> None:
         orchestrator.should_stop_discussion = False
         logger.info("Discussion stopped successfully")
         return {"status": "stopped", "already_stopped": False}
+
+    @app.post("/api/discussion/human/submit", tags=["discussion", "human"])
+    async def submit_human_turn(
+        request: HumanSubmitRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        """
+        Submit a human participant's turn response.
+
+        Phase 3: HitL - Records the human's response as a turn in the conversation history,
+        clears the waiting_on_human flag, and allows the discussion to continue.
+        """
+        import time
+        conv_mgr = orchestrator.discussion_manager
+        if conv_mgr is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active discussion",
+            )
+
+        if not conv_mgr._waiting_on_human:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Not currently waiting for human input",
+            )
+
+        # Validate empty submission if configured
+        human_cfg = get_config().get_section("human") or {}
+        allow_empty = human_cfg.get("allow_empty_submissions", False)
+        if not allow_empty and not request.response.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Empty responses are not allowed",
+            )
+
+        speaker = conv_mgr._pending_turn_participant
+        if not speaker:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Human turn state is inconsistent (no pending participant)",
+            )
+
+        # Create turn record for human response
+        turn_record = {
+            "turn": conv_mgr._turn_counter,
+            "speaker": speaker,
+            "topic": conv_mgr.discussion_config.get("discussion_topic") if conv_mgr.discussion_config else "",
+            "prompt": "",  # Humans don't get prompts
+            "response": request.response.strip(),
+            "metadata": {
+                "human_turn": True,
+                "submitted_at": time.time(),
+            },
+        }
+
+        # Get response marker from config
+        response_marker = human_cfg.get("response_marker", "👤")
+        turn_record["response_marker"] = response_marker
+
+        # Add to conversation history
+        conv_mgr.history.append(turn_record)
+        conv_mgr._turn_counter += 1
+
+        # Store turn and record activity
+        conv_mgr._store_turn(turn_record)
+        conv_mgr._record_turn_activity(speaker, turn_record)
+
+        # Clear waiting state
+        conv_mgr._waiting_on_human = False
+        conv_mgr._pending_turn_participant = None
+        conv_mgr._human_turn_started_at = None
+
+        logger.info("Human turn submitted for '%s' (turn %d)", speaker, turn_record["turn"])
+
+        return {
+            "status": "submitted",
+            "turn": turn_record["turn"],
+            "speaker": speaker,
+            "response_length": len(request.response.strip()),
+        }
+
+    @app.post("/api/discussion/human/skip", tags=["discussion", "human"])
+    async def skip_human_turn(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        """
+        Skip the current human turn without submitting a response.
+
+        Phase 3: HitL - Records a skipped turn in history and advances to the next speaker.
+        """
+        import time
+        conv_mgr = orchestrator.discussion_manager
+        if conv_mgr is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active discussion",
+            )
+
+        if not conv_mgr._waiting_on_human:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Not currently waiting for human input",
+            )
+
+        speaker = conv_mgr._pending_turn_participant
+        if not speaker:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Human turn state is inconsistent (no pending participant)",
+            )
+
+        # Create turn record for skipped human turn
+        turn_record = {
+            "turn": conv_mgr._turn_counter,
+            "speaker": speaker,
+            "topic": conv_mgr.discussion_config.get("discussion_topic") if conv_mgr.discussion_config else "",
+            "prompt": "",
+            "response": "[Human turn skipped]",
+            "metadata": {
+                "human_turn": True,
+                "skipped": True,
+                "skipped_at": time.time(),
+            },
+        }
+
+        # Add to conversation history
+        conv_mgr.history.append(turn_record)
+        conv_mgr._turn_counter += 1
+
+        # Store turn
+        conv_mgr._store_turn(turn_record)
+        conv_mgr._record_turn_activity(speaker, turn_record)
+
+        # Clear waiting state
+        conv_mgr._waiting_on_human = False
+        conv_mgr._pending_turn_participant = None
+        conv_mgr._human_turn_started_at = None
+
+        logger.info("Human turn skipped for '%s' (turn %d)", speaker, turn_record["turn"])
+
+        return {
+            "status": "skipped",
+            "turn": turn_record["turn"],
+            "speaker": speaker,
+        }
+
+    @app.post("/api/discussion/human/bypass/toggle", tags=["discussion", "human"])
+    async def toggle_bypass_human(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:
+        """
+        Toggle the bypass_human flag to skip human turns in the rotation.
+
+        Phase 3: HitL - When enabled, human turns are skipped in favor of the next AI participant.
+        """
+        conv_mgr = orchestrator.discussion_manager
+        if conv_mgr is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active discussion",
+            )
+
+        # Toggle the flag
+        conv_mgr._bypass_human = not conv_mgr._bypass_human
+        new_state = conv_mgr._bypass_human
+
+        logger.info("Bypass human flag toggled to: %s", new_state)
+
+        return {
+            "status": "toggled",
+            "bypass_human": new_state,
+        }
 
     @app.get("/api/discussion/status", tags=["discussion"])
     async def discussion_status(orchestrator=Depends(get_orchestrator)) -> Dict[str, Any]:

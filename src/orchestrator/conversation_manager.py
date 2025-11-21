@@ -838,7 +838,17 @@ class ConversationManager:
         return updated_prompt, True
 
     def get_status_snapshot(self) -> Dict[str, Any]:
-        """Return a lightweight snapshot describing the current discussion."""
+        """
+        Return a lightweight snapshot describing the current discussion.
+
+        Phase 3: HitL - Includes human turn state for UI rendering.
+        """
+        # Check if human is in participants
+        human_enabled = any(
+            self.participant_metadata.get(p, {}).get("type") == "human"
+            for p in self.participants
+        )
+
         return {
             "turn_counter": self._turn_counter,
             "current_agent": self._current_agent,
@@ -849,6 +859,11 @@ class ConversationManager:
             "awaiting_turn_extension": self._awaiting_turn_extension,
             "last_activity_at": self._last_activity_at,
             "run_started_at": self._run_started_at,
+            # Phase 3: HitL - Human turn state
+            "waiting_on_human": self._waiting_on_human,
+            "bypass_human": self._bypass_human,
+            "pending_turn_participant": self._pending_turn_participant,
+            "human_enabled": human_enabled,
         }
 
     def determine_next_speaker(self, context: Sequence[Dict[str, Any]]) -> Optional[str]:
