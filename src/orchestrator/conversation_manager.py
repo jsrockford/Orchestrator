@@ -424,11 +424,10 @@ class ConversationManager:
                                     elapsed,
                                     speaker,
                                 )
-                                # TODO Phase 3: Emit WebSocket event 'human_turn_timeout'
-                                # TODO Phase 2.4: Call human_skip() method here
-                                self._waiting_on_human = False
-                                self._pending_turn_participant = None
-                                # For now, just break out - skip will be implemented in Phase 2.4
+                                # TODO Phase 4: Emit WebSocket event 'human_turn_timeout'
+
+                                # Record timeout as a skipped turn
+                                self._record_human_skip(speaker, timeout=True, elapsed_time=elapsed)
                                 break
 
                         # Poll for control commands and refresh status
@@ -1963,6 +1962,71 @@ class ConversationManager:
         from ..utils.config_loader import get_config
         human_cfg = get_config().get_section("human") or {}
         return int(human_cfg.get("turn_timeout", 300))
+
+    def _record_human_skip(
+        self,
+        speaker: str,
+        *,
+        timeout: bool = False,
+        elapsed_time: Optional[float] = None,
+    ) -> None:
+        """
+        Record a human turn skip in conversation history.
+
+        Phase 3: HitL - Creates a turn record for skipped human turns,
+        either manual skip or timeout auto-skip.
+
+        Args:
+            speaker: Name of the human participant
+            timeout: True if this is a timeout auto-skip, False for manual skip
+            elapsed_time: Time elapsed before timeout (for logging)
+        """
+        from ..utils.config_loader import get_config
+
+        # Build turn record
+        turn_record = {
+            "turn": self._turn_counter,
+            "speaker": speaker,
+            "topic": self.discussion_config.get("discussion_topic") if self.discussion_config else "",
+            "prompt": "",
+            "response": "[Human turn skipped - timeout]" if timeout else "[Human turn skipped]",
+            "metadata": {
+                "human_turn": True,
+                "skipped": True,
+                "skipped_at": time.time(),
+            },
+        }
+
+        if timeout:
+            turn_record["metadata"]["timeout"] = True
+            if elapsed_time is not None:
+                turn_record["metadata"]["elapsed_seconds"] = elapsed_time
+
+        # Get response marker from config
+        human_cfg = get_config().get_section("human") or {}
+        response_marker = human_cfg.get("response_marker", "👤")
+        turn_record["response_marker"] = response_marker
+
+        # Add to conversation history
+        self.history.append(turn_record)
+        self._turn_counter += 1
+
+        # Store turn and record activity
+        self._store_turn(turn_record)
+        self._record_turn_activity(speaker, turn_record)
+
+        # Clear waiting state
+        self._waiting_on_human = False
+        self._pending_turn_participant = None
+        self._human_turn_started_at = None
+
+        self.logger.info(
+            "Human turn %s for '%s' (turn %d)%s",
+            "timed out" if timeout else "skipped",
+            speaker,
+            turn_record["turn"],
+            f" after {elapsed_time:.1f}s" if elapsed_time else "",
+        )
 
     def _check_control_commands(self) -> None:
         self._drain_control_commands(during_wait=False)

@@ -1362,7 +1362,6 @@ def register_discussion_routes(app: FastAPI) -> None:
 
         Phase 3: HitL - Records a skipped turn in history and advances to the next speaker.
         """
-        import time
         conv_mgr = orchestrator.discussion_manager
         if conv_mgr is None:
             raise HTTPException(
@@ -1383,38 +1382,13 @@ def register_discussion_routes(app: FastAPI) -> None:
                 detail="Human turn state is inconsistent (no pending participant)",
             )
 
-        # Create turn record for skipped human turn
-        turn_record = {
-            "turn": conv_mgr._turn_counter,
-            "speaker": speaker,
-            "topic": conv_mgr.discussion_config.get("discussion_topic") if conv_mgr.discussion_config else "",
-            "prompt": "",
-            "response": "[Human turn skipped]",
-            "metadata": {
-                "human_turn": True,
-                "skipped": True,
-                "skipped_at": time.time(),
-            },
-        }
-
-        # Add to conversation history
-        conv_mgr.history.append(turn_record)
-        conv_mgr._turn_counter += 1
-
-        # Store turn
-        conv_mgr._store_turn(turn_record)
-        conv_mgr._record_turn_activity(speaker, turn_record)
-
-        # Clear waiting state
-        conv_mgr._waiting_on_human = False
-        conv_mgr._pending_turn_participant = None
-        conv_mgr._human_turn_started_at = None
-
-        logger.info("Human turn skipped for '%s' (turn %d)", speaker, turn_record["turn"])
+        # Record the turn before getting turn number (counter increments inside)
+        turn_before = conv_mgr._turn_counter
+        conv_mgr._record_human_skip(speaker, timeout=False)
 
         return {
             "status": "skipped",
-            "turn": turn_record["turn"],
+            "turn": turn_before,
             "speaker": speaker,
         }
 
