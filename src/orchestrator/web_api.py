@@ -26,6 +26,84 @@ if TYPE_CHECKING:
 logger = get_logger("orchestrator.web_api")
 
 
+# Phase 4: HitL - WebSocket connection manager for broadcasting events
+class DiscussionEventManager:
+    """
+    Manages WebSocket connections for discussion events.
+
+    Allows broadcasting human turn events and other discussion state changes
+    to all connected clients in real-time.
+    """
+
+    def __init__(self) -> None:
+        self.active_connections: List[WebSocket] = []
+        self.logger = get_logger("orchestrator.web_api.events")
+
+    async def connect(self, websocket: WebSocket) -> None:
+        """Accept and register a new WebSocket connection."""
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        self.logger.debug("WebSocket connected for discussion events (total: %d)", len(self.active_connections))
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        """Remove a WebSocket connection from active list."""
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+            self.logger.debug("WebSocket disconnected from discussion events (total: %d)", len(self.active_connections))
+
+    async def broadcast(self, event: Dict[str, Any]) -> None:
+        """
+        Send an event to all connected clients.
+
+        Args:
+            event: Event payload dictionary (must include 'type' field)
+        """
+        if not self.active_connections:
+            return
+
+        self.logger.debug("Broadcasting event type='%s' to %d clients", event.get("type"), len(self.active_connections))
+
+        disconnected = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(event)
+            except (WebSocketDisconnect, RuntimeError) as exc:
+                self.logger.debug("Failed to send to connection: %s", exc)
+                disconnected.append(connection)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Unexpected error broadcasting to connection: %s", exc)
+                disconnected.append(connection)
+
+        # Clean up disconnected clients
+        for conn in disconnected:
+            self.disconnect(conn)
+
+
+# Global event manager instance
+discussion_event_manager = DiscussionEventManager()
+
+
+def broadcast_event_sync(event: Dict[str, Any]) -> None:
+    """
+    Broadcast an event from synchronous code (conversation manager).
+
+    This creates a new event loop in a thread-safe way to send the event.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If we're in an async context, schedule as a task
+            asyncio.create_task(discussion_event_manager.broadcast(event))
+        else:
+            # If no loop is running, run it synchronously
+            loop.run_until_complete(discussion_event_manager.broadcast(event))
+    except RuntimeError:
+        # No event loop, create a temporary one
+        asyncio.run(discussion_event_manager.broadcast(event))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Failed to broadcast event from sync context: %s", exc)
+
+
 # Pydantic models for request/response bodies
 class InstructionFile(BaseModel):
     """Request body for saving instruction files."""
@@ -1348,6 +1426,15 @@ def register_discussion_routes(app: FastAPI) -> None:
 
         logger.info("Human turn submitted for '%s' (turn %d)", speaker, turn_record["turn"])
 
+        # Phase 4: HitL - Emit human_turn_completed event
+        await discussion_event_manager.broadcast({
+            "type": "human_turn_completed",
+            "speaker": speaker,
+            "turn": turn_record["turn"],
+            "response_length": len(request.response.strip()),
+            "timestamp": time.time(),
+        })
+
         return {
             "status": "submitted",
             "turn": turn_record["turn"],
@@ -1386,6 +1473,14 @@ def register_discussion_routes(app: FastAPI) -> None:
         turn_before = conv_mgr._turn_counter
         conv_mgr._record_human_skip(speaker, timeout=False)
 
+        # Phase 4: HitL - Emit human_turn_skipped event
+        await discussion_event_manager.broadcast({
+            "type": "human_turn_skipped",
+            "speaker": speaker,
+            "turn": turn_before,
+            "timestamp": time.time(),
+        })
+
         return {
             "status": "skipped",
             "turn": turn_before,
@@ -1411,6 +1506,13 @@ def register_discussion_routes(app: FastAPI) -> None:
         new_state = conv_mgr._bypass_human
 
         logger.info("Bypass human flag toggled to: %s", new_state)
+
+        # Phase 4: HitL - Emit bypass_human_toggled event
+        await discussion_event_manager.broadcast({
+            "type": "bypass_human_toggled",
+            "bypass_human": new_state,
+            "timestamp": time.time(),
+        })
 
         return {
             "status": "toggled",
@@ -1845,6 +1947,26 @@ def register_stream_routes(app: FastAPI) -> None:
     async def stream_session_output(websocket: WebSocket, model_name: str) -> None:
         orchestrator = getattr(websocket.app.state, "orchestrator", None)
         await stream_controller_output(websocket, orchestrator, model_name)
+
+    @app.websocket("/ws/discussion/events")
+    async def discussion_events_stream(websocket: WebSocket) -> None:
+        """
+        Phase 4: HitL - WebSocket endpoint for real-time discussion events.
+
+        Clients connect to receive events about human turns, bypass toggles,
+        and other discussion state changes.
+        """
+        await discussion_event_manager.connect(websocket)
+        try:
+            # Keep connection alive and wait for disconnect
+            while True:
+                # Receive messages from client (ping/pong or other client events)
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            discussion_event_manager.disconnect(websocket)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Discussion events WebSocket error: %s", exc)
+            discussion_event_manager.disconnect(websocket)
 
     @app.post("/api/fs/prepare-project", tags=["filesystem"])
     async def prepare_project(directory_path: DirectoryPath) -> Dict[str, Any]:

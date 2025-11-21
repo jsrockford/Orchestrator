@@ -22,6 +22,22 @@ from ..utils.config_loader import get_config
 from .control_channel import ControlChannel, ControlCommand
 
 
+# Phase 4: HitL - Import broadcast function for WebSocket events
+def _get_broadcast_function() -> Any:
+    """
+    Lazy import of broadcast_event_sync to avoid circular import.
+
+    The web_api module imports conversation_manager (via orchestrator),
+    so we can't import web_api at module level.
+    """
+    try:
+        from .web_api import broadcast_event_sync
+        return broadcast_event_sync
+    except ImportError:
+        # web_api may not be available in some contexts (tests, CLI-only usage)
+        return None
+
+
 _TOOL_LINE_PATTERN = re.compile(
     r"^[\t ]*[\u2713\u2717][\t ]+(?P<tool>[A-Za-z0-9_]+)\s+(?P<args>.+)$",
     re.MULTILINE,
@@ -406,7 +422,17 @@ class ConversationManager:
                         speaker,
                         timeout_seconds if timeout_seconds > 0 else "disabled",
                     )
-                    # TODO Phase 3: Emit WebSocket event 'human_turn_started'
+
+                    # Phase 4: HitL - Emit human_turn_started event
+                    broadcast_fn = _get_broadcast_function()
+                    if broadcast_fn:
+                        broadcast_fn({
+                            "type": "human_turn_started",
+                            "speaker": speaker,
+                            "turn": self._turn_counter,
+                            "timeout_seconds": timeout_seconds if timeout_seconds > 0 else None,
+                            "timestamp": self._human_turn_started_at,
+                        })
 
                     # Wait loop: pause discussion until human submits, skips, or times out
                     while self._waiting_on_human:
@@ -424,7 +450,17 @@ class ConversationManager:
                                     elapsed,
                                     speaker,
                                 )
-                                # TODO Phase 4: Emit WebSocket event 'human_turn_timeout'
+
+                                # Phase 4: HitL - Emit human_turn_timeout event
+                                broadcast_fn = _get_broadcast_function()
+                                if broadcast_fn:
+                                    broadcast_fn({
+                                        "type": "human_turn_timeout",
+                                        "speaker": speaker,
+                                        "turn": self._turn_counter,
+                                        "elapsed_seconds": elapsed,
+                                        "timestamp": time.time(),
+                                    })
 
                                 # Record timeout as a skipped turn
                                 self._record_human_skip(speaker, timeout=True, elapsed_time=elapsed)
