@@ -2,19 +2,27 @@
 
 This task list tracks the implementation of Human participant support in the Orchestrator system.
 
-## Phase 1: Configuration & Data Models
+## Phase 1: Configuration & Data Models ✅ COMPLETE
 
-- [ ] **1.1** Add `human` block to `config.yaml`
-  - [ ] Add `turn_timeout: 300` (5 minutes)
-  - [ ] Add `allow_empty_submissions: false`
-  - [ ] Add `response_marker: "👤"`
+- [x] **1.1** Add `human` block to `config.yaml`
+  - [x] Add `turn_timeout: 300` (5 minutes)
+  - [x] Add `allow_empty_submissions: false`
+  - [x] Add `response_marker: "👤"`
 
-- [ ] **1.2** Update conversation state data structures
-  - [ ] Add `human` participant type to conversation manager
-  - [ ] Add `waiting_on_human` boolean flag
-  - [ ] Add `bypass_human` boolean toggle
-  - [ ] Add `pending_turn_participant` to track whose turn it is
-  - [ ] Ensure human participant has no controller object (None/null)
+- [x] **1.2** Update conversation state data structures
+  - [x] Add `human` participant type to conversation manager
+  - [x] Add `waiting_on_human` boolean flag (_waiting_on_human)
+  - [x] Add `bypass_human` boolean toggle (_bypass_human)
+  - [x] Add `pending_turn_participant` to track whose turn it is (_pending_turn_participant)
+  - [x] Add `human_turn_started_at` for timeout tracking (_human_turn_started_at)
+  - [x] Ensure human participant has no controller object (metadata: has_controller=False)
+  - [x] Participant metadata detection logic (case-insensitive "human" → type="human")
+
+**Implementation Notes:**
+- Committed in de119c8
+- Config validated and loads correctly
+- ConversationManager tested with human-only and mixed participants
+- All Phase 1 tests passing
 
 ## Phase 2: Backend - Conversation Logic
 
