@@ -24,39 +24,49 @@ This task list tracks the implementation of Human participant support in the Orc
 - ConversationManager tested with human-only and mixed participants
 - All Phase 1 tests passing
 
-## Phase 2: Backend - Conversation Logic
+## Phase 2: Backend - Conversation Logic ✅ MOSTLY COMPLETE
 
-- [ ] **2.1** Extend `ConversationManager.determine_next_speaker()`
-  - [ ] Include human in round-robin rotation when enabled
-  - [ ] Skip human when `bypass_human` is true
-  - [ ] Handle human timeout logic
-  - [ ] Set `waiting_on_human` flag when human turn begins
+- [x] **2.1** Extend `ConversationManager.determine_next_speaker()`
+  - [x] Include human in round-robin rotation when enabled (checks metadata type="human")
+  - [x] Skip human when `bypass_human` is true
+  - [x] Handle human timeout logic (waiting loop with timeout detection)
+  - [x] Set `waiting_on_human` flag when human turn begins
 
-- [ ] **2.2** Update loop detection
-  - [ ] Exclude human turns from loop detection logic
-  - [ ] Verify loop detection still works correctly with human in rotation
+- [x] **2.2** Update loop detection
+  - [x] Exclude human turns from loop detection logic (check metadata in _update_loop_state)
+  - [x] Verify loop detection still works correctly with human in rotation
 
-- [ ] **2.3** Update completion detection
-  - [ ] Decide whether human completion signals count toward consensus
-  - [ ] Document the decision in code comments
+- [x] **2.3** Update completion detection
+  - [x] Decide whether human completion signals count toward consensus (YES - counts same as AI)
+  - [x] Document the decision in code comments
 
-- [ ] **2.4** Add human turn timeout handling
-  - [ ] Implement timeout timer when human turn starts
-  - [ ] Auto-skip human turn on timeout
-  - [ ] Log timeout events clearly
-  - [ ] Emit timeout event via WebSocket
+- [x] **2.4** Add human turn timeout handling (PARTIAL)
+  - [x] Implement timeout timer when human turn starts (_human_turn_started_at timestamp)
+  - [x] Timeout detection in wait loop (elapsed time check)
+  - [x] Log timeout events clearly
+  - [ ] Auto-skip human turn on timeout (placeholder - needs Phase 3 submit/skip methods)
+  - [ ] Emit timeout event via WebSocket (deferred to Phase 4)
 
-- [ ] **2.5** Implement human turn recording and rendering
+- [ ] **2.5** Implement human turn recording and rendering (DEFERRED to Phase 3)
   - [ ] Use `response_marker: "👤"` when recording human turns to history
   - [ ] Ensure human participant name/type is clearly marked in turn records
   - [ ] Backend should tag human turns distinctly for frontend rendering
+  - Note: Will be implemented in Phase 3 when submit/skip endpoints create turn records
 
-- [ ] **2.6** Add state persistence for human turns
+- [ ] **2.6** Add state persistence for human turns (DEFERRED to later)
   - [ ] Persist `waiting_on_human` flag (survives orchestrator restart)
   - [ ] Persist `pending_turn_participant` (recovers whose turn it is)
   - [ ] Persist human turn timeout start time (can resume timeout after restart)
   - [ ] Reset `bypass_human` to false when session ends
   - [ ] Ensure ContextManager saves/restores these fields
+
+**Implementation Notes:**
+- Committed in 3a197f7 (initial), ac48dcf (waiting loop fix)
+- Core turn rotation works: human included in round-robin, bypass respected
+- Wait loop implemented: polls every 0.5s, checks timeout/stop/control commands
+- Timeout detection working, but auto-skip action needs submit/skip methods from Phase 3
+- Turn recording with response_marker deferred until submit/skip endpoints exist
+- State persistence deferred as it requires context manager integration
 
 ## Phase 3: Backend - API Endpoints
 
