@@ -436,8 +436,11 @@ function App() {
             const data = JSON.parse(event.data);
             console.log('Discussion event received:', data);
 
+            // Phase 7: HitL - Backend sends "type" field, not "event"
+            const eventType = data.type || data.event;
+
             // Handle different event types
-            switch (data.event) {
+            switch (eventType) {
               case 'human_turn_started':
                 setWaitingOnHuman(true);
                 setPendingTurnParticipant(data.speaker ?? null);
@@ -459,6 +462,10 @@ function App() {
 
               case 'bypass_human_toggled':
                 setBypassHuman(Boolean(data.bypass_human));
+                break;
+
+              case 'ping':
+                // Keepalive ping from server, ignore
                 break;
             }
           } catch (error) {
