@@ -1958,10 +1958,19 @@ def register_stream_routes(app: FastAPI) -> None:
         """
         await discussion_event_manager.connect(websocket)
         try:
-            # Keep connection alive and wait for disconnect
+            # Keep connection alive with periodic pings
+            # Avoids hanging on receive_text() if client doesn't send pings
             while True:
-                # Receive messages from client (ping/pong or other client events)
-                await websocket.receive_text()
+                try:
+                    # Wait for client message with timeout
+                    await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    # No message received, send ping to keep connection alive
+                    try:
+                        await websocket.send_json({"type": "ping", "timestamp": time.time()})
+                    except Exception:  # noqa: BLE001
+                        # Connection closed, break out
+                        break
         except WebSocketDisconnect:
             discussion_event_manager.disconnect(websocket)
         except Exception as exc:  # noqa: BLE001
