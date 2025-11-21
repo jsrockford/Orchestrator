@@ -42,9 +42,11 @@ function App() {
     { id: 2, title: 'Codex', messages: [] },
     { id: 3, title: 'Gemini', messages: [] },
     { id: 4, title: 'Qwen', messages: [] },
+    { id: 5, title: 'Human', messages: [] }, // Phase 6: HitL - Add Human to conversations
   ]);
 
-  const [activeModels, setActiveModels] = useState<string[]>(['Claude', 'Codex', 'Gemini', 'Qwen']);
+  // Phase 6: HitL - Default to NO models selected (user must explicitly choose)
+  const [activeModels, setActiveModels] = useState<string[]>([]);
   const [selectedCoders, setSelectedCoders] = useState<number[]>([1, 2, 3, 4]);
   const [projectState, setProjectState] = useState<'idle' | 'running' | 'paused'>('idle');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -556,6 +558,15 @@ function App() {
       startingModel = activeModels[0];
     }
 
+    // Phase 6: HitL - Ensure starting model is not Human (humans can't start discussions)
+    if (startingModel === 'Human') {
+      const aiModels = activeModels.filter(m => m !== 'Human');
+      if (aiModels.length === 0) {
+        throw new Error('Cannot start discussion with only Human participant');
+      }
+      startingModel = aiModels[0];
+    }
+
     const topicText = (settings.discussionTopic ?? '').trim();
     const payload = {
       max_turns: settings.maxTurns,
@@ -836,7 +847,8 @@ function App() {
     setIsModelSettingsModalOpen(true);
   };
 
-  const activeConversations = allConversations.filter(c => activeModels.includes(c.title));
+  // Phase 6: HitL - Filter out Human from conversation windows (no tmux session to display)
+  const activeConversations = allConversations.filter(c => activeModels.includes(c.title) && c.title !== 'Human');
 
   // Determine grid columns based on the number of conversations
   const gridColsClass = activeConversations.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
@@ -945,13 +957,26 @@ function App() {
               />
             </div>
             {projectState === 'idle' ? (
-              <button
-                onClick={handleStartProject}
-                disabled={activeModels.length === 0 || projectActionPending}
-                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {projectActionPending ? 'Opening...' : 'Start Models'}
-              </button>
+              <div className="relative group">
+                <button
+                  onClick={handleStartProject}
+                  disabled={
+                    activeModels.length === 0 ||
+                    projectActionPending ||
+                    (activeModels.length === 1 && activeModels[0] === 'Human') // Phase 6: HitL - Disable if only Human selected
+                  }
+                  className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {projectActionPending ? 'Opening...' : 'Start Models'}
+                </button>
+                {/* Phase 6: HitL - Show tooltip when only Human is selected */}
+                {activeModels.length === 1 && activeModels[0] === 'Human' && (
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-lg shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    Select at least one AI model alongside Human
+                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
+                  </div>
+                )}
+              </div>
             ) : (
               <button
                 onClick={handleStopProject}
