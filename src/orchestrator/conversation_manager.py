@@ -391,6 +391,26 @@ class ConversationManager:
                 is_queued = False
                 turn_cancelled = False
 
+                # Phase 2: HitL - Check if speaker is human
+                speaker_meta = self.participant_metadata.get(speaker, {})
+                is_human_speaker = speaker_meta.get("type") == "human"
+
+                if is_human_speaker:
+                    # Human turn: set waiting state and skip AI dispatch logic
+                    self._waiting_on_human = True
+                    self._pending_turn_participant = speaker
+                    self._human_turn_started_at = time.time()
+                    self.logger.info(
+                        "Human turn started for '%s'. Waiting for human input (timeout: %s seconds)",
+                        speaker,
+                        self._get_human_timeout(),
+                    )
+                    # TODO Phase 3: Emit WebSocket event 'human_turn_started'
+                    # For now, we'll just wait and let the API endpoints handle the submission
+                    # The turn will remain pending until human_submit() or human_skip() is called
+                    # This is a placeholder - actual waiting logic will be in Phase 3
+                    break
+
                 while True:
                     self._check_control_commands()
                     if self.human_control_mode:
@@ -808,10 +828,27 @@ class ConversationManager:
         Context should be the running conversation log for the current session.
         If automation removed a controller mid-discussion, the manager skips it
         until it re-registers with the orchestrator.
+
+        Phase 2: HitL - Human participants are included in rotation. If bypass_human
+        is True, human turns are skipped in favor of the next AI participant.
         """
-        active_participants = [
-            name for name in self.participants if name in getattr(self.orchestrator, "controllers", {})
-        ]
+        # Phase 2: HitL - Include all participants (both AI and human)
+        # Human participants may have controller=None, so check metadata instead
+        active_participants = []
+        for name in self.participants:
+            meta = self.participant_metadata.get(name, {})
+            is_human = meta.get("type") == "human"
+
+            if is_human:
+                # Human participants are always "active" (no controller check needed)
+                # Skip if bypass_human is enabled
+                if not self._bypass_human:
+                    active_participants.append(name)
+            else:
+                # AI participants must have a registered controller
+                if name in getattr(self.orchestrator, "controllers", {}):
+                    active_participants.append(name)
+
         if not active_participants:
             return None
 
@@ -981,6 +1018,11 @@ class ConversationManager:
         if not isinstance(speaker, str):
             return None
 
+        # Phase 2: HitL - Exclude human turns from loop detection
+        speaker_meta = self.participant_metadata.get(speaker, {})
+        if speaker_meta.get("type") == "human":
+            return None
+
         current_turn = latest.get("turn")
         transcript = latest.get("response_transcript") or latest.get("response") or ""
         invocations = self._extract_tool_invocations(transcript)
@@ -1117,6 +1159,12 @@ class ConversationManager:
         state["escalated"] = False
 
     def _update_completion_state(self, conversation: Sequence[Dict[str, Any]]) -> bool:
+        """
+        Update completion detection state based on the latest turn.
+
+        Phase 2: HitL - Human completion signals count toward consensus just like AI signals.
+        No special handling needed - the generic logic works for both human and AI participants.
+        """
         if not self._completion_enabled or self._completion_mode == "disabled":
             return False
 
@@ -1860,6 +1908,16 @@ class ConversationManager:
             self._status_error = message.strip()
         else:
             self._status_error = None
+
+    def _get_human_timeout(self) -> int:
+        """
+        Get the configured timeout for human turns (in seconds).
+
+        Phase 2: HitL - Returns the turn_timeout from human config, or 0 if disabled.
+        """
+        from ..utils.config_loader import get_config
+        human_cfg = get_config().get_section("human") or {}
+        return int(human_cfg.get("turn_timeout", 300))
 
     def _check_control_commands(self) -> None:
         self._drain_control_commands(during_wait=False)
