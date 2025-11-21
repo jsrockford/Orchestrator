@@ -131,17 +131,30 @@ This task list tracks the implementation of Human participant support in the Orc
 - Broadcast errors are logged but don't interrupt discussion flow
 - WebSocket disconnections handled gracefully with automatic cleanup
 
-## Phase 5: Backend - Control Channel
+## Phase 5: Backend - Control Channel ✅ COMPLETE
 
-- [ ] **5.1** Add control channel commands
-  - [ ] `human_submit <text>` - Submit human turn via control channel
-  - [ ] `human_skip` - Skip human turn via control channel
-  - [ ] Document commands in `docs/Human_Control_Guide.md`
+- [x] **5.1** Add control channel commands
+  - [x] `HUMAN_SUBMIT <text>` - Submit human turn via control channel
+  - [x] `HUMAN_SKIP` - Skip human turn via control channel
+  - [ ] Document commands in `docs/Human_Control_Guide.md` (deferred to Phase 9)
 
-- [ ] **5.2** Control channel integration
-  - [ ] Reuse same backend logic as API endpoints
-  - [ ] Log control channel human submissions
-  - [ ] Add to control channel history
+- [x] **5.2** Control channel integration
+  - [x] Reuse same backend logic as API endpoints
+  - [x] Log control channel human submissions
+  - [x] Commands added to control channel command history (via existing infrastructure)
+
+**Implementation Notes:**
+- Committed in 4b5b75a
+- Added HUMAN_SUBMIT and HUMAN_SKIP handlers to _handle_control_command()
+- HUMAN_SUBMIT reconstructs response text from space-separated args
+- Both commands validate state (waiting_on_human, pending_turn_participant)
+- Reuse existing turn recording logic (_record_human_skip helper for skip)
+- Set via_control_channel metadata flag for tracking submission source
+- Emit WebSocket events with via_control_channel flag
+- Status errors set on validation failure, cleared on success
+- All operations logged for audit trail
+- Usage: `echo "HUMAN_SUBMIT response text" > /tmp/orchestrator_control`
+- Documentation of commands deferred to Phase 9 (will be added to docs/)
 
 ## Phase 6: Frontend - Model Selection UI
 
