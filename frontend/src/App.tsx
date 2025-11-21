@@ -184,6 +184,11 @@ function App() {
   }, [closeSocket]);
 
   const ensureSocket = useCallback((model: string) => {
+    // Phase 6: HitL - Skip Human (no tmux session, no WebSocket)
+    if (model === 'Human') {
+      return;
+    }
+
     if (projectStateRef.current === 'idle') {
       return;
     }
@@ -697,9 +702,11 @@ function App() {
 
     setProjectActionPending(true);
     try {
+      // Phase 6: HitL - Filter out Human when starting sessions (no tmux session to start)
+      const modelsToStart = activeModels.filter(m => m !== 'Human');
       const payload = {
         project_directory: projectDirectory,
-        models: activeModels.map(model => model.trim().toLowerCase()),
+        models: modelsToStart.map(model => model.trim().toLowerCase()),
       };
       const data = await postControl('/api/control/start-sessions', {
         headers: { 'Content-Type': 'application/json' },
@@ -758,8 +765,10 @@ function App() {
         resetDiscussionSnapshot();
       }
 
+      // Phase 6: HitL - Filter out Human when stopping sessions (no tmux session to stop)
+      const modelsToStop = activeModels.filter(m => m !== 'Human');
       const payload = {
-        models: activeModels.map(model => model.trim().toLowerCase()),
+        models: modelsToStop.map(model => model.trim().toLowerCase()),
       };
       await postControl('/api/control/stop-sessions', {
         headers: { 'Content-Type': 'application/json' },
