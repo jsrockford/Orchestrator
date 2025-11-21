@@ -156,19 +156,30 @@ This task list tracks the implementation of Human participant support in the Orc
 - Usage: `echo "HUMAN_SUBMIT response text" > /tmp/orchestrator_control`
 - Documentation of commands deferred to Phase 9 (will be added to docs/)
 
-## Phase 6: Frontend - Model Selection UI
+## Phase 6: Frontend - Model Selection UI ✅ PARTIAL (6.1 complete, 6.2 deferred to Phase 7)
 
-- [ ] **6.1** Update model selection interface
-  - [ ] Add "Human" checkbox to model selector
-  - [ ] Default ALL models to unchecked (not just Human)
-  - [ ] Disable "Start Models" button if only "Human" is selected
-  - [ ] Show helpful tooltip/message when only Human is selected
+- [x] **6.1** Update model selection interface
+  - [x] Add "Human" checkbox to model selector (added to allConversations)
+  - [x] Default ALL models to unchecked (changed activeModels initial state to [])
+  - [x] Disable "Start Models" button if only "Human" is selected
+  - [x] Show helpful tooltip/message when only Human is selected
+  - [x] Prevent Human from being starting_model in discussions
+  - [x] Filter Human from conversation windows display (no tmux session)
 
-- [ ] **6.2** Add bypass toggle to active session UI
+- [ ] **6.2** Add bypass toggle to active session UI (deferred to Phase 7)
   - [ ] Add "Bypass Human" toggle/checkbox
   - [ ] Only show when Human is in participant list
   - [ ] Only enable when discussion is running
   - [ ] Wire to `/api/discussion/human/bypass/toggle` endpoint
+
+**Implementation Notes:**
+- Committed in 031c081
+- Added Human as 5th conversation (id: 5, title: 'Human')
+- Default activeModels changed from all selected to empty array
+- "Start Models" button disabled with tooltip when only Human selected
+- configureDiscussion() ensures starting_model is never Human
+- Human filtered from activeConversations (no window to display)
+- Bypass toggle deferred to Phase 7 where human turn UI is implemented
 
 ## Phase 7: Frontend - Human Turn UI
 
