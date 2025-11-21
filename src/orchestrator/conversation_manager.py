@@ -2166,6 +2166,17 @@ class ConversationManager:
             self._refresh_status_snapshot(force=True)
             return
 
+        # Phase 5: HitL - Control channel commands for human turns
+        if verb == "HUMAN_SUBMIT":
+            self._handle_human_submit_command(command)
+            self._refresh_status_snapshot(force=True)
+            return
+
+        if verb == "HUMAN_SKIP":
+            self._handle_human_skip_command(command)
+            self._refresh_status_snapshot(force=True)
+            return
+
         self._set_status_error(f"Unknown command '{command.raw}'")
         self.logger.warning("Control channel: unknown command '%s'", command.raw)
         self._refresh_status_snapshot(force=True)
@@ -2996,6 +3007,135 @@ class ConversationManager:
         if isinstance(stance, str):
             return stance.lower()
         return None
+
+    # Phase 5: HitL - Control channel handlers for human turns
+    def _handle_human_submit_command(self, command: ControlCommand) -> None:
+        """
+        Handle HUMAN_SUBMIT control channel command.
+
+        Format: HUMAN_SUBMIT <response text>
+
+        Submits the human's response for the current pending turn, reusing
+        the same logic as the API endpoint.
+        """
+        if not self._waiting_on_human:
+            self.logger.warning("Control channel: HUMAN_SUBMIT ignored - not waiting for human input")
+            self._set_status_error("Not currently waiting for human input")
+            return
+
+        # Extract response text from args (everything after HUMAN_SUBMIT)
+        args = list(command.args or [])
+        if not args:
+            response_text = ""
+        else:
+            # Reconstruct full response from args (space-separated tokens)
+            response_text = " ".join(args)
+
+        # Validate empty submission if configured
+        human_cfg = get_config().get_section("human") or {}
+        allow_empty = human_cfg.get("allow_empty_submissions", False)
+        if not allow_empty and not response_text.strip():
+            self.logger.warning("Control channel: HUMAN_SUBMIT rejected - empty responses not allowed")
+            self._set_status_error("Empty responses are not allowed")
+            return
+
+        speaker = self._pending_turn_participant
+        if not speaker:
+            self.logger.error("Control channel: HUMAN_SUBMIT failed - no pending participant")
+            self._set_status_error("Human turn state is inconsistent (no pending participant)")
+            return
+
+        # Create turn record
+        turn_record = {
+            "turn": self._turn_counter,
+            "speaker": speaker,
+            "topic": self.discussion_config.get("discussion_topic") if self.discussion_config else "",
+            "prompt": "",
+            "response": response_text.strip(),
+            "metadata": {
+                "human_turn": True,
+                "submitted_at": time.time(),
+                "via_control_channel": True,
+            },
+        }
+
+        # Get response marker from config
+        response_marker = human_cfg.get("response_marker", "👤")
+        turn_record["response_marker"] = response_marker
+
+        # Add to conversation history
+        self.history.append(turn_record)
+        self._turn_counter += 1
+
+        # Store turn and record activity
+        self._store_turn(turn_record)
+        self._record_turn_activity(speaker, turn_record)
+
+        # Clear waiting state
+        self._waiting_on_human = False
+        self._pending_turn_participant = None
+        self._human_turn_started_at = None
+
+        self.logger.info(
+            "Control channel: HUMAN_SUBMIT processed for '%s' (turn %d, %d chars)",
+            speaker,
+            turn_record["turn"],
+            len(response_text.strip()),
+        )
+        self._set_status_error(None)
+
+        # Emit WebSocket event
+        broadcast_fn = _get_broadcast_function()
+        if broadcast_fn:
+            broadcast_fn({
+                "type": "human_turn_completed",
+                "speaker": speaker,
+                "turn": turn_record["turn"],
+                "response_length": len(response_text.strip()),
+                "timestamp": time.time(),
+                "via_control_channel": True,
+            })
+
+    def _handle_human_skip_command(self, command: ControlCommand) -> None:
+        """
+        Handle HUMAN_SKIP control channel command.
+
+        Format: HUMAN_SKIP
+
+        Skips the current human turn, reusing the same logic as the API endpoint.
+        """
+        if not self._waiting_on_human:
+            self.logger.warning("Control channel: HUMAN_SKIP ignored - not waiting for human input")
+            self._set_status_error("Not currently waiting for human input")
+            return
+
+        speaker = self._pending_turn_participant
+        if not speaker:
+            self.logger.error("Control channel: HUMAN_SKIP failed - no pending participant")
+            self._set_status_error("Human turn state is inconsistent (no pending participant)")
+            return
+
+        # Record the turn before getting turn number (counter increments inside)
+        turn_before = self._turn_counter
+        self._record_human_skip(speaker, timeout=False)
+
+        self.logger.info(
+            "Control channel: HUMAN_SKIP processed for '%s' (turn %d)",
+            speaker,
+            turn_before,
+        )
+        self._set_status_error(None)
+
+        # Emit WebSocket event
+        broadcast_fn = _get_broadcast_function()
+        if broadcast_fn:
+            broadcast_fn({
+                "type": "human_turn_skipped",
+                "speaker": speaker,
+                "turn": turn_before,
+                "timestamp": time.time(),
+                "via_control_channel": True,
+            })
 
 
 __all__ = ["ConversationManager"]
