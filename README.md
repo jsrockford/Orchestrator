@@ -19,6 +19,7 @@ This project provides an orchestration layer that coordinates multiple AI CLI to
 - **Human-in-the-Loop**:
     - **Automation-Aware Pausing**: Automatically pauses automation when a human attaches to a tmux session and resumes on detach.
     - **Named Pipe Control Channel**: A dedicated control channel (`/tmp/orchestrator_control`) allows for pausing, resuming, and injecting commands without attaching to tmux.
+    - **Human as Participant**: Add a human to discussions alongside AI models, with turn-based input, Submit/Skip UI, bypass mode, and timeout handling. See [Human In The Loop Documentation](./docs/HumanInTheLoopDoc_Overview.md).
 - **Clean Output Parsing**: Advanced parsing that handles CLI UI elements, ANSI codes, and uses explicit delimiters (`**[[RESPONSE_START]]**` / `**[[RESPONSE_END]]**`) for robust transcript generation.
 - **Resilient Session Management**: Features health checks and auto-restarting capabilities to recover from session failures.
 
