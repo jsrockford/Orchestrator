@@ -81,6 +81,13 @@ function App() {
   const [extendTurnsValue, setExtendTurnsValue] = useState(3);
   const [extendActionPending, setExtendActionPending] = useState(false);
 
+  // Phase 7: HitL - Human turn state
+  const [waitingOnHuman, setWaitingOnHuman] = useState(false);
+  const [pendingTurnParticipant, setPendingTurnParticipant] = useState<string | null>(null);
+  const [humanEnabled, setHumanEnabled] = useState(false);
+  const [bypassHuman, setBypassHuman] = useState(false);
+  const [humanActionPending, setHumanActionPending] = useState(false);
+
   const socketsRef = useRef<Record<string, WebSocket>>({});
   const closingSocketsRef = useRef<Set<string>>(new Set());
   const projectStateRef = useRef(projectState);
@@ -88,11 +95,18 @@ function App() {
   const previousDiscussionStateRef = useRef<DiscussionState>('idle');
   const streamingActivityTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
   const awaitingTurnExtensionRef = useRef(false);
+  // Phase 7: HitL - WebSocket for discussion events
+  const discussionSocketRef = useRef<WebSocket | null>(null);
 
   const resetDiscussionSnapshot = useCallback(() => {
     setDiscussionStatus(createDefaultDiscussionStatus());
     awaitingTurnExtensionRef.current = false;
     setIsExtendModalOpen(false);
+    // Phase 7: HitL - Reset human turn state
+    setWaitingOnHuman(false);
+    setPendingTurnParticipant(null);
+    setBypassHuman(false);
+    setHumanActionPending(false);
   }, []);
 
   useEffect(() => {
@@ -369,6 +383,12 @@ function App() {
         }
         awaitingTurnExtensionRef.current = awaitingExtension;
         setDiscussionError(data.error ?? null);
+
+        // Phase 7: HitL - Extract human turn state from status
+        setWaitingOnHuman(Boolean(data.waiting_on_human));
+        setPendingTurnParticipant(data.pending_turn_participant ?? null);
+        setHumanEnabled(Boolean(data.human_enabled));
+        setBypassHuman(Boolean(data.bypass_human));
       } catch (error) {
         if (!cancelled) {
           console.warn('Failed to fetch discussion status:', error);
@@ -383,6 +403,159 @@ function App() {
       window.clearInterval(intervalId);
     };
   }, [projectState]);
+
+  // Phase 7: HitL - WebSocket connection for discussion events
+  useEffect(() => {
+    if (discussionState === 'idle') {
+      // Close discussion WebSocket when not in discussion
+      if (discussionSocketRef.current) {
+        try {
+          discussionSocketRef.current.close();
+        } catch (error) {
+          console.warn('Failed to close discussion WebSocket:', error);
+        }
+        discussionSocketRef.current = null;
+      }
+      return;
+    }
+
+    // Only connect if we're in a discussion
+    if (!discussionSocketRef.current) {
+      const wsUrl = toWebSocketUrl('/ws/discussion/events');
+      console.log('Connecting to discussion events WebSocket:', wsUrl);
+
+      try {
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log('Discussion events WebSocket connected');
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log('Discussion event received:', data);
+
+            // Handle different event types
+            switch (data.event) {
+              case 'human_turn_started':
+                setWaitingOnHuman(true);
+                setPendingTurnParticipant(data.speaker ?? null);
+                break;
+
+              case 'human_turn_completed':
+              case 'human_turn_skipped':
+                setWaitingOnHuman(false);
+                setPendingTurnParticipant(null);
+                setHumanActionPending(false);
+                break;
+
+              case 'human_turn_timeout':
+                setWaitingOnHuman(false);
+                setPendingTurnParticipant(null);
+                setHumanActionPending(false);
+                alert('⏰ Human turn timed out and was automatically skipped');
+                break;
+
+              case 'bypass_human_toggled':
+                setBypassHuman(Boolean(data.bypass_human));
+                break;
+            }
+          } catch (error) {
+            console.error('Failed to parse discussion event:', error);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error('Discussion WebSocket error:', error);
+        };
+
+        ws.onclose = () => {
+          console.log('Discussion WebSocket closed');
+          discussionSocketRef.current = null;
+        };
+
+        discussionSocketRef.current = ws;
+      } catch (error) {
+        console.error('Failed to create discussion WebSocket:', error);
+      }
+    }
+
+    return () => {
+      if (discussionSocketRef.current) {
+        try {
+          discussionSocketRef.current.close();
+        } catch (error) {
+          console.warn('Failed to close discussion WebSocket:', error);
+        }
+        discussionSocketRef.current = null;
+      }
+    };
+  }, [discussionState, toWebSocketUrl]);
+
+  // Phase 7: HitL - Human turn handler functions
+  const handleHumanSubmit = useCallback(async (response: string) => {
+    setHumanActionPending(true);
+    try {
+      const apiResponse = await fetch(`${API_BASE_URL}/api/discussion/human/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response }),
+      });
+
+      if (!apiResponse.ok) {
+        const errorData = await apiResponse.json().catch(() => ({ detail: apiResponse.statusText }));
+        throw new Error(errorData.detail || 'Failed to submit human response');
+      }
+
+      console.log('Human response submitted successfully');
+    } catch (error) {
+      console.error('Failed to submit human response:', error);
+      alert(`Error submitting response: ${error instanceof Error ? error.message : String(error)}`);
+      setHumanActionPending(false);
+      throw error; // Re-throw so PromptInput keeps the text
+    }
+  }, []);
+
+  const handleHumanSkip = useCallback(async () => {
+    setHumanActionPending(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/discussion/human/skip`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || 'Failed to skip human turn');
+      }
+
+      console.log('Human turn skipped successfully');
+    } catch (error) {
+      console.error('Failed to skip human turn:', error);
+      alert(`Error skipping turn: ${error instanceof Error ? error.message : String(error)}`);
+      setHumanActionPending(false);
+    }
+  }, []);
+
+  const handleToggleBypass = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/discussion/human/bypass/toggle`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || 'Failed to toggle bypass');
+      }
+
+      const data = await response.json();
+      console.log('Bypass toggled:', data);
+      // State will be updated via WebSocket event or next status poll
+    } catch (error) {
+      console.error('Failed to toggle bypass:', error);
+      alert(`Error toggling bypass: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, []);
 
   const handleSendPrompt = async (prompt: string, coderIds: number[]) => {
     if (promptActionPending) {
@@ -1056,6 +1229,14 @@ function App() {
           onSendPrompt={handleSendPrompt}
           disabled={promptInputDisabled}
           sending={promptActionPending}
+          waitingOnHuman={waitingOnHuman}
+          pendingTurnParticipant={pendingTurnParticipant}
+          humanEnabled={humanEnabled}
+          bypassHuman={bypassHuman}
+          onHumanSubmit={handleHumanSubmit}
+          onHumanSkip={handleHumanSkip}
+          onToggleBypass={handleToggleBypass}
+          humanActionPending={humanActionPending}
         />
       )}
 
