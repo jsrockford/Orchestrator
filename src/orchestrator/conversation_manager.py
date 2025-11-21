@@ -396,20 +396,50 @@ class ConversationManager:
                 is_human_speaker = speaker_meta.get("type") == "human"
 
                 if is_human_speaker:
-                    # Human turn: set waiting state and skip AI dispatch logic
+                    # Human turn: set waiting state and wait for submit/skip
                     self._waiting_on_human = True
                     self._pending_turn_participant = speaker
                     self._human_turn_started_at = time.time()
+                    timeout_seconds = self._get_human_timeout()
                     self.logger.info(
                         "Human turn started for '%s'. Waiting for human input (timeout: %s seconds)",
                         speaker,
-                        self._get_human_timeout(),
+                        timeout_seconds if timeout_seconds > 0 else "disabled",
                     )
                     # TODO Phase 3: Emit WebSocket event 'human_turn_started'
-                    # For now, we'll just wait and let the API endpoints handle the submission
-                    # The turn will remain pending until human_submit() or human_skip() is called
-                    # This is a placeholder - actual waiting logic will be in Phase 3
-                    break
+
+                    # Wait loop: pause discussion until human submits, skips, or times out
+                    while self._waiting_on_human:
+                        # Check for stop signal
+                        if getattr(self.orchestrator, "should_stop_discussion", False):
+                            self.logger.info("Stop requested during human turn; ending discussion")
+                            break
+
+                        # Check for timeout (if enabled)
+                        if timeout_seconds > 0:
+                            elapsed = time.time() - self._human_turn_started_at
+                            if elapsed >= timeout_seconds:
+                                self.logger.warning(
+                                    "Human turn timeout after %.1f seconds; auto-skipping '%s'",
+                                    elapsed,
+                                    speaker,
+                                )
+                                # TODO Phase 3: Emit WebSocket event 'human_turn_timeout'
+                                # TODO Phase 2.4: Call human_skip() method here
+                                self._waiting_on_human = False
+                                self._pending_turn_participant = None
+                                # For now, just break out - skip will be implemented in Phase 2.4
+                                break
+
+                        # Poll for control commands and refresh status
+                        self._refresh_status_snapshot()
+                        self._check_control_commands()
+
+                        # Sleep briefly to avoid busy-waiting
+                        time.sleep(0.5)
+
+                    # After human turn completes (submit/skip/timeout), continue to next turn
+                    continue
 
                 while True:
                     self._check_control_commands()
