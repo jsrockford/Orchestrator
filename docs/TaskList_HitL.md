@@ -181,45 +181,59 @@ This task list tracks the implementation of Human participant support in the Orc
 - Human filtered from activeConversations (no window to display)
 - Bypass toggle deferred to Phase 7 where human turn UI is implemented
 
-## Phase 7: Frontend - Human Turn UI
+## Phase 7: Frontend - Human Turn UI ✅ COMPLETE (except 7.5 deferred)
 
-- [ ] **7.1** Implement conditional rendering for human turns
-  - [ ] Detect `waiting_on_human === true` from status/WebSocket
-  - [ ] Show "Your Turn" banner (prominent, clear visual indicator)
-  - [ ] Swap button set from "Send to model(s)" to "Submit" + "Skip"
-  - [ ] Disable "Send to model(s)" during human turn
-  - [ ] Re-enable "Send to model(s)" after turn completes
+- [x] **7.1** Implement conditional rendering for human turns
+  - [x] Detect `waiting_on_human === true` from status/WebSocket
+  - [x] Show "Your Turn" banner (prominent, clear visual indicator)
+  - [x] Swap button set from "Send to model(s)" to "Submit" + "Skip"
+  - [x] Disable "Send to model(s)" during human turn
+  - [x] Re-enable "Send to model(s)" after turn completes
 
-- [ ] **7.2** Wire Submit button
-  - [ ] Call `POST /api/discussion/human/submit` with textarea content
-  - [ ] Clear textarea on successful submit
-  - [ ] Preserve textarea content on error
-  - [ ] Show error toast/message if submission fails
-  - [ ] Disable button during API call (prevent double-submit)
+- [x] **7.2** Wire Submit button
+  - [x] Call `POST /api/discussion/human/submit` with textarea content
+  - [x] Clear textarea on successful submit
+  - [x] Preserve textarea content on error
+  - [x] Show error toast/message if submission fails
+  - [x] Disable button during API call (prevent double-submit)
 
-- [ ] **7.3** Wire Skip button
-  - [ ] Call `POST /api/discussion/human/skip`
-  - [ ] Clear textarea (optional: ask user to confirm if text is present)
-  - [ ] Show confirmation if text would be discarded
-  - [ ] Disable button during API call
+- [x] **7.3** Wire Skip button
+  - [x] Call `POST /api/discussion/human/skip`
+  - [x] Clear textarea (optional: ask user to confirm if text is present)
+  - [x] Show confirmation if text would be discarded
+  - [x] Disable button during API call
 
-- [ ] **7.4** Handle WebSocket events
-  - [ ] Listen for `human_turn_started` → update UI state
-  - [ ] Listen for `human_turn_completed` → return to normal mode
-  - [ ] Listen for `human_turn_skipped` → return to normal mode
-  - [ ] Listen for `human_turn_timeout` → show timeout notification
-  - [ ] Listen for `bypass_human_toggled` → update toggle state
+- [x] **7.4** Handle WebSocket events
+  - [x] Listen for `human_turn_started` → update UI state
+  - [x] Listen for `human_turn_completed` → return to normal mode
+  - [x] Listen for `human_turn_skipped` → return to normal mode
+  - [x] Listen for `human_turn_timeout` → show timeout notification
+  - [x] Listen for `bypass_human_toggled` → update toggle state
 
-- [ ] **7.5** Render human turns in conversation history
+- [ ] **7.5** Render human turns in conversation history (DEFERRED)
   - [ ] Display human turns with `👤` icon/marker
   - [ ] Visually distinguish human turns from AI turns in transcript
   - [ ] Ensure participant name shows as "Human" or similar
+  - Note: Deferred as conversation history rendering requires additional API endpoint work
 
-- [ ] **7.6** UI reload resilience (anti-desync)
-  - [ ] On component mount/reload, fetch current discussion status
-  - [ ] If `waiting_on_human === true`, immediately show human turn UI
-  - [ ] Restore correct button set and banner on page refresh
-  - [ ] Test: refresh browser during human turn → UI recovers correctly
+- [x] **7.6** UI reload resilience (anti-desync)
+  - [x] On component mount/reload, fetch current discussion status
+  - [x] If `waiting_on_human === true`, immediately show human turn UI
+  - [x] Restore correct button set and banner on page refresh
+  - [x] Test: refresh browser during human turn → UI recovers correctly
+
+**Implementation Notes:**
+- Committed in 1c69f87
+- PromptInput.tsx fully refactored with human turn handlers and conditional UI
+- App.tsx has WebSocket connection to /ws/discussion/events for real-time updates
+- Handler functions for submit, skip, and bypass toggle all working
+- Status polling extracts human turn fields and updates UI state
+- UI resilience achieved via status polling (restores state on page refresh)
+- Submit preserves text on error, skip confirms if text present
+- Banner shows gradient background with "Your Turn!" message
+- Bypass toggle shows when human enabled but not waiting (orange when ON)
+- All WebSocket events handled: human_turn_started, completed, skipped, timeout, bypass_toggled
+- Frontend builds successfully with no TypeScript errors
 
 ## Phase 8: Testing
 
