@@ -156,7 +156,7 @@ This task list tracks the implementation of Human participant support in the Orc
 - Usage: `echo "HUMAN_SUBMIT response text" > /tmp/orchestrator_control`
 - Documentation of commands deferred to Phase 9 (will be added to docs/)
 
-## Phase 6: Frontend - Model Selection UI ✅ PARTIAL (6.1 complete, 6.2 deferred to Phase 7)
+## Phase 6: Frontend - Model Selection UI ✅ COMPLETE
 
 - [x] **6.1** Update model selection interface
   - [x] Add "Human" checkbox to model selector (added to allConversations)
@@ -166,20 +166,23 @@ This task list tracks the implementation of Human participant support in the Orc
   - [x] Prevent Human from being starting_model in discussions
   - [x] Filter Human from conversation windows display (no tmux session)
 
-- [ ] **6.2** Add bypass toggle to active session UI (deferred to Phase 7)
-  - [ ] Add "Bypass Human" toggle/checkbox
-  - [ ] Only show when Human is in participant list
-  - [ ] Only enable when discussion is running
-  - [ ] Wire to `/api/discussion/human/bypass/toggle` endpoint
+- [x] **6.2** Add bypass toggle to active session UI
+  - [x] Add "Bypass Human" toggle/checkbox
+  - [x] Only show when Human is in participant list
+  - [x] Only enable when discussion is running
+  - [x] Wire to `/api/discussion/human/bypass/toggle` endpoint
 
 **Implementation Notes:**
-- Committed in 031c081
+- 6.1 committed in 031c081
 - Added Human as 5th conversation (id: 5, title: 'Human')
 - Default activeModels changed from all selected to empty array
 - "Start Models" button disabled with tooltip when only Human selected
 - configureDiscussion() ensures starting_model is never Human
 - Human filtered from activeConversations (no window to display)
-- Bypass toggle deferred to Phase 7 where human turn UI is implemented
+- 6.2 completed in Phase 7 (commit 1c69f87)
+- Bypass toggle in PromptInput.tsx (lines 200-213): shows gray "Bypass: OFF" / orange "Bypass: ON"
+- Only visible when humanEnabled && !waitingOnHuman
+- handleToggleBypass() in App.tsx calls POST /api/discussion/human/bypass/toggle
 
 ## Phase 7: Frontend - Human Turn UI ✅ COMPLETE (except 7.5 deferred)
 
