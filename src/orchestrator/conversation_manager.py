@@ -121,6 +121,10 @@ class ConversationManager:
         self._bypass_human: bool = False
         self._pending_turn_participant: Optional[str] = None
         self._human_turn_started_at: Optional[float] = None
+        # Track the live conversation list for external submissions (e.g., human submit/skip)
+        self._conversation_ref: List[Dict[str, Any]] = []
+        # Cache discussion configuration for turn records (may be None)
+        self.discussion_config = getattr(self.orchestrator, "discussion_config", None)
 
         completion_cfg = get_config().get_section("completion_detection") or {}
         self._completion_enabled: bool = bool(completion_cfg.get("enabled", False))
@@ -301,6 +305,8 @@ class ConversationManager:
         self._refresh_status_snapshot(force=True)
 
         conversation: List[Dict[str, Any]] = []
+        # Keep a reference so external human submit/skip can append turns to the active log
+        self._conversation_ref = conversation
         while True:
             if getattr(self.orchestrator, "should_stop_discussion", False):
                 self.logger.info("Stop requested; ending discussion on '%s'", topic)
@@ -476,6 +482,7 @@ class ConversationManager:
                     # After human turn completes (submit/skip/timeout), continue to next turn
                     continue
 
+                parser: Optional[OutputParser] = None
                 while True:
                     self._check_control_commands()
                     if self.human_control_mode:
@@ -564,6 +571,11 @@ class ConversationManager:
                         turn_record["response_transcript"] = validation_result.cleaned_output
                     else:
                         turn_record["response_transcript"] = parsed_output.cleaned_output
+
+                # Recover richer responses from the transcript when the parsed
+                # response is missing or truncated (e.g., when CLI UI glyphs
+                # confuse the primary extractor).
+                self._maybe_enrich_response(turn_record, parser)
 
                 if validation_result:
                     turn_record["validation"] = {
@@ -1033,6 +1045,47 @@ class ConversationManager:
             "detect_consensus no match on turn=%s", turn_index
         )
         return False
+
+    def _maybe_enrich_response(
+        self,
+        turn_record: Dict[str, Any],
+        parser: Optional[OutputParser] = None,
+    ) -> None:
+        """
+        Fill in or upgrade ``turn_record['response']`` using the transcript.
+
+        Some CLI outputs include UI glyphs (e.g., block characters) that can
+        confuse the primary response extractor, yielding an empty or
+        truncated message. When we have a transcript, attempt to pull a more
+        complete response (preferring explicit delimiters) and replace the
+        stored response if it is currently missing or clearly shorter.
+        """
+        transcript = turn_record.get("response_transcript")
+        if not transcript:
+            return
+
+        response = turn_record.get("response")
+        cleaned_existing = str(response).strip() if response is not None else ""
+
+        parser_obj = parser or self._output_parsers.get(turn_record.get("speaker"))
+        if parser_obj is None:
+            parser_obj = OutputParser()
+
+        recovered: Optional[str] = None
+        try:
+            recovered = parser_obj.extract_delimited_response(transcript)
+            if not recovered:
+                recovered = parser_obj.get_last_response(transcript)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("Response recovery from transcript failed: %s", exc)
+            return
+
+        candidate = (recovered or "").strip()
+        if not candidate:
+            return
+
+        if not cleaned_existing or len(candidate) > len(cleaned_existing):
+            turn_record["response"] = candidate
 
     def detect_conflict(self, conversation: Sequence[Dict[str, Any]]) -> Tuple[bool, str]:
         """
@@ -1624,11 +1677,12 @@ class ConversationManager:
         If a context manager exposes ``build_prompt`` the conversation manager
         defers to it, otherwise a pragmatic default string is used.
         """
+        prompt: Optional[str] = None
         if self.context_manager is not None:
             builder = getattr(self.context_manager, "build_prompt", None)
             if callable(builder):
                 try:
-                    return builder(
+                    prompt = builder(
                         speaker,
                         topic,
                         include_history=self._include_history,
@@ -1637,17 +1691,18 @@ class ConversationManager:
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning("Context builder failed for '%s': %s", speaker, exc)
 
-        turn_number = len(conversation)
-        if not self._include_history:
-            prompt = (
-                f"[Turn {turn_number}] {speaker}, acknowledge the request '{topic}' "
-                "and briefly confirm you can see it."
-            )
-        else:
-            prompt = (
-                f"[Turn {turn_number}] {speaker}, share your perspective on '{topic}'. "
-                "Highlight progress, concerns, or next actions."
-            )
+        if prompt is None:
+            turn_number = len(conversation)
+            if not self._include_history:
+                prompt = (
+                    f"[Turn {turn_number}] {speaker}, acknowledge the request '{topic}' "
+                    "and briefly confirm you can see it."
+                )
+            else:
+                prompt = (
+                    f"[Turn {turn_number}] {speaker}, share your perspective on '{topic}'. "
+                    "Highlight progress, concerns, or next actions."
+                )
 
         if self.message_router is not None:
             self._ensure_router_registration(speaker)
@@ -2043,6 +2098,11 @@ class ConversationManager:
         response_marker = human_cfg.get("response_marker", "👤")
         turn_record["response_marker"] = response_marker
 
+        # Phase 7: Keep the active conversation log in sync for human turns
+        conversation_ref = getattr(self, "_conversation_ref", None)
+        if isinstance(conversation_ref, list):
+            conversation_ref.append(turn_record)
+
         # Add to conversation history
         self.history.append(turn_record)
         self._turn_counter += 1
@@ -2050,6 +2110,22 @@ class ConversationManager:
         # Store turn and record activity
         self._store_turn(turn_record)
         self._record_turn_activity(speaker, turn_record)
+        # Keep context manager history aligned for skipped/timeout human turns
+        self._record_with_context_manager(turn_record)
+
+        # Deliver the skipped (or timed out) human turn so other participants are aware
+        router = getattr(self, "message_router", None)
+        if router is not None and hasattr(router, "deliver"):
+            try:
+                router.deliver(
+                    sender=speaker,
+                    message=turn_record.get("response") or "",
+                    topic=turn_record.get("topic") or "",
+                    turn=turn_record.get("turn") or self._turn_counter,
+                    metadata=turn_record.get("metadata"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Failed to route skipped human turn: %s", exc)
 
         # Clear waiting state
         self._waiting_on_human = False

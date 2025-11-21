@@ -1198,12 +1198,6 @@ def register_discussion_routes(app: FastAPI) -> None:
                 detail="Open a project before starting a discussion",
             )
 
-        if len(orchestrator.controllers) < 2:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="At least two active controllers are required",
-            )
-
         if orchestrator.discussion_state == "RUNNING":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1230,7 +1224,14 @@ def register_discussion_routes(app: FastAPI) -> None:
                 detail="Discussion configuration must include at least two participants",
             )
 
-        missing = [name for name in participants if name not in orchestrator.controllers]
+        ai_participants = [name for name in participants if name.lower() != "human"]
+        if not ai_participants:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Discussion must include at least one AI participant",
+            )
+
+        missing = [name for name in ai_participants if name not in orchestrator.controllers]
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1411,13 +1412,37 @@ def register_discussion_routes(app: FastAPI) -> None:
         response_marker = human_cfg.get("response_marker", "👤")
         turn_record["response_marker"] = response_marker
 
-        # Add to conversation history
+        # Add to conversation history and active conversation log
+        conversation_ref = getattr(conv_mgr, "_conversation_ref", None)
+        if isinstance(conversation_ref, list):
+            conversation_ref.append(turn_record)
         conv_mgr.history.append(turn_record)
         conv_mgr._turn_counter += 1
 
         # Store turn and record activity
         conv_mgr._store_turn(turn_record)
         conv_mgr._record_turn_activity(speaker, turn_record)
+        # Keep context manager history in sync
+        record_ctx = getattr(conv_mgr, "_record_with_context_manager", None)
+        if callable(record_ctx):
+            try:
+                record_ctx(turn_record)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Context manager record_turn failed for human submit: %s", exc)
+
+        # Deliver the human message to other participants via the message router
+        router = getattr(conv_mgr, "message_router", None)
+        if router is not None and hasattr(router, "deliver"):
+            try:
+                router.deliver(
+                    sender=speaker,
+                    message=request.response.strip(),
+                    topic=turn_record.get("topic") or "",
+                    turn=turn_record.get("turn") or conv_mgr._turn_counter,
+                    metadata=turn_record.get("metadata"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to route human response to participants: %s", exc)
 
         # Clear waiting state
         conv_mgr._waiting_on_human = False

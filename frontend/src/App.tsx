@@ -8,8 +8,17 @@ import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ModelSettingsModal from './components/ModelSettingsModal';
 import { DiscussionSettings, DiscussionState } from './types';
 
-const DEFAULT_API_BASE = 'http://localhost:9100';
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE).replace(/\/$/, '');
+// Resolve API base URL:
+// - In dev, default to backend port 9100.
+// - In prod (built bundle), default to same origin to avoid mixed-content / port mismatches.
+const DEFAULT_API_BASE = (() => {
+  if (typeof window !== 'undefined' && !import.meta.env.DEV) {
+    return window.location.origin;
+  }
+  return 'http://localhost:9100';
+})();
+const rawApiBase = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+const API_BASE_URL = (rawApiBase || DEFAULT_API_BASE).replace(/\/$/, '');
 const MAX_OUTPUT_CHARS = 60000;
 const STREAM_ACTIVITY_IDLE_MS = 1500;
 const AUTO_RESUME_MAX_ATTEMPTS = 3;
@@ -385,10 +394,15 @@ function App() {
         setDiscussionError(data.error ?? null);
 
         // Phase 7: HitL - Extract human turn state from status
-        setWaitingOnHuman(Boolean(data.waiting_on_human));
-        setPendingTurnParticipant(data.pending_turn_participant ?? null);
-        setHumanEnabled(Boolean(data.human_enabled));
-        setBypassHuman(Boolean(data.bypass_human));
+        const waitingFromStatus = Boolean(managerSnapshot.waiting_on_human);
+        setWaitingOnHuman(waitingFromStatus);
+        const pendingParticipant =
+          typeof managerSnapshot.pending_turn_participant === 'string'
+            ? managerSnapshot.pending_turn_participant
+            : null;
+        setPendingTurnParticipant(pendingParticipant);
+        setHumanEnabled(Boolean(managerSnapshot.human_enabled));
+        setBypassHuman(Boolean(managerSnapshot.bypass_human));
       } catch (error) {
         if (!cancelled) {
           console.warn('Failed to fetch discussion status:', error);
@@ -570,9 +584,11 @@ function App() {
       return;
     }
 
-    const modelNames = coderIds
+    // Map selected IDs to model names, then drop Human (manual prompts should only target AI controllers)
+    const modelNames = (coderIds
       .map(id => allConversations.find(c => c.id === id)?.title)
-      .filter(Boolean) as string[];
+      .filter(Boolean) as string[])
+      .filter(name => name !== 'Human');
 
     if (modelNames.length === 0) {
       console.warn('No models selected for prompt');
