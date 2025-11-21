@@ -100,6 +100,12 @@ class ConversationManager:
         self._awaiting_turn_extension: bool = False
         self._paused_for_turn_limit: bool = False
 
+        # Human participant state (Phase 1: HitL feature)
+        self._waiting_on_human: bool = False
+        self._bypass_human: bool = False
+        self._pending_turn_participant: Optional[str] = None
+        self._human_turn_started_at: Optional[float] = None
+
         completion_cfg = get_config().get_section("completion_detection") or {}
         self._completion_enabled: bool = bool(completion_cfg.get("enabled", False))
         self._completion_debug_enabled: bool = bool(completion_cfg.get("debug_logging", False))
@@ -181,11 +187,19 @@ class ConversationManager:
 
         # Prepare metadata for participants and forward to context manager when available.
         for name in self.participants:
-            merged: Dict[str, Any] = {"name": name, "type": "cli"}
+            # Phase 1: HitL - Detect human participant (case-insensitive)
+            is_human = name.lower() == "human"
+            merged: Dict[str, Any] = {"name": name, "type": "human" if is_human else "cli"}
             candidate = metadata_source.get(name)
             if isinstance(candidate, dict):
                 merged.update(candidate)
-            merged.setdefault("type", "cli")
+            # Ensure type is set correctly for human vs AI participants
+            if is_human:
+                merged["type"] = "human"
+                merged["has_controller"] = False
+            else:
+                merged.setdefault("type", "cli")
+                merged.setdefault("has_controller", True)
             self.participant_metadata[name] = merged
 
         control_cfg = get_config().get_section("control_channel") or {}

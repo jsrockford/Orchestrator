@@ -181,6 +181,13 @@ qwen:
     send_ctrl_c: true
     log_level: "warning"
 
+
+human:
+  # Human participant configuration
+  turn_timeout: 300  # Seconds to wait for human response (5 minutes); 0 to disable
+  allow_empty_submissions: false  # Reject blank human responses
+  response_marker: "👤"  # Emoji displayed in transcripts for human turns
+
 tmux:
   # Session configuration
   claude_session: "claude"   # Default Claude session name
