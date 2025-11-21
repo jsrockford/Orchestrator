@@ -24,7 +24,7 @@ This task list tracks the implementation of Human participant support in the Orc
 - ConversationManager tested with human-only and mixed participants
 - All Phase 1 tests passing
 
-## Phase 2: Backend - Conversation Logic ✅ MOSTLY COMPLETE
+## Phase 2: Backend - Conversation Logic ✅ COMPLETE (except 2.6 deferred)
 
 - [x] **2.1** Extend `ConversationManager.determine_next_speaker()`
   - [x] Include human in round-robin rotation when enabled (checks metadata type="human")
@@ -40,18 +40,18 @@ This task list tracks the implementation of Human participant support in the Orc
   - [x] Decide whether human completion signals count toward consensus (YES - counts same as AI)
   - [x] Document the decision in code comments
 
-- [x] **2.4** Add human turn timeout handling (PARTIAL)
+- [x] **2.4** Add human turn timeout handling ✅ COMPLETE
   - [x] Implement timeout timer when human turn starts (_human_turn_started_at timestamp)
   - [x] Timeout detection in wait loop (elapsed time check)
   - [x] Log timeout events clearly
-  - [ ] Auto-skip human turn on timeout (placeholder - needs Phase 3 submit/skip methods)
+  - [x] Auto-skip human turn on timeout (calls _record_human_skip() with timeout=True)
   - [ ] Emit timeout event via WebSocket (deferred to Phase 4)
 
-- [ ] **2.5** Implement human turn recording and rendering (DEFERRED to Phase 3)
-  - [ ] Use `response_marker: "👤"` when recording human turns to history
-  - [ ] Ensure human participant name/type is clearly marked in turn records
-  - [ ] Backend should tag human turns distinctly for frontend rendering
-  - Note: Will be implemented in Phase 3 when submit/skip endpoints create turn records
+- [x] **2.5** Implement human turn recording and rendering ✅ COMPLETE
+  - [x] Use `response_marker: "👤"` when recording human turns to history
+  - [x] Ensure human participant name/type is clearly marked in turn records (metadata: human_turn=True)
+  - [x] Backend should tag human turns distinctly for frontend rendering
+  - Note: Implemented in Phase 3 via submit/skip endpoints and _record_human_skip() helper
 
 - [ ] **2.6** Add state persistence for human turns (DEFERRED to later)
   - [ ] Persist `waiting_on_human` flag (survives orchestrator restart)
@@ -61,41 +61,50 @@ This task list tracks the implementation of Human participant support in the Orc
   - [ ] Ensure ContextManager saves/restores these fields
 
 **Implementation Notes:**
-- Committed in 3a197f7 (initial), ac48dcf (waiting loop fix)
+- Committed in 3a197f7 (initial), ac48dcf (waiting loop fix), 6a99284 (timeout recording fix)
 - Core turn rotation works: human included in round-robin, bypass respected
 - Wait loop implemented: polls every 0.5s, checks timeout/stop/control commands
-- Timeout detection working, but auto-skip action needs submit/skip methods from Phase 3
-- Turn recording with response_marker deferred until submit/skip endpoints exist
+- Timeout auto-skip complete: calls _record_human_skip() helper to record turn and increment counter
+- _record_human_skip() helper used by both timeout and skip endpoint (eliminates duplication)
 - State persistence deferred as it requires context manager integration
 
-## Phase 3: Backend - API Endpoints
+## Phase 3: Backend - API Endpoints ✅ COMPLETE
 
-- [ ] **3.1** Create new API endpoints in `web_api.py`
-  - [ ] `POST /api/discussion/human/submit` - Submit human response
-    - [ ] Validate non-empty if `allow_empty_submissions: false`
-    - [ ] Record turn in conversation history
-    - [ ] Clear `waiting_on_human` flag
-    - [ ] Advance to next speaker
-    - [ ] Return success/error response
-  - [ ] `POST /api/discussion/human/skip` - Skip human turn
-    - [ ] Record skipped turn in history
-    - [ ] Clear `waiting_on_human` flag
-    - [ ] Advance to next speaker
-    - [ ] Increment skip counter (optional metric)
-  - [ ] `POST /api/discussion/human/bypass/toggle` - Toggle bypass state
-    - [ ] Set/unset `bypass_human` flag
-    - [ ] Emit state change event
+- [x] **3.1** Create new API endpoints in `web_api.py`
+  - [x] `POST /api/discussion/human/submit` - Submit human response
+    - [x] Validate non-empty if `allow_empty_submissions: false`
+    - [x] Record turn in conversation history
+    - [x] Clear `waiting_on_human` flag
+    - [x] Advance to next speaker (turn_counter incremented in submit logic)
+    - [x] Return success/error response
+  - [x] `POST /api/discussion/human/skip` - Skip human turn
+    - [x] Record skipped turn in history (uses _record_human_skip helper)
+    - [x] Clear `waiting_on_human` flag
+    - [x] Advance to next speaker (turn_counter incremented in helper)
+    - [x] Skip counter tracked via metadata (skipped flag in turn record)
+  - [x] `POST /api/discussion/human/bypass/toggle` - Toggle bypass state
+    - [x] Set/unset `bypass_human` flag
+    - [ ] Emit state change event (deferred to Phase 4 WebSocket)
 
-- [ ] **3.2** Update existing `/api/discussion/status` endpoint
-  - [ ] Add `waiting_on_human` to response
-  - [ ] Add `bypass_human` to response
-  - [ ] Add `pending_turn_participant` to response
-  - [ ] Add `human_enabled` (whether human is in participant list)
+- [x] **3.2** Update existing `/api/discussion/status` endpoint
+  - [x] Add `waiting_on_human` to response
+  - [x] Add `bypass_human` to response
+  - [x] Add `pending_turn_participant` to response
+  - [x] Add `human_enabled` (whether human is in participant list)
 
-- [ ] **3.3** Update `/api/sessions/start` endpoint
-  - [ ] Accept "human" in models list
-  - [ ] Validate: grey out logic if only "human" selected (frontend responsibility)
-  - [ ] Initialize human participant state
+- [x] **3.3** Update `/api/sessions/start` endpoint
+  - [x] Accept "human" in models list
+  - [x] Validate: grey out logic if only "human" selected (frontend responsibility)
+  - [x] Initialize human participant state (registers with None controller)
+
+**Implementation Notes:**
+- Committed in 8ef0523 (initial), 6a99284 (timeout recording refactor)
+- All three endpoints functional: submit validates empty responses, records with 👤 marker
+- Skip endpoint refactored to use _record_human_skip() helper (matches timeout behavior)
+- Bypass toggle endpoint working (WebSocket event deferred to Phase 4)
+- Status endpoint returns all human turn fields for real-time UI updates
+- Sessions can start with "human" in models list (registered with None controller)
+- normalize_model_names() updated to allow "human" as valid participant
 
 ## Phase 4: Backend - WebSocket Events
 
