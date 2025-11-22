@@ -31,3 +31,14 @@ export interface ModelSettingsResponse {
   fields: ModelSettingsField[];
   notes?: string;
 }
+
+export type MacroCategory = 'slash' | 'ctrl' | 'shift' | 'other' | string;
+
+export interface MacroDefinition {
+  description?: string;
+  category?: MacroCategory;
+  keys?: string[];
+  command?: string;
+}
+
+export type MacroConfigMap = Record<string, Record<string, MacroDefinition>>;

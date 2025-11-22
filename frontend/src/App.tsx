@@ -6,7 +6,7 @@ import SessionModelSelector from './components/SessionModelSelector';
 import EditInstructionsModal from './components/EditInstructionsModal';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ModelSettingsModal from './components/ModelSettingsModal';
-import { DiscussionSettings, DiscussionState } from './types';
+import { DiscussionSettings, DiscussionState, MacroConfigMap, MacroDefinition } from './types';
 
 // Resolve API base URL:
 // - In dev, default to backend port 9100.
@@ -24,6 +24,7 @@ const STREAM_ACTIVITY_IDLE_MS = 1500;
 const AUTO_RESUME_MAX_ATTEMPTS = 3;
 const AUTO_RESUME_STATUS_POLLS = 5;
 const AUTO_RESUME_POLL_DELAY_MS = 400;
+const TOAST_DURATION_MS = 4000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -44,6 +45,15 @@ const createDefaultDiscussionStatus = (): DiscussionStatusInfo => ({
   maxTurns: null,
   awaitingTurnExtension: false,
 });
+
+type ToastKind = 'info' | 'success' | 'error';
+
+type ToastMessage = {
+  id: number;
+  title: string;
+  message?: string;
+  variant: ToastKind;
+};
 
 function App() {
   const [allConversations] = useState<Conversation[]>([
@@ -89,6 +99,9 @@ function App() {
   const [isExtendModalOpen, setIsExtendModalOpen] = useState(false);
   const [extendTurnsValue, setExtendTurnsValue] = useState(3);
   const [extendActionPending, setExtendActionPending] = useState(false);
+  const [macroConfig, setMacroConfig] = useState<MacroConfigMap>({});
+  const [macrosLoading, setMacrosLoading] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   // Phase 7: HitL - Human turn state
   const [waitingOnHuman, setWaitingOnHuman] = useState(false);
@@ -104,8 +117,9 @@ function App() {
   const previousDiscussionStateRef = useRef<DiscussionState>('idle');
   const streamingActivityTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
   const awaitingTurnExtensionRef = useRef(false);
-  // Phase 7: HitL - WebSocket for discussion events
-  const discussionSocketRef = useRef<WebSocket | null>(null);
+  const eventSocketRef = useRef<WebSocket | null>(null);
+  const eventReconnectTimerRef = useRef<number | null>(null);
+  const toastIdRef = useRef(0);
 
   const resetDiscussionSnapshot = useCallback(() => {
     setDiscussionStatus(createDefaultDiscussionStatus());
@@ -117,6 +131,24 @@ function App() {
     setBypassHuman(false);
     setHumanActionPending(false);
   }, []);
+
+  const pushToast = useCallback(
+    (toast: { title: string; message?: string; variant?: ToastKind }) => {
+      const id = toastIdRef.current + 1;
+      toastIdRef.current = id;
+      const entry: ToastMessage = {
+        id,
+        title: toast.title,
+        message: toast.message,
+        variant: toast.variant ?? 'info',
+      };
+      setToasts(prev => [...prev, entry]);
+      window.setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, TOAST_DURATION_MS);
+    },
+    [],
+  );
 
   useEffect(() => {
     projectStateRef.current = projectState;
@@ -343,6 +375,41 @@ function App() {
   }, [activeModels, allConversations]);
 
   useEffect(() => {
+    let cancelled = false;
+    const loadMacros = async () => {
+      setMacrosLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/macros`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        if (!cancelled && data && typeof data === 'object') {
+          setMacroConfig(data as MacroConfigMap);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('Failed to load macros:', error);
+          pushToast({
+            title: 'Macro list unavailable',
+            message: 'Could not fetch /api/macros. Controls will be hidden.',
+            variant: 'error',
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setMacrosLoading(false);
+        }
+      }
+    };
+
+    loadMacros();
+    return () => {
+      cancelled = true;
+    };
+  }, [pushToast]);
+
+  useEffect(() => {
     if (projectState === 'idle') {
       return;
     }
@@ -418,101 +485,137 @@ function App() {
     };
   }, [projectState]);
 
-  // Phase 7: HitL - WebSocket connection for discussion events
+  // Phase 7: HitL + Macro events - WebSocket connection for discussion/macro events
   useEffect(() => {
-    if (discussionState === 'idle') {
-      // Close discussion WebSocket when not in discussion
-      if (discussionSocketRef.current) {
+    if (projectState === 'idle') {
+      if (eventReconnectTimerRef.current) {
+        window.clearTimeout(eventReconnectTimerRef.current);
+        eventReconnectTimerRef.current = null;
+      }
+      if (eventSocketRef.current) {
         try {
-          discussionSocketRef.current.close();
+          eventSocketRef.current.close();
         } catch (error) {
-          console.warn('Failed to close discussion WebSocket:', error);
+          console.warn('Failed to close events WebSocket:', error);
         }
-        discussionSocketRef.current = null;
+        eventSocketRef.current = null;
       }
       return;
     }
 
-    // Only connect if we're in a discussion
-    if (!discussionSocketRef.current) {
-      const wsUrl = toWebSocketUrl('/ws/discussion/events');
-      console.log('Connecting to discussion events WebSocket:', wsUrl);
-
-      try {
-        const ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-          console.log('Discussion events WebSocket connected');
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            console.log('Discussion event received:', data);
-
-            // Phase 7: HitL - Backend sends "type" field, not "event"
-            const eventType = data.type || data.event;
-
-            // Handle different event types
-            switch (eventType) {
-              case 'human_turn_started':
-                setWaitingOnHuman(true);
-                setPendingTurnParticipant(data.speaker ?? null);
-                break;
-
-              case 'human_turn_completed':
-              case 'human_turn_skipped':
-                setWaitingOnHuman(false);
-                setPendingTurnParticipant(null);
-                setHumanActionPending(false);
-                break;
-
-              case 'human_turn_timeout':
-                setWaitingOnHuman(false);
-                setPendingTurnParticipant(null);
-                setHumanActionPending(false);
-                alert('⏰ Human turn timed out and was automatically skipped');
-                break;
-
-              case 'bypass_human_toggled':
-                setBypassHuman(Boolean(data.bypass_human));
-                break;
-
-              case 'ping':
-                // Keepalive ping from server, ignore
-                break;
-            }
-          } catch (error) {
-            console.error('Failed to parse discussion event:', error);
-          }
-        };
-
-        ws.onerror = (error) => {
-          console.error('Discussion WebSocket error:', error);
-        };
-
-        ws.onclose = () => {
-          console.log('Discussion WebSocket closed');
-          discussionSocketRef.current = null;
-        };
-
-        discussionSocketRef.current = ws;
-      } catch (error) {
-        console.error('Failed to create discussion WebSocket:', error);
-      }
+    if (eventSocketRef.current) {
+      return;
     }
 
-    return () => {
-      if (discussionSocketRef.current) {
+    const connect = () => {
+      const wsUrl = toWebSocketUrl('/ws/discussion/events');
+      console.log('Connecting to events WebSocket:', wsUrl);
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (error) {
+        console.error('Failed to create events WebSocket:', error);
+        return;
+      }
+
+      eventSocketRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('Events WebSocket connected');
+      };
+
+      ws.onmessage = (event) => {
         try {
-          discussionSocketRef.current.close();
+          const data = JSON.parse(event.data);
+          const eventType = data.type || data.event;
+
+          switch (eventType) {
+            case 'human_turn_started':
+              setWaitingOnHuman(true);
+              setPendingTurnParticipant(data.speaker ?? null);
+              break;
+
+            case 'human_turn_completed':
+            case 'human_turn_skipped':
+              setWaitingOnHuman(false);
+              setPendingTurnParticipant(null);
+              setHumanActionPending(false);
+              break;
+
+            case 'human_turn_timeout':
+              setWaitingOnHuman(false);
+              setPendingTurnParticipant(null);
+              setHumanActionPending(false);
+              alert('⏰ Human turn timed out and was automatically skipped');
+              break;
+
+            case 'bypass_human_toggled':
+              setBypassHuman(Boolean(data.bypass_human));
+              break;
+
+            case 'macro_executed': {
+              const agent = data.agent || data.model || 'unknown';
+              const macroName = data.macro_name || data.macro || 'macro';
+              const description = data.description || macroName;
+              pushToast({
+                title: 'Macro executed',
+                message: `${description} (${agent})`,
+                variant: 'success',
+              });
+              break;
+            }
+
+            case 'ping':
+              // Keepalive ping from server, ignore
+              break;
+
+            default:
+              break;
+          }
         } catch (error) {
-          console.warn('Failed to close discussion WebSocket:', error);
+          console.error('Failed to parse events message:', error);
         }
-        discussionSocketRef.current = null;
+      };
+
+      ws.onerror = (error) => {
+        console.error('Events WebSocket error:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('Events WebSocket closed');
+        eventSocketRef.current = null;
+        if (eventReconnectTimerRef.current) {
+          window.clearTimeout(eventReconnectTimerRef.current);
+        }
+        if (projectStateRef.current !== 'idle') {
+          eventReconnectTimerRef.current = window.setTimeout(() => {
+            eventReconnectTimerRef.current = null;
+            if (!eventSocketRef.current && projectStateRef.current !== 'idle') {
+              connect();
+            }
+          }, 1000);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (eventReconnectTimerRef.current) {
+        window.clearTimeout(eventReconnectTimerRef.current);
+        eventReconnectTimerRef.current = null;
+      }
+      if (eventSocketRef.current) {
+        try {
+          eventSocketRef.current.close();
+        } catch (error) {
+          console.warn('Failed to close events WebSocket:', error);
+        }
+        eventSocketRef.current = null;
       }
     };
-  }, [discussionState, toWebSocketUrl]);
+  }, [projectState, toWebSocketUrl, pushToast]);
 
   // Phase 7: HitL - Human turn handler functions
   const handleHumanSubmit = useCallback(async (response: string) => {
@@ -577,6 +680,52 @@ function App() {
       alert(`Error toggling bypass: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, []);
+
+  const findMacroDefinition = useCallback(
+    (agentSlug: string, macroName: string): MacroDefinition | undefined => {
+      const agentMacros = macroConfig[agentSlug];
+      if (!agentMacros) {
+        return undefined;
+      }
+      return agentMacros[macroName] ?? agentMacros[macroName.toLowerCase()];
+    },
+    [macroConfig],
+  );
+
+  const handleMacroTrigger = useCallback(
+    async (agentName: string, macroName: string) => {
+      const agentSlug = agentName.trim().toLowerCase();
+      const macroDef = findMacroDefinition(agentSlug, macroName);
+      const macroLabel = macroDef?.description || macroName;
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/macro`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: agentSlug, macro_name: macroName }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const detail = errorData.detail || response.statusText || 'Failed to send macro';
+          throw new Error(detail);
+        }
+
+        pushToast({
+          title: 'Macro sent',
+          message: `${macroLabel} → ${agentName}`,
+          variant: 'success',
+        });
+      } catch (error) {
+        console.error('Failed to send macro:', error);
+        pushToast({
+          title: 'Macro failed',
+          message: error instanceof Error ? error.message : String(error),
+          variant: 'error',
+        });
+      }
+    },
+    [findMacroDefinition, pushToast],
+  );
 
   const handleSendPrompt = async (prompt: string, coderIds: number[]) => {
     if (promptActionPending) {
@@ -1238,6 +1387,8 @@ function App() {
               output={sessionOutputs[conversation.title] ?? ''}
               streamStatus={streamStatuses[conversation.title] ?? 'idle'}
               errorMessage={streamErrors[conversation.title] ?? null}
+              macros={!macrosLoading ? macroConfig[conversation.title.trim().toLowerCase()] : undefined}
+              onMacroTrigger={handleMacroTrigger}
             />
           ))}
           {activeConversations.length === 3 && <div className="col-span-1"></div> /* Blank space for 3 conversations */}
@@ -1262,6 +1413,30 @@ function App() {
           humanActionPending={humanActionPending}
         />
       )}
+
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+        {toasts.map(toast => {
+          const tone = (() => {
+            switch (toast.variant) {
+              case 'success':
+                return 'border-green-500/60 bg-green-500/10 text-green-100';
+              case 'error':
+                return 'border-red-500/60 bg-red-500/10 text-red-100';
+              default:
+                return 'border-blue-400/60 bg-blue-500/10 text-blue-100';
+            }
+          })();
+          return (
+            <div
+              key={toast.id}
+              className={`w-72 rounded-lg border px-4 py-3 shadow-xl backdrop-blur-sm ${tone}`}
+            >
+              <div className="text-sm font-semibold">{toast.title}</div>
+              {toast.message && <div className="mt-1 text-xs text-gray-200">{toast.message}</div>}
+            </div>
+          );
+        })}
+      </div>
 
       <EditInstructionsModal
         isOpen={isEditModalOpen}

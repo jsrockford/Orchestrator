@@ -1,6 +1,8 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { ArrowUp, ArrowDown, X, FilePenLine, Settings, Skull } from 'lucide-react';
 import ControlButton from './ControlButton';
+import MacroDropdown from './MacroDropdown';
+import { MacroDefinition } from '../types';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -16,6 +18,7 @@ export interface Conversation {
 interface ConversationWindowProps {
   conversation: Conversation;
   onControlAction: (modelName: string, action: string) => void;
+  onMacroTrigger: (agentName: string, macroName: string) => void;
   status: 'ready' | 'processing' | 'error';
   projectState: 'idle' | 'running' | 'paused';
   onEditInstructions: (modelName: string) => void;
@@ -23,11 +26,13 @@ interface ConversationWindowProps {
   output: string;
   streamStatus: 'idle' | 'connecting' | 'streaming' | 'error';
   errorMessage?: string | null;
+  macros?: Record<string, MacroDefinition>;
 }
 
 function ConversationWindow({
   conversation,
   onControlAction,
+  onMacroTrigger,
   status,
   projectState,
   onEditInstructions,
@@ -35,6 +40,7 @@ function ConversationWindow({
   output,
   streamStatus,
   errorMessage,
+  macros,
 }: ConversationWindowProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const isStickyRef = useRef(true);
@@ -96,10 +102,33 @@ function ConversationWindow({
     }
   })();
 
+  const macroGroups = useMemo(() => {
+    const grouped: Record<string, { name: string; macro: MacroDefinition }[]> = {
+      slash: [],
+      ctrl: [],
+      shift: [],
+      other: [],
+    };
+
+    if (macros) {
+      Object.entries(macros).forEach(([name, macro]) => {
+        const category = (macro.category || 'other').toLowerCase();
+        const bucket = grouped[category] ? category : 'other';
+        grouped[bucket].push({ name, macro });
+      });
+    }
+
+    return grouped;
+  }, [macros]);
+
+  const availableCategories = useMemo(() => {
+    return (['slash', 'ctrl', 'shift', 'other'] as const).filter(cat => macroGroups[cat]?.length);
+  }, [macroGroups]);
+
   return (
-    <div className="bg-[#252526] border border-[#3e4451] rounded-lg overflow-hidden flex flex-col min-h-0 min-w-[40rem] w-full h-[32rem] max-h-[32rem]">
-      <div className={`${headerColorClass} px-4 py-3 border-b border-[#3e4451] flex items-center justify-between`}>
-        <div className="flex items-center gap-2">
+    <div className="bg-[#252526] border border-[#3e4451] rounded-lg overflow-visible flex flex-col min-h-0 min-w-[40rem] w-full h-[32rem] max-h-[32rem]">
+      <div className={`${headerColorClass} px-4 py-3 border-b border-[#3e4451] flex items-center justify-between gap-3`}>
+        <div className="flex items-center gap-2 min-w-0">
           <h2 className="text-sm font-semibold text-gray-200">
             {conversation.title}
           </h2>
@@ -114,51 +143,63 @@ function ConversationWindow({
             <Settings size={14} />
           </button>
         </div>
+        <div className="flex items-center gap-2">
+          {availableCategories.map(category => (
+            <MacroDropdown
+              key={category}
+              agent={conversation.title}
+              category={category}
+              macros={macroGroups[category]}
+              onSelect={macroName => onMacroTrigger(conversation.title, macroName)}
+              disabled={projectState === 'idle'}
+            />
+          ))}
+        </div>
         <div className="flex items-center gap-4">
           <span className="text-xs uppercase tracking-wide text-gray-300">
             {streamStatusLabel}
           </span>
           <div className="flex gap-2">
-          <ControlButton
-            icon="Esc"
-            onClick={() => onControlAction(conversation.title, 'escape')}
-            title="Escape"
-          />
-          <ControlButton
-            icon="Rsm"
-            onClick={() => onControlAction(conversation.title, 'resume')}
-            title="Resume"
-          />
-          <ControlButton
-            icon={<ArrowUp size={16} />}
-            onClick={() => onControlAction(conversation.title, 'up')}
-            title="Up Key"
-          />
-          <ControlButton
-            icon={<ArrowDown size={16} />}
-            onClick={() => onControlAction(conversation.title, 'down')}
-            title="Down Key"
-          />
-          <ControlButton
-            icon="↵"
-            onClick={() => onControlAction(conversation.title, 'enter')}
-            title="Enter Key"
-          />
-          <button
-            onClick={() => onControlAction(conversation.title, 'kill')}
-            className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
-            title="KILL - Emergency Stop"
-            disabled={projectState === 'idle'}
-          >
-            <Skull size={16} />
-          </button>
-          <button
-            onClick={() => onControlAction(conversation.title, 'close')}
-            className="text-gray-400 hover:text-red-400 transition-colors"
-          >
-            <X size={14} />
-          </button>
-        </div>
+            <ControlButton
+              icon="Esc"
+              onClick={() => onControlAction(conversation.title, 'escape')}
+              title="Escape"
+            />
+            <ControlButton
+              icon="Rsm"
+              onClick={() => onControlAction(conversation.title, 'resume')}
+              title="Resume"
+            />
+            <ControlButton
+              icon={<ArrowUp size={16} />}
+              onClick={() => onControlAction(conversation.title, 'up')}
+              title="Up Key"
+            />
+            <ControlButton
+              icon={<ArrowDown size={16} />}
+              onClick={() => onControlAction(conversation.title, 'down')}
+              title="Down Key"
+            />
+            <ControlButton
+              icon="↵"
+              onClick={() => onControlAction(conversation.title, 'enter')}
+              title="Enter Key"
+            />
+            <button
+              onClick={() => onControlAction(conversation.title, 'kill')}
+              className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+              title="KILL - Emergency Stop"
+              disabled={projectState === 'idle'}
+            >
+              <Skull size={16} />
+            </button>
+            <button
+              onClick={() => onControlAction(conversation.title, 'close')}
+              className="text-gray-400 hover:text-red-400 transition-colors"
+            >
+              <X size={14} />
+            </button>
+          </div>
         </div>
       </div>
 

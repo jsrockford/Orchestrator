@@ -346,3 +346,84 @@ experimental:
   max_retries: 3
   streaming_capture: false
   parallel_sessions: false
+
+interactive_macros:
+  claude:
+    status:
+      command: "/status"
+      description: "Show session status"
+      category: "slash"
+    compact:
+      command: "/compact"
+      description: "Summarize to free context"
+      category: "slash"
+    reset:
+      command: "/reset"
+      description: "Reset the conversation"
+      category: "slash"
+    cycle_permission_mode:
+      keys: ["S-Tab"]
+      description: "Cycle: Auto-Accept → Plan → Normal"
+      category: "shift"
+
+  gemini:
+    chat:
+      command: "/chat"
+      description: "/chat (checkpoint menu)"
+      category: "slash"
+    chat_save:
+      command: "/chat save <tag>"
+      description: "Save checkpoint"
+      category: "slash"
+    chat_resume:
+      command: "/chat resume <tag>"
+      description: "Resume checkpoint"
+      category: "slash"
+    chat_list:
+      command: "/chat list"
+      description: "List checkpoints"
+      category: "slash"
+    mcp:
+      command: "/mcp"
+      description: "List MCP servers/tools"
+      category: "slash"
+    compress:
+      command: "/compress"
+      description: "Summarize to free context"
+      category: "slash"
+    toggle_yolo:
+      keys: ["C-y"]
+      description: "Toggle YOLO mode (auto-approve all)"
+      category: "ctrl"
+
+  codex:
+    set_approvals:
+      command: "/approvals"
+      description: "Open approval policy picker"
+      category: "slash"
+    switch_model:
+      command: "/model"
+      description: "Switch active model"
+      category: "slash"
+    status:
+      command: "/status"
+      description: "Show session status"
+      category: "slash"
+    compact:
+      command: "/compact"
+      description: "Summarize to free context"
+      category: "slash"
+
+  qwen:
+    toggle_yolo:
+      keys: ["S-Tab"]
+      description: "Toggle YOLO mode"
+      category: "shift"
+    mcp:
+      command: "/mcp"
+      description: "List MCP servers/tools"
+      category: "slash"
+    tools:
+      command: "/tools"
+      description: "List tools (desc/nodesc/schema)"
+      category: "slash"

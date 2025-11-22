@@ -7,6 +7,7 @@
 #   status                   Ask orchestrator to log current status
 #   say <agent> <text...>    Inject a prompt for <agent>
 #   key <agent> <key...>     Send raw keys to <agent>
+#   macro <agent> <name>     Trigger a configured macro for <agent>
 #   history [N]              Show last N (default 10) control commands
 #
 # The control pipe defaults to /tmp/orchestrator_control. Override with the
@@ -33,6 +34,7 @@ Commands:
   status                    Ask orchestrator to log its status (also prints snapshot if available)
   say <agent> <text...>     Inject a TEXT command for <agent>
   key <agent> <key...>      Send KEY command to <agent>
+  macro <agent> <name>      Trigger a configured macro for <agent>
   history [N]               Show last N logged commands (default 10)
   help                      Show this message
 
@@ -43,6 +45,7 @@ Examples:
   orchestrator_control.sh pause
   orchestrator_control.sh say gemini "Please summarize progress so far"
   orchestrator_control.sh key qwen Down Down Enter
+  orchestrator_control.sh macro gemini toggle_yolo
   orchestrator_control.sh history 20
 
 Environment:
@@ -208,6 +211,17 @@ case "$command_name" in
       fi
     done
     send_command "KEY $agent ${keys[*]}"
+    ;;
+  macro)
+    if [[ $# -lt 2 ]]; then
+      error "macro command requires an agent and macro name"
+    fi
+    agent=$1
+    macro_name=$2
+    if ! is_valid_agent "$agent"; then
+      error "Invalid agent '$agent'. Valid agents: ${VALID_AGENTS[*]}"
+    fi
+    send_command "MACRO $agent $macro_name"
     ;;
   history)
     count=${1:-10}

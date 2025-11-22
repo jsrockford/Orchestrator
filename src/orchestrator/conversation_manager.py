@@ -9,6 +9,7 @@ higher-level workflows can decide when to stop or escalate a dialogue.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from collections import deque
@@ -2242,6 +2243,11 @@ class ConversationManager:
             self._refresh_status_snapshot(force=True)
             return
 
+        if verb == "MACRO":
+            self._handle_macro_command(command)
+            self._refresh_status_snapshot(force=True)
+            return
+
         # Phase 5: HitL - Control channel commands for human turns
         if verb == "HUMAN_SUBMIT":
             self._handle_human_submit_command(command)
@@ -2690,6 +2696,152 @@ class ConversationManager:
             else:
                 self._set_status_error(None)
         return True
+
+    def _handle_macro_command(self, command: ControlCommand) -> bool:
+        args = list(command.args or [])
+        if len(args) < 2:
+            self.logger.warning(
+                "Control channel: MACRO command requires target and macro name (raw=%s)",
+                command.raw,
+            )
+            self._set_status_error("MACRO command requires target and macro name")
+            return False
+
+        target = args[0].strip()
+        macro_name = args[1].strip()
+        if not target or not macro_name:
+            self.logger.warning("Control channel: MACRO command missing target or macro name")
+            self._set_status_error("MACRO command missing target or macro name")
+            return False
+
+        macro_config_root = get_config().get_section("interactive_macros") or {}
+        if not macro_config_root:
+            self.logger.warning("Control channel: no interactive_macros configured")
+            self._set_status_error("No interactive_macros configured")
+            return False
+
+        targets = self._resolve_targets(target)
+        if not targets:
+            self.logger.warning("Control channel: MACRO target '%s' not recognized", target)
+            self._set_status_error(f"MACRO target '{target}' not recognized")
+            return False
+
+        failures: List[str] = []
+        successes: List[str] = []
+        for resolved in targets:
+            macro_config = self._find_macro_definition(
+                macro_config_root.get(resolved.lower(), {}),
+                macro_name,
+            )
+            if macro_config is None:
+                self.logger.warning(
+                    "Control channel: macro '%s' not found for agent '%s'",
+                    macro_name,
+                    resolved,
+                )
+                failures.append(resolved)
+                continue
+
+            dispatched = self._send_macro_to_agent(resolved, macro_name, macro_config)
+            if dispatched:
+                successes.append(resolved)
+            else:
+                failures.append(resolved)
+
+        if failures and successes:
+            self._set_status_error(f"MACRO dispatched with partial failures: {', '.join(failures)}")
+        elif failures:
+            self._set_status_error(f"MACRO dispatch failed for: {', '.join(failures)}")
+        else:
+            self._set_status_error(None)
+
+        return not failures
+
+    @staticmethod
+    def _find_macro_definition(agent_macros: Dict[str, Any], macro_name: str) -> Optional[Dict[str, Any]]:
+        if not agent_macros or not macro_name:
+            return None
+
+        normalized = macro_name.strip().lower()
+        if normalized in agent_macros:
+            macro_config = agent_macros[normalized]
+            return macro_config if isinstance(macro_config, dict) else None
+
+        for name, macro_config in agent_macros.items():
+            if name.lower() == normalized and isinstance(macro_config, dict):
+                return macro_config
+
+        return None
+
+    def _send_macro_to_agent(
+        self,
+        agent_name: str,
+        macro_name: str,
+        macro_config: Dict[str, Any],
+    ) -> bool:
+        controllers = getattr(self.orchestrator, "controllers", {})
+        if not isinstance(controllers, dict):
+            self.logger.warning(
+                "Control channel: orchestrator controllers unavailable; cannot send macro"
+            )
+            return False
+
+        controller = controllers.get(agent_name)
+        if controller is None:
+            self.logger.warning(
+                "Control channel: controller '%s' not attached; cannot send macro",
+                agent_name,
+            )
+            return False
+
+        sender = getattr(controller, "send_macro", None)
+        if not callable(sender):
+            self.logger.warning(
+                "Control channel: controller '%s' lacks send_macro; cannot send macro '%s'",
+                agent_name,
+                macro_name,
+            )
+            return False
+
+        keys = macro_config.get("keys")
+        command_text = macro_config.get("command")
+        log_detail = ""
+        if keys:
+            log_detail = f"keys={keys}"
+        elif command_text:
+            log_detail = f"command={command_text}"
+
+        try:
+            sender(macro_config)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error(
+                "Control channel: send_macro failed for '%s' (%s): %s",
+                agent_name,
+                macro_name,
+                exc,
+            )
+            return False
+
+        self.logger.info(
+            "Control channel: sent macro '%s' to '%s'%s",
+            macro_name,
+            agent_name,
+            f" ({log_detail})" if log_detail else "",
+        )
+        self._append_control_history(
+            f"[MACRO] agent={agent_name} macro={macro_name} {log_detail}".strip()
+        )
+        return True
+
+    def _append_control_history(self, line: str) -> None:
+        path = os.environ.get("ORCHESTRATOR_CONTROL_HISTORY", "logs/control_channel_history.log")
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(f"{timestamp} | {line}\n")
+        except Exception:  # noqa: BLE001
+            self.logger.debug("Unable to append to control history at %s", path, exc_info=True)
 
     def _send_keys_to_agent(self, agent_name: str, keys: Sequence[str]) -> bool:
         if not keys:

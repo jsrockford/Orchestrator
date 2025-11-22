@@ -195,6 +195,9 @@ class TmuxController(SessionBackend):
         "left": "Left",
         "right": "Right",
         "tab": "Tab",
+        "s-tab": "BTab",
+        "shift-tab": "BTab",
+        "backtab": "BTab",
         "space": "Space",
         "spacebar": "Space",
     }
@@ -837,6 +840,78 @@ class TmuxController(SessionBackend):
             )
 
         self.logger.debug("Sent key '%s' as tmux '%s'", key_name, tmux_key)
+
+    def send_macro(self, macro_config: Mapping[str, Any]) -> None:
+        """
+        Send a macro (shortcut or slash command) to the tmux session.
+
+        Args:
+            macro_config: Mapping containing either ``keys`` (list/str) or ``command`` (str).
+
+        Raises:
+            ValueError: If the macro configuration is missing required fields.
+            SessionNotFoundError: If the tmux session does not exist.
+            SessionBackendError: If tmux rejects the send-keys invocation.
+        """
+        if macro_config is None:
+            raise ValueError("Macro config is required")
+
+        if "keys" in macro_config:
+            keys = macro_config.get("keys")
+            if isinstance(keys, str):
+                keys_to_send = [keys]
+            elif isinstance(keys, Sequence):
+                keys_to_send = [key for key in keys if key]
+            else:
+                raise ValueError("Macro keys must be a string or sequence of strings")
+
+            if not keys_to_send:
+                raise ValueError("Macro keys must not be empty")
+
+            for key in keys_to_send:
+                key_str = str(key)
+                if key_str.strip().lower() in {"s-tab", "shift-tab", "backtab"}:
+                    self._send_shift_tab()
+                    continue
+                self.send_key(key_str)
+            self.logger.debug("Sent macro keys %s to tmux session '%s'", keys_to_send, self.session_name)
+            return
+
+        if "command" in macro_config:
+            command_text = macro_config.get("command")
+            if not command_text or not isinstance(command_text, str):
+                raise ValueError("Macro command must be a non-empty string")
+
+            self.send_text(command_text)
+            self.send_enter()
+            self.logger.debug(
+                "Sent macro command '%s' to tmux session '%s'",
+                command_text,
+                self.session_name,
+            )
+            return
+
+        raise ValueError("Macro config must include either 'keys' or 'command'")
+
+    def _send_shift_tab(self) -> None:
+        """Send Shift+Tab reliably using an ANSI backtab literal, with tmux fallback."""
+        try:
+            result = self._run_tmux_command(["send-keys", "-t", self.session_name, "-l", "\033[Z"])
+        except TmuxError as exc:  # noqa: PERF203
+            raise SessionBackendError(f"Failed to send Shift+Tab: {exc}") from exc
+
+        if result.returncode == 0:
+            self.logger.debug("Sent Shift+Tab as literal ESC[Z to tmux session '%s'", self.session_name)
+            return
+
+        stderr = (result.stderr or "").strip()
+        self.logger.debug("Literal ESC[Z failed (%s), falling back to BTab", stderr or "unknown")
+        try:
+            self.send_key("BTab")
+        except SessionBackendError as exc:
+            raise SessionBackendError(
+                f"Failed to send Shift+Tab as BTab after literal attempt: {exc}"
+            ) from exc
 
     def _normalize_send_key(self, key_name: str) -> Optional[str]:
         normalized = key_name.strip()

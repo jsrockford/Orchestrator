@@ -166,6 +166,12 @@ class ModelSettingsUpdate(BaseModel):
     overrides: Dict[str, Any] = Field(default_factory=dict)
 
 
+class MacroRequest(BaseModel):
+    """Request body for triggering an interactive macro."""
+    agent: str = Field(..., description="Target agent name (e.g., claude, gemini)")
+    macro_name: str = Field(..., description="Macro name defined in config.yaml")
+
+
 # Mapping of model names to their instruction files
 INSTRUCTION_FILES = {
     "Claude": "CLAUDE.md",
@@ -496,6 +502,28 @@ def normalize_key_name(key_name: str) -> str:
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"Unsupported key '{key_name}'",
     )
+
+
+def _load_macro_config() -> Dict[str, Any]:
+    """Return the interactive_macros configuration (empty dict if missing)."""
+    raw = get_config().get_section("interactive_macros") or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _find_macro(agent_macros: Dict[str, Any], macro_name: str) -> Optional[Dict[str, Any]]:
+    """Case-insensitive lookup for a macro definition."""
+    if not agent_macros or not macro_name:
+        return None
+
+    normalized = macro_name.strip().lower()
+    if normalized in agent_macros:
+        candidate = agent_macros[normalized]
+        return candidate if isinstance(candidate, dict) else None
+
+    for name, candidate in agent_macros.items():
+        if name.lower() == normalized and isinstance(candidate, dict):
+            return candidate
+    return None
 
 
 def normalize_model_names(models: Sequence[str]) -> List[str]:
@@ -971,6 +999,95 @@ def register_control_routes(app: FastAPI) -> None:
                 "host": orchestrator.api_host,
                 "port": orchestrator.api_port,
             },
+        }
+
+    @app.get("/api/macros", tags=["control"])
+    async def list_macros() -> Dict[str, Any]:
+        """
+        Return the configured interactive macros for each agent.
+        """
+        return _load_macro_config()
+
+    @app.post("/api/macro", tags=["control"])
+    async def trigger_macro(
+        request: MacroRequest,
+        orchestrator=Depends(get_orchestrator),
+    ) -> Dict[str, Any]:
+        """
+        Trigger a configured macro for the specified agent.
+        """
+        macro_config_root = _load_macro_config()
+        if not macro_config_root:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No interactive macros configured",
+            )
+
+        agent = request.agent.strip().lower()
+        if not agent:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent is required",
+            )
+
+        if agent not in orchestrator.controllers:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown agent '{agent}'",
+            )
+
+        agent_macros = macro_config_root.get(agent)
+        macro_def = _find_macro(agent_macros, request.macro_name)
+        if macro_def is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Macro '{request.macro_name}' not found for agent '{agent}'",
+            )
+
+        controller = orchestrator.controllers.get(agent)
+        sender = getattr(controller, "send_macro", None)
+        if not callable(sender):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=f"Controller '{agent}' does not support send_macro()",
+            )
+
+        try:
+            sender(macro_def)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to send macro '%s' to %s: %s", request.macro_name, agent, exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send macro: {exc}",
+            ) from exc
+
+        description = macro_def.get("description")
+        keys = macro_def.get("keys")
+        command = macro_def.get("command")
+        timestamp = datetime.utcnow().isoformat() + "Z"
+        event_payload = {
+            "event": "macro_executed",
+            "agent": agent,
+            "macro_name": request.macro_name,
+            "description": description,
+            "keys": keys,
+            "command": command,
+            "timestamp": timestamp,
+        }
+        try:
+            broadcast_event_sync(event_payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to broadcast macro_executed event: %s", exc)
+
+        return {
+            "success": True,
+            "message": f"Macro '{request.macro_name}' sent to agent '{agent}'",
+            "agent": agent,
+            "macro": request.macro_name,
+            "description": description,
+            "keys": keys,
+            "command": command,
+            "timestamp": timestamp,
         }
 
     @app.post("/api/control/start-sessions", tags=["control"])
