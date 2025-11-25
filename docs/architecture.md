@@ -71,6 +71,27 @@ This document provides the shared mental model for how the AI Development Team O
 4. **Loop / Stall Protection**: Loop detection monitors repeated tool invocations. Auto-restart utilities and health checks can restart crashed tmux sessions.
 5. **Human Override**: Control channel or tmux attach triggers automation pause. Once the session is safe again, queued prompts resume in FIFO order.
 
+## Context Clear Signal Flow
+
+Orchestrator mediates `[[CLEAR]]` markers so agents can reset context without self-clearing their CLIs.
+
+1. **Detection**: `ConversationManager` scans orchestrated turns (and MessageBoard polling, when enabled) for `[[CLEAR]]`, `[[CLEAR:agent]]`, or `[[CLEAR:all]]` using a whitelist of valid sources.
+2. **Cooldown + Targeting**: Per-agent cooldown (default 30s) blocks rapid repeats. Unscoped `[[CLEAR]]` targets only the emitting agent; `[[CLEAR:all]]` fans out to all active agents.
+3. **Dispatch**: `orchestrator.dispatch_command` invokes controller `send_command`/`send_macro` with model-specific clear commands (`/new` for Codex, `/clear` for others).
+4. **Post-Clear Prompt**: After ready-state, orchestrator injects: `Context cleared. Re-read PRD.md, ARCHITECTURE.md, and the next section of PROJECT_TASKS.md before continuing.`
+5. **Logging & Status**: Events append to `logs/context_clears.log` and update `clear_stats` in `ConversationManager.get_status_snapshot()` (totals, per-agent counts, last clear/failure).
+
+### Clear Sequence (Example)
+
+```
+Agent response → ConversationManager detects [[CLEAR:codex]]
+              → cooldown check passes
+              → orchestrator.dispatch_command("codex", "/new")
+              → controller executes tmux send + waits for ready
+              → orchestrator injects post-clear prompt to codex
+              → clear event logged + status snapshot refreshed
+```
+
 ## Future Extensions
 
 The roadmap in `docs/ARCHIVE/AI_Development_Team_Orchestration_System.md` outlines additional layers (phase manager, task decomposer, CLI). When implementing them, extend this document with:

@@ -170,8 +170,9 @@ This creates a **unidirectional flow** that prevents premature implementation an
   1. Read relevant PRD sections and architecture docs
   2. Implement the feature or component
   3. Write tests to validate behavior
-  4. Update PROJECT_TASKS.md to mark task complete
-  5. Commit changes with descriptive messages
+  4. Update PROJECT_TASKS.md to mark task complete and note any checkpoint meta-tasks that were executed
+  5. Emit `[[CLEAR:agent]]` at checkpoint boundaries (or when token usage is high), then re-read PRD.md, ARCHITECTURE.md, and the next PROJECT_TASKS.md section
+  6. Commit changes with descriptive messages
 
 **Step 3: Integration and Testing**
 - Combine components as tasks are completed
@@ -240,6 +241,7 @@ Key communication files:
 - Models must **announce** when they update a shared file (via MessageBoard.md)
 - Models must **re-read** files when another model signals an update
 - Models must **never edit another model's instruction file** (GEMINI.md, CLAUDE.md, CODEX.md)
+- Models must **emit `[[CLEAR]]`** at planned checkpoints or when nearing token limits; orchestrator executes the clear and injects re-read prompts
 - Conversational exchanges are ephemeral—capture important content in files
 
 #### 2. Tmux Session Management
@@ -432,7 +434,11 @@ If you are an AI model operating within this system, follow these principles:
 - Make them complete, clear, and actionable
 - Don't leave placeholders or TODOs
 
-### 6. **Collaborate, Don't Duplicate**
+### 6. **Use Checkpoints to Protect Context**
+- Follow checkpoint meta-tasks in PROJECT_TASKS.md: finish the section, emit `[[CLEAR:yourname]]`, re-read PRD/ARCH/next tasks, then resume
+- If token usage is high or confusion arises mid-task, emit `[[CLEAR:yourname]]` via MessageBoard.md to avoid token exhaustion (orchestrator enforces cooldowns)
+
+### 7. **Collaborate, Don't Duplicate**
 - If another model is already working on a task, don't redo it
 - Build on each other's work
 - Provide constructive feedback, not criticism

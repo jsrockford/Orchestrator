@@ -261,6 +261,63 @@ class ConversationManager:
             self._status_file_path = None
         self._status_last_written_at: Optional[float] = None
 
+        context_cfg = get_config().get_section("context_management") or {}
+        self._clear_enabled: bool = bool(context_cfg.get("enabled", False))
+        raw_pattern = context_cfg.get("clear_signal")
+        if raw_pattern and "(" in str(raw_pattern):
+            pattern = str(raw_pattern)
+        else:
+            pattern = r"\[\[CLEAR(?::(\w+|all))?\]\]"
+        try:
+            self._clear_pattern = re.compile(pattern)
+        except re.error:
+            self.logger.error("Invalid CLEAR pattern '%s'; disabling context clears", pattern)
+            self._clear_enabled = False
+            self._clear_pattern = re.compile(r"$^")
+        contexts = context_cfg.get("valid_contexts") or []
+        self._clear_valid_contexts: Set[str] = {
+            str(ctx).strip().lower() for ctx in contexts if isinstance(ctx, str) and ctx.strip()
+        }
+        if not self._clear_valid_contexts:
+            self._clear_valid_contexts = {"orchestrated_turn", "messageboard.md"}
+        try:
+            debounce_seconds = int(context_cfg.get("debounce_seconds", 30))
+        except (TypeError, ValueError):
+            debounce_seconds = 30
+        self._clear_debounce_seconds: int = max(0, debounce_seconds)
+        default_clear_commands = {
+            "claude": "/clear",
+            "gemini": "/clear",
+            "qwen": "/clear",
+            "codex": "/new",
+        }
+        agents_cfg = context_cfg.get("agents") or {}
+        for name, payload in agents_cfg.items():
+            if not isinstance(payload, dict):
+                continue
+            command = payload.get("clear_command")
+            if isinstance(command, str) and command.strip():
+                default_clear_commands[name.strip().lower()] = command.strip()
+        self._clear_commands = default_clear_commands
+        self._clear_post_prompt: str = (
+            context_cfg.get("post_clear_prompt")
+            or "Context cleared. Re-read PRD.md, ARCHITECTURE.md, and the next section of PROJECT_TASKS.md before continuing."
+        )
+        self._clear_required_rereads: List[str] = [
+            item for item in context_cfg.get("required_rereads", []) if isinstance(item, str) and item.strip()
+        ]
+        log_level_name = str(context_cfg.get("log_level", "INFO")).upper()
+        self._clear_log_level = getattr(logging, log_level_name, logging.INFO)
+        self._clear_log_path = Path(context_cfg.get("log_file") or "logs/context_clears.log")
+        self._clear_logger = self._build_clear_logger()
+        self._clear_last_ts: Dict[str, float] = {}
+        self._clear_stats: Dict[str, Any] = {
+            "total": 0,
+            "per_agent": {},
+            "last_clear_ts": {},
+            "last_failure": None,
+        }
+
         self.human_control_mode: bool = False
         self._current_agent: Optional[str] = None
         self._injected_messages: Deque[Dict[str, Any]] = deque()
@@ -558,6 +615,14 @@ class ConversationManager:
                 elif parsed_output:
                     response = parsed_output.response
 
+                clear_result = self._process_clear_signals(
+                    speaker=speaker,
+                    response=response,
+                    topic=topic,
+                    source="orchestrated_turn",
+                    turn_index=self._turn_counter,
+                )
+
                 turn_record = {
                     "turn": self._turn_counter,
                     "speaker": speaker,
@@ -594,6 +659,8 @@ class ConversationManager:
                 self._record_turn_activity(speaker, turn_record)
 
                 metadata = turn_record.setdefault("metadata", {})
+                if clear_result:
+                    metadata["clear_signal"] = clear_result
                 if injected_into_prompt:
                     metadata["injection_applied"] = True
                 loop_info = self._update_loop_state(conversation)
@@ -885,6 +952,255 @@ class ConversationManager:
         )
         return updated_prompt, True
 
+    def _process_clear_signals(
+        self,
+        *,
+        speaker: str,
+        response: Optional[str],
+        topic: str,
+        source: str,
+        turn_index: int,
+    ) -> Optional[Dict[str, Any]]:
+        if not self._clear_enabled or not response:
+            return None
+
+        normalized_source = (source or "").strip().lower()
+        if normalized_source not in self._clear_valid_contexts:
+            self.logger.debug(
+                "Ignoring [[CLEAR]] from disallowed source '%s' (turn=%s)",
+                source,
+                turn_index,
+            )
+            return None
+
+        matches = list(self._clear_pattern.finditer(response))
+        if not matches:
+            return None
+
+        now = time.time()
+        requested_targets: Set[str] = set()
+        for match in matches:
+            target_token = match.group(1) if match.lastindex else None
+            targets = self._resolve_clear_targets_for_signal(target_token, speaker)
+            requested_targets.update(targets)
+
+        if not requested_targets:
+            return None
+
+        allowed_targets, skipped = self._filter_clear_targets_by_cooldown(requested_targets, now)
+        for skipped_target in skipped:
+            self._log_clear_event(
+                status="cooldown_skipped",
+                targets=[skipped_target],
+                source=normalized_source,
+                topic=topic,
+                turn_index=turn_index,
+                reason=f"Debounce {self._clear_debounce_seconds}s active",
+            )
+
+        if not allowed_targets:
+            return {"source": source, "targets": [], "skipped": list(skipped)}
+
+        self._handle_clear_signal(
+            emitting_agent=speaker,
+            targets=allowed_targets,
+            source=normalized_source,
+            topic=topic,
+            turn_index=turn_index,
+        )
+
+        return {"source": source, "targets": list(allowed_targets)}
+
+    def _resolve_clear_targets_for_signal(self, target_token: Optional[str], emitting_agent: str) -> Set[str]:
+        if not target_token:
+            return {emitting_agent} if emitting_agent else set()
+
+        token = target_token.strip().lower()
+        if token == "all":
+            return set(self._get_active_participants())
+
+        active = self._get_active_participants()
+        for participant in active:
+            if participant.lower() == token:
+                return {participant}
+
+        self.logger.debug(
+            "CLEAR signal ignored for unknown target '%s' (emitter=%s)",
+            target_token,
+            emitting_agent,
+        )
+        return set()
+
+    def _filter_clear_targets_by_cooldown(
+        self,
+        targets: Set[str],
+        now: float,
+    ) -> Tuple[Set[str], Set[str]]:
+        if self._clear_debounce_seconds <= 0:
+            return set(targets), set()
+
+        allowed: Set[str] = set()
+        skipped: Set[str] = set()
+        for target in targets:
+            last_ts = self._clear_last_ts.get(target)
+            if last_ts is not None and now - last_ts < self._clear_debounce_seconds:
+                skipped.add(target)
+            else:
+                allowed.add(target)
+        return allowed, skipped
+
+    def _handle_clear_signal(
+        self,
+        *,
+        emitting_agent: str,
+        targets: Set[str],
+        source: str,
+        topic: str,
+        turn_index: int,
+    ) -> None:
+        timestamp = time.time()
+        succeeded: List[str] = []
+        failures: List[Tuple[str, str]] = []
+        for target in sorted(targets):
+            success, error_reason = self._dispatch_clear_for_target(target)
+            if success:
+                succeeded.append(target)
+                self._clear_last_ts[target] = timestamp
+                self._clear_stats["last_clear_ts"][target] = timestamp
+                self._clear_stats["per_agent"][target] = (
+                    self._clear_stats["per_agent"].get(target, 0) + 1
+                )
+            else:
+                failures.append((target, error_reason or "dispatch_failed"))
+
+        if succeeded:
+            self._clear_stats["total"] += len(succeeded)
+            self._log_clear_event(
+                status="cleared",
+                targets=succeeded,
+                source=source,
+                topic=topic,
+                turn_index=turn_index,
+                reason=f"emitter={emitting_agent}",
+            )
+            for target in succeeded:
+                self._inject_post_clear_prompt(target, topic)
+
+        if failures:
+            reason = "; ".join(f"{name}:{msg}" for name, msg in failures)
+            self._record_clear_failure(reason, targets=[name for name, _ in failures])
+            self._log_clear_event(
+                status="clear_failed",
+                targets=[name for name, _ in failures],
+                source=source,
+                topic=topic,
+                turn_index=turn_index,
+                reason=reason,
+            )
+
+    def _dispatch_clear_for_target(self, target: str) -> Tuple[bool, Optional[str]]:
+        command = self._clear_commands.get(target.lower())
+        if not command:
+            return False, "no_clear_command"
+
+        dispatch_fn = getattr(self.orchestrator, "dispatch_command", None)
+        if not callable(dispatch_fn):
+            return False, "dispatch_unavailable"
+
+        try:
+            summary = dispatch_fn(target, command)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Clear dispatch failed for '%s': %s", target, exc)
+            return False, str(exc)
+
+        summary = summary or {}
+        dispatched = summary.get("dispatched")
+        queued = summary.get("queued")
+        if dispatched or queued or not summary:
+            controller = getattr(self.orchestrator, "controllers", {}).get(target, None)
+            if controller:
+                try:
+                    self._wait_for_controller(target, controller)
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("wait_for_ready after clear failed for '%s'", target, exc_info=True)
+            return True, None
+
+        return False, "dispatch_not_sent"
+
+    def _inject_post_clear_prompt(self, target: str, topic: str) -> None:
+        metadata = {"source": "context_clear", "targets": [target], "topic": topic}
+        # Treat post-clear instructions as system-level so they are not attributed to an agent.
+        self.inject_message("system", self._clear_post_prompt, metadata=metadata)
+
+    def _log_clear_event(
+        self,
+        *,
+        status: str,
+        targets: Sequence[str],
+        source: str,
+        topic: str,
+        turn_index: int,
+        reason: Optional[str] = None,
+    ) -> None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        target_list = ", ".join(targets)
+        message = (
+            f"{timestamp} status={status} targets={target_list} source={source} "
+            f"turn={turn_index} topic={topic or '-'}"
+        )
+        if reason:
+            message = f"{message} reason={reason}"
+        if self._clear_logger:
+            self._clear_logger.info(message)
+        else:
+            self.logger.info("[context-clear] %s", message)
+
+    def _record_clear_failure(self, reason: str, *, targets: Optional[Sequence[str]] = None) -> None:
+        failure = {
+            "timestamp": time.time(),
+            "reason": reason,
+        }
+        if targets:
+            failure["targets"] = list(targets)
+        self._clear_stats["last_failure"] = failure
+
+    def _get_clear_stats_snapshot(self) -> Dict[str, Any]:
+        return {
+            "enabled": self._clear_enabled,
+            "total": self._clear_stats.get("total", 0),
+            "per_agent": dict(self._clear_stats.get("per_agent", {})),
+            "last_clear_ts": dict(self._clear_stats.get("last_clear_ts", {})),
+            "last_failure": (
+                dict(self._clear_stats["last_failure"]) if self._clear_stats.get("last_failure") else None
+            ),
+            "cooldown_seconds": self._clear_debounce_seconds,
+        }
+
+    def _build_clear_logger(self) -> Optional[logging.Logger]:
+        try:
+            self._clear_log_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:  # noqa: BLE001
+            self.logger.debug("Failed to ensure context clear log directory: %s", self._clear_log_path, exc_info=True)
+
+        logger = logging.getLogger("orchestrator.context_clear")
+        logger.setLevel(self._clear_log_level)
+        logger.propagate = False
+        existing_files = {
+            getattr(handler, "baseFilename", None) for handler in logger.handlers if hasattr(handler, "baseFilename")
+        }
+        log_path_str = str(self._clear_log_path)
+        if log_path_str not in existing_files:
+            try:
+                handler = logging.FileHandler(log_path_str)
+                handler.setLevel(self._clear_log_level)
+                formatter = logging.Formatter("%(message)s")
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+            except Exception:  # noqa: BLE001
+                self.logger.debug("Failed to configure context clear logger at %s", log_path_str, exc_info=True)
+                return None
+        return logger
+
     def get_status_snapshot(self) -> Dict[str, Any]:
         """
         Return a lightweight snapshot describing the current discussion.
@@ -907,6 +1223,7 @@ class ConversationManager:
             "awaiting_turn_extension": self._awaiting_turn_extension,
             "last_activity_at": self._last_activity_at,
             "run_started_at": self._run_started_at,
+            "clear_stats": self._get_clear_stats_snapshot(),
             # Phase 3: HitL - Human turn state
             "waiting_on_human": self._waiting_on_human,
             "bypass_human": self._bypass_human,
@@ -1853,6 +2170,14 @@ class ConversationManager:
         elif parsed_output:
             response_text = parsed_output.response
 
+        clear_result = self._process_clear_signals(
+            speaker=agent_name,
+            response=response_text,
+            topic=context.get("topic") or "manual-intervention",
+            source="orchestrated_turn",
+            turn_index=self._turn_counter,
+        )
+
         topic = context.get("topic") or "manual-intervention"
         prompt = context.get("prompt")
         dispatch_summary = context.get("dispatch_summary") or {}
@@ -1895,6 +2220,8 @@ class ConversationManager:
         self._record_turn_activity(agent_name, turn_record)
 
         metadata = turn_record.setdefault("metadata", {})
+        if clear_result:
+            metadata["clear_signal"] = clear_result
         loop_info = self._update_loop_state(conversation)
         if loop_info:
             metadata["loop_detected"] = True
@@ -2324,6 +2651,8 @@ class ConversationManager:
                 }
             )
 
+        clear_stats = self._get_clear_stats_snapshot()
+
         return {
             "mode": "PAUSED" if self.human_control_mode else "RUNNING",
             "status_level": status_level,
@@ -2336,6 +2665,7 @@ class ConversationManager:
             "idle_seconds": idle_seconds,
             "participants": participants,
             "error_message": self._status_error,
+            "clear_stats": clear_stats,
         }
 
     def _render_status_payload(self, payload: Dict[str, Any], *, colorize: bool) -> str:
