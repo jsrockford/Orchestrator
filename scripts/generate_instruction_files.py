@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 import json
+import shutil
 
 
 # ============================================================================
@@ -71,7 +72,8 @@ ROLE_DEFAULTS = {
             'Estimate effort and define realistic timeline',
             'Identify project risks and mitigation strategies',
             'Create PROJECT_TASKS.md as primary deliverable',
-            'Ensure all PRD requirements are covered by tasks'
+            'Ensure all PRD requirements are covered by tasks',
+            'Embed checkpoint meta-tasks that instruct agents to emit [[CLEAR]] and re-read PRD/ARCH/NEXT tasks'
         ],
         'secondary_responsibilities': [
             'Ensure tasks are properly scoped for clear progress tracking',
@@ -88,7 +90,8 @@ ROLE_DEFAULTS = {
             'Define technical approach and design patterns',
             'Identify technical risks and dependencies',
             'Create ARCHITECTURE.md as primary deliverable',
-            'Ensure architecture is feasible and maintainable'
+            'Ensure architecture is feasible and maintainable',
+            'Add checkpoint guidance so PROJECT_TASKS.md includes [[CLEAR]] emits at section boundaries'
         ],
         'secondary_responsibilities': [
             'Validate technical feasibility of task breakdown',
@@ -104,12 +107,14 @@ ROLE_DEFAULTS = {
             'Follow best practices and coding standards',
             'Create unit and integration tests',
             'Document code and usage',
-            'Collaborate with Code Reviewer on quality'
+            'Collaborate with Code Reviewer on quality',
+            'Emit [[CLEAR:agent]] at checkpoints or when token usage is high, then re-read PRD/ARCH/next PROJECT_TASKS section'
         ],
         'secondary_responsibilities': [
             'Debug and fix issues',
             'Optimize performance where needed',
-            'Handle edge cases properly'
+            'Handle edge cases properly',
+            'Request clears via MessageBoard.md if context drifts mid-task'
         ],
         'lead_authority': 'Final say on implementation details, code structure, and technical approach'
     },
@@ -120,12 +125,14 @@ ROLE_DEFAULTS = {
             'Verify PRD requirements are met',
             'Identify edge cases that aren\'t handled',
             'Provide constructive feedback',
-            'Approve code when ready'
+            'Approve code when ready',
+            'Trigger [[CLEAR]] at review checkpoints to ensure fresh context on new modules'
         ],
         'secondary_responsibilities': [
             'Suggest improvements (non-blocking)',
             'Verify test coverage',
-            'Check documentation quality'
+            'Check documentation quality',
+            'Request clears when review scope shifts to a new feature area'
         ],
         'support_authority': 'Quality gate - must approve before completion'
     }
@@ -203,6 +210,7 @@ PHASE_WORKFLOWS = {
                     'Create ARCHITECTURE.md and PROJECT_TASKS.md',
                     'Define milestones and timeline',
                     'Identify risks and mitigation plans',
+                    'Add checkpoints to PROJECT_TASKS.md (every 3-5 major tasks) with [[CLEAR:agent]] instructions and re-read steps',
                     'Get teammate review and approval',
                     'Signal [[PROJECT_COMPLETE]] when both agree'
                 ],
@@ -229,6 +237,7 @@ PHASE_WORKFLOWS = {
                 'steps': [
                     'Implement tasks in dependency order',
                     'Write tests for each feature',
+                    'At each checkpoint meta-task: emit [[CLEAR:agent]], wait for post-clear prompt, re-read PRD/ARCH/next PROJECT_TASKS section',
                     'Self-review before requesting review',
                     'Fix issues found during self-review'
                 ],
@@ -795,6 +804,7 @@ class InstructionFileGenerator:
         self._generate_readme(config, output_dir)
         self._generate_session_mapping(config, output_dir)
         self._generate_user_request_template(config, output_dir)
+        self._copy_checkpoint_templates(output_dir)
 
         # Save configuration
         self._save_config(config, output_dir)
@@ -944,6 +954,22 @@ class InstructionFileGenerator:
 - You can decide autonomously: [TODO: List autonomous decisions]
 - Requires {other_role_name} consensus: [TODO: List collaborative decisions]"""
 
+        context_section = ""
+        if phase_name == "Planning":
+            context_section = """
+## Context Management & Checkpoints
+- Embed checkpoint meta-tasks in PROJECT_TASKS.md using `templates/PROJECT_TASKS_with_checkpoints.md` and `templates/CHECKPOINT_meta_task.md`.
+- Each checkpoint should instruct the target agent to emit `[[CLEAR:agent]]`, then re-read PRD.md, ARCHITECTURE.md, and the next PROJECT_TASKS.md section.
+- Default cadence: every 3–5 major tasks or at module boundaries; increase frequency for risky areas.
+- Reference: docs/Context_Management_Guide.md."""
+        elif phase_name == "Implementation":
+            context_section = f"""
+## Context Management & Checkpoints
+- Honor checkpoint meta-tasks: after completing the section, emit `[[CLEAR:{role_name.lower()}]]` (or the appropriate agent name), wait for the orchestrator to clear, then re-read PRD.md, ARCHITECTURE.md, and the next PROJECT_TASKS.md section.
+- If token usage is high (~60–70%) or context drifts mid-task, emit `[[CLEAR:{role_name.lower()}]]` via MessageBoard.md.
+- Clearing does not lose progress—files are the source of truth.
+- References: docs/Context_Management_Guide.md and the checkpoint templates under templates/."""
+
         return f"""
 ## Your Role: {role_name} ({phase_name} Phase)
 
@@ -987,6 +1013,8 @@ class InstructionFileGenerator:
 ## Collaboration Protocols
 
 {collab_section}
+
+{context_section}
 
 ## Common Pitfalls to Avoid
 
@@ -1085,6 +1113,7 @@ This project uses a {config.num_phases}-phase orchestrated AI workflow:
 ## Usage
 
 See `SESSION_MAPPING.md` for detailed instructions on running each phase.
+Checkpoint templates (`PROJECT_TASKS_with_checkpoints.md`, `CHECKPOINT_meta_task.md`) have been copied here to embed [[CLEAR]] checkpoints in PROJECT_TASKS.md. Context clearing protocol is documented in docs/Context_Management_Guide.md.
 
 ## Customization Needed
 
@@ -1108,6 +1137,22 @@ Search for `TODO:` in each file and customize accordingly.
             f.write(content)
 
         print(f"  Created: README.md")
+
+    def _copy_checkpoint_templates(self, output_dir: Path) -> None:
+        """Copy checkpoint/task templates into the project output directory for convenience."""
+        sources = [
+            self.templates_dir / "PROJECT_TASKS_with_checkpoints.md",
+            self.templates_dir / "CHECKPOINT_meta_task.md",
+            self.templates_dir / "ROLE_Architect_Planning.md",
+            self.templates_dir / "ROLE_ProjectManager_Planning.md",
+            self.templates_dir / "ROLE_LeadDeveloper_Implementation.md",
+            self.templates_dir / "ROLE_CodeReviewer_Implementation.md",
+        ]
+        for src in sources:
+            if src.exists():
+                dest = output_dir / src.name
+                shutil.copy(src, dest)
+                print(f"  Added template: {src.name}")
 
     def _generate_session_mapping(self, config: ProjectConfig, output_dir: Path):
         """Generate SESSION_MAPPING.md with usage instructions"""

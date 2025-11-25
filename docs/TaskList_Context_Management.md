@@ -193,14 +193,14 @@ This document tracks the implementation of the [[CLEAR]] marker system for unive
 ---
 
 ## Phase 4: Instruction Generator Integration
-- [ ] Update `scripts/generate_instruction_files.py` to embed token-management guidance
-  - [ ] Add checkpoint/CLEAR responsibilities to Planning roles (Architect/EngineeringManager/TechnicalLead)
-  - [ ] Add checkpoint/CLEAR responsibilities to Implementation roles (LeadDeveloper/CodeReviewer)
-  - [ ] Inject references to `docs/Context_Management_Guide.md` and checkpoint templates in generated outputs
+- [x] Update `scripts/generate_instruction_files.py` to embed token-management guidance
+  - [x] Add checkpoint/CLEAR responsibilities to Planning roles (Architect/EngineeringManager/TechnicalLead)
+  - [x] Add checkpoint/CLEAR responsibilities to Implementation roles (LeadDeveloper/CodeReviewer)
+  - [x] Inject references to `docs/Context_Management_Guide.md` and checkpoint templates in generated outputs
   - [ ] Include prompt questions that collect checkpoint frequency and target agents for clears
-- [ ] Wire new templates into generation
-  - [ ] Include `templates/ROLE_Architect_Planning.md`, `templates/ROLE_ProjectManager_Planning.md`, `templates/ROLE_LeadDeveloper_Implementation.md`, `templates/ROLE_CodeReviewer_Implementation.md`
-  - [ ] Offer `templates/PROJECT_TASKS_with_checkpoints.md` and `templates/CHECKPOINT_meta_task.md` when generating task artifacts
+- [x] Wire new templates into generation
+  - [x] Include `templates/ROLE_Architect_Planning.md`, `templates/ROLE_ProjectManager_Planning.md`, `templates/ROLE_LeadDeveloper_Implementation.md`, `templates/ROLE_CodeReviewer_Implementation.md`
+  - [x] Offer `templates/PROJECT_TASKS_with_checkpoints.md` and `templates/CHECKPOINT_meta_task.md` when generating task artifacts
 - [ ] Add tests/fixtures for generator
   - [ ] Verify generated instruction files mention `[[CLEAR]]` usage and post-clear protocol
   - [ ] Verify PROJECT_TASKS templates include checkpoint meta-tasks
