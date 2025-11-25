@@ -18,6 +18,7 @@ This document tracks the implementation of the [[CLEAR]] marker system for unive
   - [ ] Implement regex to match: `[[CLEAR]]`, `[[CLEAR:claude]]`, `[[CLEAR:codex]]`, `[[CLEAR:gemini]]`, `[[CLEAR:qwen]]`, `[[CLEAR:all]]`
   - [ ] Extract target agent(s) from scoped signals
   - [ ] **DECISION:** Handle unscoped `[[CLEAR]]` as emitting agent only (for safety)
+  - Implementation anchor: hook detection right after responses are parsed and before `turn_record` is appended in `ConversationManager.facilitate_discussion` (post-validation, before `_store_turn`). Capture `speaker`, `response`, and the emitting agent name for default targeting.
 
 ### 1.2 Context Validation & Safety
 - [ ] Implement context validation rules (WHITELIST approach)
@@ -25,10 +26,11 @@ This document tracks the implementation of the [[CLEAR]] marker system for unive
   - [ ] Only honor [[CLEAR]] in MessageBoard.md posts
   - [ ] Ignore [[CLEAR]] in all other files (PRD.md, source code, docs, comments)
   - [ ] Use whitelist of valid contexts (orchestrated_turn, MessageBoard.md) rather than file pattern blacklist
-- [ ] Implement debounce/cooldown mechanism
+  - [ ] Implement debounce/cooldown mechanism
   - [ ] Track last clear timestamp per agent
   - [ ] Enforce 30-second minimum between clears for same agent
   - [ ] Log and skip clears that violate cooldown
+  - Implementation anchor: maintain per-agent timestamps in `ConversationManager` (new dict alongside `_agent_activity`); enforcement happens in the same detection block before firing clears. For `[[CLEAR:all]]`, apply the per-agent cooldown as you iterate the target set.
 
 ### 1.3 Clear Execution Logic
 - [ ] Implement clear command execution in orchestrator
@@ -37,15 +39,20 @@ This document tracks the implementation of the [[CLEAR]] marker system for unive
     - Gemini: `/clear`
     - Qwen: `/clear`
     - Codex: `/new` (NOT /clear)
+  - [ ] Dispatch clears via existing controller path (`orchestrator.dispatch_command`) using controller `send_command`/`send_macro` for slash commands. No new transport needed.
   - [ ] Send appropriate clear command to target tmux session(s) via controller
   - [ ] Handle [[CLEAR:all]] to clear all active agents
   - [ ] Handle scoped clears for individual agents
-  - [ ] Add error handling for failed clear attempts
-- [ ] Implement post-clear prompt injection
-  - [ ] Construct prompt: "Context cleared. Re-read PRD.md, ARCHITECTURE.md, and the next section of PROJECT_TASKS.md before continuing."
-  - [ ] Note: Section number determination deferred (no reliable resolver yet; keep prompt generic)
-  - [ ] Send prompt to cleared agent(s) immediately after clear
-  - [ ] Wait for agent ready state before injecting prompt
+  - [ ] Debounce applies per agent, including when [[CLEAR:all]] is broadcast
+  - [ ] Add error handling for failed clear attempts (log failures; surface in status snapshot; rely on controller retries)
+  - [ ] Implement post-clear prompt injection
+    - [ ] Construct prompt: "Context cleared. Re-read PRD.md, ARCHITECTURE.md, and the next section of PROJECT_TASKS.md before continuing."
+    - [ ] Note: Section number determination deferred (no reliable resolver yet; keep prompt generic)
+    - [ ] Send prompt to cleared agent(s) immediately after clear
+    - [ ] Wait for agent ready state before injecting prompt
+  - Implementation anchor:
+    - Create a helper (e.g., `_handle_clear_signal`) that maps targets → commands, calls `orchestrator.dispatch_command(target, clear_cmd)`, then queues an injected message via `inject_message` for the same target with the post-clear prompt. Invoke this helper from the detection block in `facilitate_discussion`.
+    - Controllers already translate dispatches to tmux via `TmuxController.send_command`/`send_macro`, so no direct tmux calls from the manager.
 
 ### 1.4 Logging & Monitoring
 - [ ] Create dedicated context clear log file: `logs/context_clears.log`
@@ -55,10 +62,13 @@ This document tracks the implementation of the [[CLEAR]] marker system for unive
   - [ ] Trigger source (which model emitted the signal)
   - [ ] Context (turn number, current phase, current task section if available)
   - [ ] Success/failure status
-- [ ] Add clear event counters to orchestrator status endpoint
+- [ ] Add clear event counters to orchestrator status snapshot (extends `ConversationManager.get_status_snapshot`, also used by control channel status file when enabled)
   - [ ] Total clears per session
   - [ ] Clears per agent
   - [ ] Last clear timestamp per agent
+  - Implementation anchor:
+    - Extend `ConversationManager.get_status_snapshot()` to include a `clear_stats` dict with fields: `total`, `per_agent` (mapping), `last_clear_ts` (mapping), and optionally `last_failure` info.
+    - During clear handling, append structured entries to the clear log and update these counters. `_refresh_status_snapshot()` already writes the status file when enabled; piggyback on that.
 
 ### 1.5 Testing
 - [ ] Unit tests for signal detection
@@ -77,6 +87,9 @@ This document tracks the implementation of the [[CLEAR]] marker system for unive
   - [ ] Test clear command reaches tmux session
   - [ ] Test post-clear prompt injection
   - [ ] Test logging of clear events
+  - Implementation anchor for tests:
+    - Place unit tests under `tests/` (e.g., `test_conversation_manager_clear.py`) mocking controllers (`orchestrator.dispatch_command`) and using fake participant metadata.
+    - For integration, mimic a `ConversationManager` with a stub controller that records commands and injected messages; simulate responses containing [[CLEAR]] and assert dispatch + prompt injection + cooldown enforcement.
 
 ---
 
