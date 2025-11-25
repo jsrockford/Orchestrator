@@ -25,7 +25,7 @@ This document provides the shared mental model for how the AI Development Team O
                 │ tmux panes / Named pipe control / CLI binaries               
 ┌───────────────┴──────────────────────────────────────────────────────────────┐
 │  External Agents & Human Operators                                           │
-│    - AI CLIs (Claude Code, Gemini CLI, Codex/Aider, Qwen CLI)                │
+│    - AI CLIs (Claude Code, Gemini CLI, Codex CLI, Qwen CLI)                  │
 │    - Human attaches to tmux or issues commands via control pipe              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```

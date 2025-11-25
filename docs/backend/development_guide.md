@@ -6,7 +6,7 @@ This guide walks backend contributors through environment setup, key modules, co
 
 - Python 3.10+ (project validated on 3.11)
 - tmux 3.2+ (controllers inject commands through tmux panes)
-- Vendor CLIs installed and authenticated: Claude Code, Gemini CLI, Codex (Aider), Qwen CLI
+- Vendor CLIs installed and authenticated: Claude Code, Gemini CLI, Codex CLI, Qwen CLI
 - Node.js 18+ (only required if you plan to run the React UI locally)
 
 ## 2. Environment Setup

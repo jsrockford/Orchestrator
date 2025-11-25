@@ -5,7 +5,7 @@ This guide targets operators who need to run the orchestration stack end-to-end,
 ## 1. Prerequisites Checklist
 
 - Python virtual environment (`venv`) created and activated.
-- Required AI CLIs installed and authenticated on the host (Claude Code, Gemini CLI, Codex/Aider, Qwen CLI).
+- Required AI CLIs installed and authenticated on the host (Claude Code, Gemini CLI, Codex CLI, Qwen CLI).
 - `tmux` available and configured for non-interactive use.
 - Node.js installed if the React UI will be served locally.
 - `config.yaml` tuned for the host (pane sizes, executable paths, timeouts).
