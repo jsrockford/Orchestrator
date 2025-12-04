@@ -64,6 +64,7 @@ htmlcov/
 tmp/
 temp/
 *.tmp
+*.pid
 
 # Screenshots (already tracked, but exclude new ones)
 # Uncomment if you want to ignore future screenshots:
