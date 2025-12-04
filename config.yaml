@@ -215,6 +215,45 @@ logging:
   max_bytes: 10485760    # 10MB
   backup_count: 3        # Number of backup files to keep
 
+context_management:
+  enabled: true
+  clear_signal: "[[CLEAR]]"
+  debounce_seconds: 30
+
+  # Context validation - WHITELIST approach
+  # Only honor [[CLEAR]] signals in these contexts
+  valid_contexts:
+    - "orchestrated_turn"    # During orchestrated discussions
+    - "MessageBoard.md"      # When posted to MessageBoard
+
+  # Supported agents and their clear commands
+  agents:
+    claude:
+      clear_command: "/clear"
+    gemini:
+      clear_command: "/clear"
+    qwen:
+      clear_command: "/clear"
+    codex:
+      clear_command: "/new"  # Codex uses /new instead of /clear
+
+  # Post-clear behavior
+  post_clear_prompt: "Context cleared. Re-read PRD.md, ARCHITECTURE.md, and the next section of PROJECT_TASKS.md before continuing."
+  required_rereads:
+    - "PRD.md"
+    - "ARCHITECTURE.md"
+    - "PROJECT_TASKS.md"
+
+  # Turn-count check-in (OPTIONAL - deferred to Phase 3)
+  turn_count_checkin:
+    enabled: false
+    interval: 12
+    prompt: "System Check: You have completed {turn_count} turns. Review your progress in PROJECT_TASKS.md. If this is a logical checkpoint, reply with [[CLEAR:{agent}]] to clear context. Otherwise reply with /continue to proceed."
+
+  # Logging
+  log_file: "logs/context_clears.log"
+  log_level: "INFO"
+
 response_validation:
   noise_log: "/home/dgray/Projects/Orchestrator/logs/filtered_patterns.log"
   error_log: "/home/dgray/Projects/Orchestrator/logs/response_errors.log"
@@ -249,7 +288,7 @@ response_validation:
 
 completion_detection:
   enabled: true
-  debug_logging: false
+  debug_logging: true
   mode: "hybrid"  # Options: disabled, explicit, passive, hybrid
   explicit_signal: "[[PROJECT_COMPLETE]]"
   fallback_phrases:

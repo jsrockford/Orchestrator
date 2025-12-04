@@ -17,6 +17,80 @@ from src.orchestrator.orchestrator import DevelopmentTeamOrchestrator
 from src.utils.config_loader import reload_config
 
 
+def _run_discussion_and_stop_on_turn_limit(
+    manager: ConversationManager,
+    orchestrator: DevelopmentTeamOrchestrator,
+    topic: str,
+    *,
+    max_turns: int,
+    expected_turns: int | None = None,
+    timeout: float = 3.0,
+) -> List[Dict[str, Any]]:
+    results: Dict[str, Any] = {}
+    initial_ref = getattr(manager, "_conversation_ref", None)
+
+    def _run() -> None:
+        results["conversation"] = manager.facilitate_discussion(topic, max_turns=max_turns)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+
+    deadline = time.time() + timeout
+    while worker.is_alive() and time.time() < deadline:
+        if expected_turns is not None:
+            convo_ref = getattr(manager, "_conversation_ref", None)
+            if (
+                isinstance(convo_ref, list)
+                and convo_ref is not initial_ref
+                and len(convo_ref) >= expected_turns
+            ):
+                orchestrator.should_stop_discussion = True
+                break
+        if getattr(manager, "_awaiting_turn_extension", False):  # noqa: SLF001
+            orchestrator.should_stop_discussion = True
+            break
+        time.sleep(0.01)
+
+    orchestrator.should_stop_discussion = True
+    if hasattr(manager, "human_control_mode"):
+        manager.human_control_mode = False  # noqa: SLF001
+    if hasattr(manager, "_awaiting_turn_extension"):
+        manager._awaiting_turn_extension = False  # noqa: SLF001
+    worker.join(timeout=3.0)
+    assert not worker.is_alive(), "Discussion thread did not terminate"
+    return results.get("conversation") or []
+
+
+def _run_start_discussion_and_stop_on_turn_limit(
+    orchestrator: DevelopmentTeamOrchestrator,
+    topic: str,
+    *,
+    max_turns: int,
+    timeout: float = 3.0,
+) -> Dict[str, Any]:
+    results: Dict[str, Any] = {}
+
+    def _run() -> None:
+        results["result"] = orchestrator.start_discussion(topic, max_turns=max_turns)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+
+    deadline = time.time() + timeout
+    while worker.is_alive() and time.time() < deadline:
+        state = getattr(orchestrator, "discussion_state", "")
+        awaiting = getattr(getattr(orchestrator, "conversation_manager", None), "_awaiting_turn_extension", False)  # noqa: SLF001
+        if state == "PAUSED" or awaiting:
+            orchestrator.should_stop_discussion = True
+            break
+        time.sleep(0.01)
+
+    orchestrator.should_stop_discussion = True
+    worker.join(timeout=1.0)
+    assert not worker.is_alive(), "start_discussion thread did not terminate"
+    return results.get("result") or {}
+
+
 class FakeConversationalController:
     """
     Minimal controller surface for conversation tests.
@@ -184,7 +258,12 @@ def test_completion_requires_explicit_signal_when_configured() -> None:
     )
     manager = ConversationManager(orchestrator, ["gemini", "qwen"])
 
-    conversation = manager.facilitate_discussion("Finalize delivery", max_turns=2)
+    conversation = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Finalize delivery",
+        max_turns=2,
+    )
 
     # Consensus should not trigger without explicit [[PROJECT_COMPLETE]] markers.
     assert len(conversation) == 2
@@ -303,7 +382,12 @@ def test_keyword_alignment_does_not_trigger_consensus_when_explicit_required() -
     )
     manager = ConversationManager(orchestrator, ["gemini", "qwen"])
 
-    conversation = manager.facilitate_discussion("Ship aligned feature", max_turns=3)
+    conversation = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Ship aligned feature",
+        max_turns=3,
+    )
 
     assert len(conversation) == 3
     assert all(not turn.get("metadata", {}).get("consensus") for turn in conversation)
@@ -334,13 +418,14 @@ def test_tool_loop_detection_triggers_warning_after_threshold() -> None:
         {"claude": claude_controller, "gemini": gemini_controller}
     )
     context_manager = ContextManager(history_size=10)
-    manager = ConversationManager(
-        orchestrator,
-        ["claude", "gemini"],
-        context_manager=context_manager,
-    )
+    manager = ConversationManager(orchestrator, ["claude", "gemini"], context_manager=context_manager)
 
-    conversation = manager.facilitate_discussion("Audit project directory", max_turns=8)
+    conversation = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Audit project directory",
+        max_turns=8,
+    )
 
     claude_turns = [turn for turn in conversation if turn["speaker"] == "claude"]
     assert len(claude_turns) == 4
@@ -381,13 +466,14 @@ def test_tool_loop_detection_escalates_on_next_turn() -> None:
         {"claude": claude_controller, "gemini": gemini_controller}
     )
     context_manager = ContextManager(history_size=10)
-    manager = ConversationManager(
-        orchestrator,
-        ["claude", "gemini"],
-        context_manager=context_manager,
-    )
+    manager = ConversationManager(orchestrator, ["claude", "gemini"], context_manager=context_manager)
 
-    conversation = manager.facilitate_discussion("Audit project directory", max_turns=10)
+    conversation = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Audit project directory",
+        max_turns=10,
+    )
 
     claude_turns = [turn for turn in conversation if turn["speaker"] == "claude"]
     assert len(claude_turns) == 5
@@ -422,7 +508,12 @@ def test_tool_loop_detection_not_triggered_below_threshold() -> None:
     )
     manager = ConversationManager(orchestrator, ["claude", "gemini"])
 
-    conversation = manager.facilitate_discussion("Audit project directory", max_turns=6)
+    conversation = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Audit project directory",
+        max_turns=6,
+    )
 
     for turn in conversation:
         metadata = turn.get("metadata") or {}
@@ -669,7 +760,11 @@ def test_orchestrator_start_discussion_with_codex_participant() -> None:
     }
 
     orchestrator = DevelopmentTeamOrchestrator(controllers, metadata=metadata)
-    result = orchestrator.start_discussion("Coordinate handoff", max_turns=3)
+    result = _run_start_discussion_and_stop_on_turn_limit(
+        orchestrator,
+        "Coordinate handoff",
+        max_turns=3,
+    )
 
     conversation = result["conversation"]
     assert len(conversation) == 3
@@ -797,7 +892,12 @@ def test_validation_warnings_do_not_trigger_retry() -> None:
     orchestrator = DevelopmentTeamOrchestrator({"claude": controller})
     manager = ConversationManager(orchestrator, ["claude"])
 
-    conversation = manager.facilitate_discussion("Check warning behavior", max_turns=1)
+    conversation = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Check warning behavior",
+        max_turns=1,
+    )
 
     assert len(conversation) == 1
     turn = conversation[0]

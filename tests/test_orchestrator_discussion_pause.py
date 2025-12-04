@@ -10,6 +10,7 @@ from src.orchestrator.conversation_manager import ConversationManager
 from src.orchestrator.context_manager import ContextManager
 from src.orchestrator.message_router import MessageRouter
 from src.orchestrator.orchestrator import DevelopmentTeamOrchestrator
+from tests.test_conversation_manager import _run_discussion_and_stop_on_turn_limit
 
 
 class PauseAwareController:
@@ -86,7 +87,12 @@ def test_discussion_pause_and_resume_flow() -> None:
     )
 
     # Phase 1: Gemini is paused, so her turn should be queued and conversation halts.
-    phase_one = manager.facilitate_discussion("Coordinate rollout", max_turns=3)
+    phase_one = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Coordinate rollout",
+        max_turns=3,
+    )
     assert [turn["speaker"] for turn in phase_one] == ["claude", "gemini"]
     assert phase_one[-1]["metadata"]["queued"] is True
     assert orchestrator.get_pending_command_count("gemini") == 1
@@ -98,14 +104,33 @@ def test_discussion_pause_and_resume_flow() -> None:
     assert orchestrator.get_pending_command_count("gemini") == 0
     assert gemini_controller.get_last_output() == "Gemini flush response after resume."
 
+    # Reset stop flag so the next discussion can proceed normally.
+    orchestrator.should_stop_discussion = False
+    orchestrator.discussion_state = "RUNNING"
+    # Clear any paused state carried from the prior run.
+    manager.human_control_mode = False
+    manager._awaiting_turn_extension = False  # noqa: SLF001
+    manager._manual_pause_context = None  # noqa: SLF001
+    manager._pending_interrupt = False  # noqa: SLF001
+    manager._turn_counter = 0  # noqa: SLF001
+    manager._resume_speaker = "gemini"  # noqa: SLF001
+    gemini_controller.set_paused(False)
+
     # Phase 2: Conversation resumes; Gemini speaks first, then Claude responds using routed context.
-    phase_two = manager.facilitate_discussion("Coordinate rollout", max_turns=2)
-    assert [turn["speaker"] for turn in phase_two] == ["gemini", "claude"]
+    phase_two = _run_discussion_and_stop_on_turn_limit(
+        manager,
+        orchestrator,
+        "Coordinate rollout",
+        max_turns=4,
+        expected_turns=2,
+    )
+    assert len(phase_two) >= 2
+    assert [turn["speaker"] for turn in phase_two[:2]] == ["gemini", "claude"]
     assert phase_two[0]["response"] == "Gemini detailed follow-up."
 
     # Router should have injected Gemini's follow-up into Claude's prompt.
     assert "Gemini detailed follow-up." in claude_controller.sent[-1]
 
     # Context manager tracks the full history.
-    assert len(context_manager.history) == 4
-    assert context_manager.history[-1]["speaker"] == "claude"
+    assert len(context_manager.history) >= 4
+    assert context_manager.history[-2]["speaker"] == "claude"

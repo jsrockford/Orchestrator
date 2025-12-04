@@ -114,7 +114,7 @@ ROLE_DEFAULTS = {
             'Debug and fix issues',
             'Optimize performance where needed',
             'Handle edge cases properly',
-            'Request clears via MessageBoard.md if context drifts mid-task'
+            'Emit [[CLEAR:agent]] in delimited response when token usage is high or context drifts'
         ],
         'lead_authority': 'Final say on implementation details, code structure, and technical approach'
     },
@@ -132,7 +132,7 @@ ROLE_DEFAULTS = {
             'Suggest improvements (non-blocking)',
             'Verify test coverage',
             'Check documentation quality',
-            'Request clears when review scope shifts to a new feature area'
+            'Emit [[CLEAR:agent]] when review scope shifts to a new feature area'
         ],
         'support_authority': 'Quality gate - must approve before completion'
     }
@@ -965,9 +965,10 @@ class InstructionFileGenerator:
         elif phase_name == "Implementation":
             context_section = f"""
 ## Context Management & Checkpoints
-- Honor checkpoint meta-tasks: after completing the section, emit `[[CLEAR:{role_name.lower()}]]` (or the appropriate agent name), wait for the orchestrator to clear, then re-read PRD.md, ARCHITECTURE.md, and the next PROJECT_TASKS.md section.
-- If token usage is high (~60–70%) or context drifts mid-task, emit `[[CLEAR:{role_name.lower()}]]` via MessageBoard.md.
+- Honor checkpoint meta-tasks: after completing the section, include `[[CLEAR:{role_name.lower()}]]` in your delimited response.
+- If token usage is high (~60–70%) or context drifts mid-task, include `[[CLEAR:{role_name.lower()}]]` in your delimited response.
 - Clearing does not lose progress—files are the source of truth.
+- The orchestrator will handle the clear command and resume the conversation.
 - References: docs/Context_Management_Guide.md and the checkpoint templates under templates/."""
 
         return f"""
@@ -1145,8 +1146,6 @@ Search for `TODO:` in each file and customize accordingly.
             self.templates_dir / "CHECKPOINT_meta_task.md",
             self.templates_dir / "ROLE_Architect_Planning.md",
             self.templates_dir / "ROLE_ProjectManager_Planning.md",
-            self.templates_dir / "ROLE_LeadDeveloper_Implementation.md",
-            self.templates_dir / "ROLE_CodeReviewer_Implementation.md",
         ]
         for src in sources:
             if src.exists():

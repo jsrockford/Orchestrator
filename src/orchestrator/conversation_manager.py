@@ -1083,6 +1083,12 @@ class ConversationManager:
                 turn_index=turn_index,
                 reason=f"emitter={emitting_agent}",
             )
+            resume_target = (
+                emitting_agent if emitting_agent in succeeded else succeeded[0]
+            )
+            self._resume_speaker = resume_target
+            if getattr(self.orchestrator, "discussion_state", "").upper() == "PAUSED":
+                setattr(self.orchestrator, "discussion_state", "RUNNING")
             for target in succeeded:
                 self._inject_post_clear_prompt(target, topic)
 
