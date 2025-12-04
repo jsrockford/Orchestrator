@@ -828,3 +828,351 @@ If implementation causes regressions:
 ---
 
 **Status**: APPROVED - Ready to begin Phase A implementation
+
+
+APPENDIX - Claude's Analysis of Changes in conversation manager and orchestrator:
+
+ 1. B2: [[REVIEW_REQUEST]] Signal Detection
+
+  New Method Required:
+  def _detect_review_request(self, response: str) -> Optional[Dict[str, str]]:
+      """
+      Detect [[REVIEW_REQUEST:section_name]] in agent response.
+
+      Returns dict with 'section' and 'requester' if found, None otherwise.
+      """
+      pattern = r'\[\[REVIEW_REQUEST:([^\]]+)\]\]'
+      match = re.search(pattern, response)
+      if match:
+          return {
+              'section': match.group(1),
+              'requester': self._current_speaker,
+              'turn': self._turn_counter
+          }
+      return None
+
+  Integration Point:
+  - Call from run_discussion() after processing each turn
+  - Log the review request with section name
+  - IF config.yaml has review_requests.blocking: true:
+    - Prevent LeadDeveloper from taking next turn until CodeReviewer responds
+    - Track "waiting for review" state
+  - ELSE (blocking: false):
+    - Just log it and continue normally (guidance-only mode)
+
+  Configuration Check:
+  # In __init__()
+  review_cfg = get_config().get_section("review_requests") or {}
+  self._review_blocking = bool(review_cfg.get("blocking", False))
+  self._review_timeout = int(review_cfg.get("timeout_seconds", 300))
+
+  ---
+  2. B3: [[CHECKPOINT]] Synchronized Clear Detection
+
+  New Method Required:
+  def _detect_checkpoint_signal(self, response: str) -> Optional[str]:
+      """
+      Detect [[CHECKPOINT:section_name]] in agent response.
+
+      Returns section_name if found, None otherwise.
+      """
+      pattern = r'\[\[CHECKPOINT:([^\]]+)\]\]'
+      match = re.search(pattern, response)
+      return match.group(1) if match else None
+
+  New State Tracking:
+  # In __init__()
+  checkpoint_cfg = get_config().get_section("checkpoints") or {}
+  self._checkpoint_synchronized = bool(checkpoint_cfg.get("synchronized", True))
+  self._checkpoint_timeout = int(checkpoint_cfg.get("timeout_seconds", 120))
+  self._checkpoint_fallback = bool(checkpoint_cfg.get("fallback_to_individual", True))
+
+  # Track checkpoint signals per agent
+  self._checkpoint_signals: Dict[str, Optional[Tuple[str, float]]] = {}
+  # Format: {'leaddeveloper': ('Logic_Complete', 1234567890.5), 'codereviewer': None}
+
+  New Processing Logic:
+  def _process_checkpoint_signals(
+      self,
+      *,
+      speaker: str,
+      response: str,
+      topic: str,
+      turn_index: int,
+  ) -> Optional[Dict[str, Any]]:
+      """
+      Handle synchronized checkpoint clearing.
+
+      Returns checkpoint metadata if processed, None otherwise.
+      """
+      if not self._checkpoint_synchronized:
+          # Treat [[CHECKPOINT:name]] as [[CLEAR:agent]] fallback
+          return None
+
+      checkpoint_name = self._detect_checkpoint_signal(response)
+      if not checkpoint_name:
+          return None
+
+      # Record this agent's checkpoint signal
+      self._checkpoint_signals[speaker] = (checkpoint_name, time.time())
+
+      self.logger.info(
+          "Checkpoint signal '%s' from %s (turn=%s)",
+          checkpoint_name,
+          speaker,
+          turn_index,
+      )
+
+      # Check if all active participants have signaled
+      active = self._get_active_participants()
+      all_signaled = all(
+          self._checkpoint_signals.get(p) is not None
+          for p in active
+      )
+
+      if all_signaled:
+          # All agents ready - execute synchronized clear
+          self._execute_synchronized_checkpoint(
+              checkpoint_name=checkpoint_name,
+              topic=topic,
+              turn_index=turn_index,
+          )
+          # Reset checkpoint tracking
+          self._checkpoint_signals = {p: None for p in active}
+          return {"checkpoint": checkpoint_name, "synchronized": True}
+
+      else:
+          # Check for timeout
+          earliest_signal = min(
+              (ts for _, ts in self._checkpoint_signals.values() if ts),
+              default=None
+          )
+          if earliest_signal and time.time() - earliest_signal > self._checkpoint_timeout:
+              # Timeout exceeded - force checkpoint or fallback
+              if self._checkpoint_fallback:
+                  self.logger.warning(
+                      "Checkpoint '%s' timeout - falling back to individual clears",
+                      checkpoint_name
+                  )
+                  # Execute clears for agents who signaled
+                  self._fallback_to_individual_clears(topic, turn_index)
+              else:
+                  self.logger.warning(
+                      "Checkpoint '%s' timeout - forcing synchronized clear",
+                      checkpoint_name
+                  )
+                  self._execute_synchronized_checkpoint(
+                      checkpoint_name=checkpoint_name,
+                      topic=topic,
+                      turn_index=turn_index,
+                  )
+              self._checkpoint_signals = {p: None for p in active}
+              return {"checkpoint": checkpoint_name, "timeout": True}
+
+          # Still waiting for other agents
+          return {"checkpoint": checkpoint_name, "waiting": True}
+
+  Synchronized Clear Execution:
+  def _execute_synchronized_checkpoint(
+      self,
+      *,
+      checkpoint_name: str,
+      topic: str,
+      turn_index: int,
+  ) -> None:
+      """Execute synchronized clear for all participants."""
+      active = self._get_active_participants()
+
+      self.logger.info(
+          "Executing synchronized checkpoint '%s' for %d agents",
+          checkpoint_name,
+          len(active),
+      )
+
+      succeeded: List[str] = []
+      failures: List[Tuple[str, str]] = []
+
+      # Clear all agents
+      for target in active:
+          success, error = self._dispatch_clear_for_target(target)
+          if success:
+              succeeded.append(target)
+          else:
+              failures.append((target, error or "unknown"))
+
+      # Log results
+      if succeeded:
+          self._log_clear_event(
+              status="checkpoint_cleared",
+              targets=succeeded,
+              source="checkpoint",
+              topic=topic,
+              turn_index=turn_index,
+              reason=f"checkpoint={checkpoint_name}",
+          )
+          # Set resume speaker to LeadDeveloper (or first participant)
+          self._resume_speaker = (
+              "leaddeveloper" if "leaddeveloper" in succeeded else succeeded[0]
+          )
+          # Inject post-checkpoint prompt to both agents
+          for target in succeeded:
+              self._inject_post_checkpoint_prompt(
+                  target,
+                  checkpoint_name,
+                  topic
+              )
+
+      if failures:
+          self.logger.error(
+              "Checkpoint clear failed for: %s",
+              ", ".join(f"{name} ({msg})" for name, msg in failures)
+          )
+
+  Post-Checkpoint Prompt:
+  def _inject_post_checkpoint_prompt(
+      self,
+      target: str,
+      checkpoint_name: str,
+      topic: str
+  ) -> None:
+      """Inject synchronized post-checkpoint instructions."""
+      prompt = f"""CHECKPOINT REACHED: {checkpoint_name} complete
+
+  Please re-read the following to restore context:
+  - PRD.md
+  - ARCHITECTURE.md
+  - PROJECT_TASKS.md (focus on next section)
+
+  {self._get_role_specific_checkpoint_instructions(target)}
+  """
+      metadata = {
+          "source": "checkpoint",
+          "checkpoint_name": checkpoint_name,
+          "targets": [target],
+          "topic": topic
+      }
+      self.inject_message("system", prompt, metadata=metadata)
+
+  def _get_role_specific_checkpoint_instructions(self, target: str) -> str:
+      """Return role-specific instructions for post-checkpoint."""
+      if "lead" in target.lower():
+          return "LeadDeveloper: Begin next section implementation"
+      elif "review" in target.lower():
+          return "CodeReviewer: Resume MONITORING state for next section"
+      else:
+          return ""
+
+  ---
+  3. B5: [[ESCALATION]] Signal Detection
+
+  New Method Required:
+  def _detect_escalation_signal(self, response: str) -> Optional[Dict[str, str]]:
+      """
+      Detect [[ESCALATION:reason]] in agent response.
+
+      Returns dict with escalation details if found, None otherwise.
+      """
+      pattern = r'\[\[ESCALATION:([^\]]+)\]\]'
+      match = re.search(pattern, response)
+      if match:
+          return {
+              'reason': match.group(1),
+              'agent': self._current_speaker,
+              'turn': self._turn_counter,
+              'timestamp': time.time()
+          }
+      return None
+
+  Integration Point:
+  # In run_discussion() after processing each turn
+  escalation = self._detect_escalation_signal(response)
+  if escalation:
+      self._handle_escalation(escalation, response)
+
+  Escalation Handler:
+  def _handle_escalation(
+      self,
+      escalation: Dict[str, str],
+      full_response: str
+  ) -> None:
+      """Log escalation with full context."""
+      escalation_cfg = get_config().get_section("escalation") or {}
+
+      if not escalation_cfg.get("enabled", True):
+          return
+
+      log_level = escalation_cfg.get("log_level", "WARNING")
+      pause_on_escalation = escalation_cfg.get("pause_discussion", False)
+
+      # Log with configured level
+      self.logger.log(
+          getattr(logging, log_level, logging.WARNING),
+          "ESCALATION: %s from %s (turn=%s) - Reason: %s",
+          escalation['reason'],
+          escalation['agent'],
+          escalation['turn'],
+          escalation['reason'],
+      )
+
+      # Store in history with special flag
+      self.history.append({
+          "type": "escalation",
+          "agent": escalation['agent'],
+          "reason": escalation['reason'],
+          "turn": escalation['turn'],
+          "timestamp": escalation['timestamp'],
+          "full_response": full_response,
+      })
+
+      # Optional: pause discussion (future feature)
+      if pause_on_escalation:
+          self.logger.warning("Discussion paused due to escalation")
+          if hasattr(self.orchestrator, "discussion_state"):
+              setattr(self.orchestrator, "discussion_state", "ESCALATED")
+
+      # Optional: notify human (future feature)
+      notify_human = escalation_cfg.get("notify_human", False)
+      if notify_human:
+          # Future: send email/slack/webhook notification
+          self.logger.info("Escalation notification would be sent here")
+
+  ---
+  Summary of Required Changes
+
+  New Methods (5 total):
+  1. _detect_review_request() - Parse [[REVIEW_REQUEST:section]]
+  2. _detect_checkpoint_signal() - Parse [[CHECKPOINT:name]]
+  3. _process_checkpoint_signals() - Handle synchronized checkpoints
+  4. _execute_synchronized_checkpoint() - Execute multi-agent clear
+  5. _detect_escalation_signal() - Parse [[ESCALATION:reason]]
+
+  New State Variables (4 total):
+  1. self._checkpoint_signals - Track which agents signaled checkpoint
+  2. self._checkpoint_synchronized - Enable/disable synchronized checkpoints
+  3. self._checkpoint_timeout - Max wait for all agents to signal
+  4. self._review_blocking - Enable/disable review request blocking
+
+  Integration Points (3 total):
+  1. Call _detect_review_request() in run_discussion() turn loop
+  2. Call _process_checkpoint_signals() in run_discussion() turn loop
+  3. Call _detect_escalation_signal() in run_discussion() turn loop
+
+  Configuration Support (config.yaml):
+  review_requests:
+    blocking: false
+    timeout_seconds: 300
+
+  checkpoints:
+    synchronized: true
+    timeout_seconds: 120
+    fallback_to_individual: true
+
+  escalation:
+    enabled: true
+    log_level: WARNING
+    notify_human: false
+    pause_discussion: false
+
+  The good news is that much of the infrastructure (clear signal detection, post-clear prompts,
+  debouncing) is already in place and can be reused. The Phase B changes build on this existing
+  foundation.

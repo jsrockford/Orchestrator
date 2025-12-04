@@ -19,7 +19,7 @@ Use this layout to interleave implementation tasks with checkpoint meta-tasks th
 - [ ] Task 2.2 – …
 - [ ] **CHECKPOINT:** See `CHECKPOINT 2` below
 
-## Checkpoints (emit `[[CLEAR]]`)
+## Checkpoints (emit `[[CHECKPOINT]]` or `[[CLEAR]]`)
 ### CHECKPOINT 0: Foundations Complete
 - Trigger: After Section 0 tasks
 - Agent: `[[CLEAR:codex]]`
@@ -28,7 +28,9 @@ Use this layout to interleave implementation tasks with checkpoint meta-tasks th
 
 ### CHECKPOINT 1: Feature Area A Complete
 - Trigger: After Section 1 tasks
-- Agent: `[[CLEAR:codex]]`
+- Signal: `[[CHECKPOINT:Feature_A_Complete]]` (synchronized clear - both agents emit)
+- LeadDeveloper: Emit `[[REVIEW_REQUEST:Section_1]]`, wait for CodeReviewer feedback, then send the checkpoint signal
+- CodeReviewer: Move to ACTIVE REVIEW/TESTING on review request, then emit the checkpoint signal with LeadDeveloper
 - Re-read: PRD.md, ARCHITECTURE.md, next section of PROJECT_TASKS.md
 - Next focus: Section 2 – Feature Area B
 

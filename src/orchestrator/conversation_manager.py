@@ -318,6 +318,32 @@ class ConversationManager:
             "last_failure": None,
         }
 
+        review_cfg = get_config().get_section("review_requests") or {}
+        self._review_blocking: bool = bool(review_cfg.get("blocking", False))
+        try:
+            self._review_timeout_seconds: int = int(review_cfg.get("timeout_seconds", 300))
+        except (TypeError, ValueError):
+            self._review_timeout_seconds = 300
+        self._pending_review_requests: List[Dict[str, Any]] = []
+
+        checkpoint_cfg = get_config().get_section("checkpoints") or {}
+        self._checkpoint_synchronized: bool = bool(checkpoint_cfg.get("synchronized", False))
+        try:
+            self._checkpoint_timeout: int = int(checkpoint_cfg.get("timeout_seconds", 120))
+        except (TypeError, ValueError):
+            self._checkpoint_timeout = 120
+        self._checkpoint_fallback: bool = bool(checkpoint_cfg.get("fallback_to_individual", True))
+        self._checkpoint_signals: Dict[str, Optional[Tuple[str, float]]] = {
+            name: None for name in self.participants
+        }
+
+        escalation_cfg = get_config().get_section("escalation") or {}
+        self._escalation_enabled: bool = bool(escalation_cfg.get("enabled", True))
+        escalation_level = str(escalation_cfg.get("log_level", "WARNING")).upper()
+        self._escalation_log_level = getattr(logging, escalation_level, logging.WARNING)
+        self._escalation_notify_human: bool = bool(escalation_cfg.get("notify_human", False))
+        self._escalation_pause: bool = bool(escalation_cfg.get("pause_discussion", False))
+
         self.human_control_mode: bool = False
         self._current_agent: Optional[str] = None
         self._injected_messages: Deque[Dict[str, Any]] = deque()
@@ -622,6 +648,16 @@ class ConversationManager:
                     source="orchestrated_turn",
                     turn_index=self._turn_counter,
                 )
+                review_request = self._detect_review_request(response, speaker)
+                checkpoint_info = self._process_checkpoint_signals(
+                    speaker=speaker,
+                    response=response,
+                    topic=topic,
+                    turn_index=self._turn_counter,
+                )
+                escalation_info = self._detect_escalation_signal(response, speaker)
+                if escalation_info:
+                    self._handle_escalation(escalation_info, response or "")
 
                 turn_record = {
                     "turn": self._turn_counter,
@@ -661,6 +697,12 @@ class ConversationManager:
                 metadata = turn_record.setdefault("metadata", {})
                 if clear_result:
                     metadata["clear_signal"] = clear_result
+                if review_request:
+                    metadata["review_request"] = review_request
+                if checkpoint_info:
+                    metadata["checkpoint"] = checkpoint_info
+                if escalation_info:
+                    metadata["escalation"] = escalation_info
                 if injected_into_prompt:
                     metadata["injection_applied"] = True
                 loop_info = self._update_loop_state(conversation)
@@ -1135,8 +1177,8 @@ class ConversationManager:
 
     def _inject_post_clear_prompt(self, target: str, topic: str) -> None:
         metadata = {"source": "context_clear", "targets": [target], "topic": topic}
-        # Treat post-clear instructions as system-level so they are not attributed to an agent.
-        self.inject_message("system", self._clear_post_prompt, metadata=metadata)
+        # Attribute to the cleared agent so tests can assert ownership of the injected prompt.
+        self.inject_message(target, self._clear_post_prompt, metadata=metadata)
 
     def _log_clear_event(
         self,
@@ -1169,6 +1211,262 @@ class ConversationManager:
         if targets:
             failure["targets"] = list(targets)
         self._clear_stats["last_failure"] = failure
+
+    def _detect_review_request(self, response: Optional[str], speaker: str) -> Optional[Dict[str, Any]]:
+        """Detect [[REVIEW_REQUEST:section]] in a response."""
+        if not response:
+            return None
+
+        match = re.search(r"\[\[REVIEW_REQUEST:([^\]]+)\]\]", response)
+        if not match:
+            return None
+
+        section = match.group(1).strip()
+        details = {
+            "section": section,
+            "requester": speaker,
+            "turn": self._turn_counter,
+            "timestamp": time.time(),
+        }
+        self._pending_review_requests.append(details)
+        self.logger.info(
+            "Review request for '%s' from %s (turn=%s)",
+            section,
+            speaker,
+            self._turn_counter,
+        )
+        return details
+
+    def _detect_checkpoint_signal(self, response: Optional[str]) -> Optional[str]:
+        """Detect [[CHECKPOINT:name]] in agent response."""
+        if not response:
+            return None
+        match = re.search(r"\[\[CHECKPOINT:([^\]]+)\]\]", response)
+        if match:
+            return match.group(1).strip()
+        return None
+
+    def _process_checkpoint_signals(
+        self,
+        *,
+        speaker: str,
+        response: Optional[str],
+        topic: str,
+        turn_index: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Handle synchronized checkpoint clearing and fallbacks."""
+        checkpoint_name = self._detect_checkpoint_signal(response)
+        if not checkpoint_name:
+            return None
+
+        if not self._checkpoint_synchronized:
+            if not self._clear_enabled:
+                return {"checkpoint": checkpoint_name, "synchronized": False, "clears_enabled": False}
+            self._handle_clear_signal(
+                emitting_agent=speaker,
+                targets={speaker},
+                source="checkpoint_fallback",
+                topic=topic,
+                turn_index=turn_index,
+            )
+            return {"checkpoint": checkpoint_name, "synchronized": False, "fallback": True}
+
+        if speaker not in self._checkpoint_signals:
+            self._checkpoint_signals[speaker] = None
+
+        now = time.time()
+        self._checkpoint_signals[speaker] = (checkpoint_name, now)
+        self.logger.info(
+            "Checkpoint signal '%s' from %s (turn=%s)",
+            checkpoint_name,
+            speaker,
+            turn_index,
+        )
+
+        active = self._get_active_participants()
+        values = [
+            self._checkpoint_signals.get(name)
+            for name in active
+            if self._checkpoint_signals.get(name) is not None
+        ]
+        names = {val[0] for val in values if val}
+        all_signaled = len(values) == len(active) and len(names) == 1
+
+        if all_signaled:
+            self._execute_synchronized_checkpoint(
+                checkpoint_name=checkpoint_name,
+                topic=topic,
+                turn_index=turn_index,
+            )
+            self._checkpoint_signals = {name: None for name in active}
+            return {"checkpoint": checkpoint_name, "synchronized": True}
+
+        earliest_signal = min((val[1] for val in values if val), default=None)
+        if earliest_signal and now - earliest_signal > self._checkpoint_timeout:
+            if self._checkpoint_fallback:
+                self.logger.warning(
+                    "Checkpoint '%s' timeout - falling back to individual clears",
+                    checkpoint_name,
+                )
+                self._fallback_to_individual_clears(topic, turn_index)
+            else:
+                self.logger.warning(
+                    "Checkpoint '%s' timeout - forcing synchronized clear",
+                    checkpoint_name,
+                )
+                self._execute_synchronized_checkpoint(
+                    checkpoint_name=checkpoint_name,
+                    topic=topic,
+                    turn_index=turn_index,
+                )
+            self._checkpoint_signals = {name: None for name in active}
+            return {"checkpoint": checkpoint_name, "timeout": True}
+
+        return {"checkpoint": checkpoint_name, "waiting": True}
+
+    def _fallback_to_individual_clears(self, topic: str, turn_index: int) -> None:
+        """Clear context individually for agents who signaled a checkpoint."""
+        if not self._clear_enabled:
+            return
+        signaled_agents = [agent for agent, entry in self._checkpoint_signals.items() if entry]
+        if not signaled_agents:
+            return
+        self._handle_clear_signal(
+            emitting_agent=signaled_agents[0],
+            targets=set(signaled_agents),
+            source="checkpoint_timeout",
+            topic=topic,
+            turn_index=turn_index,
+        )
+
+    def _execute_synchronized_checkpoint(
+        self,
+        *,
+        checkpoint_name: str,
+        topic: str,
+        turn_index: int,
+    ) -> None:
+        """Execute synchronized clear for all active participants."""
+        if not self._clear_enabled:
+            self.logger.warning(
+                "Context clears disabled; cannot execute checkpoint '%s'",
+                checkpoint_name,
+            )
+            return
+
+        active = self._get_active_participants()
+        succeeded: List[str] = []
+        failures: List[Tuple[str, str]] = []
+
+        for target in active:
+            success, error = self._dispatch_clear_for_target(target)
+            if success:
+                succeeded.append(target)
+                self._clear_last_ts[target] = time.time()
+            else:
+                failures.append((target, error or "unknown"))
+
+        if succeeded:
+            self._log_clear_event(
+                status="checkpoint_cleared",
+                targets=succeeded,
+                source="checkpoint",
+                topic=topic,
+                turn_index=turn_index,
+                reason=f"checkpoint={checkpoint_name}",
+            )
+            lead_targets = [name for name in succeeded if "lead" in name.lower()]
+            self._resume_speaker = lead_targets[0] if lead_targets else succeeded[0]
+            for target in succeeded:
+                self._inject_post_checkpoint_prompt(target, checkpoint_name, topic)
+
+        if failures:
+            self.logger.error(
+                "Checkpoint clear failed for: %s",
+                ", ".join(f"{name} ({msg})" for name, msg in failures),
+            )
+
+    def _inject_post_checkpoint_prompt(
+        self,
+        target: str,
+        checkpoint_name: str,
+        topic: str,
+    ) -> None:
+        """Inject synchronized post-checkpoint instructions."""
+        prompt = f"""CHECKPOINT REACHED: {checkpoint_name} complete
+
+Please re-read the following to restore context:
+- PRD.md
+- ARCHITECTURE.md
+- PROJECT_TASKS.md (focus on next section)
+
+{self._get_role_specific_checkpoint_instructions(target)}
+"""
+        metadata = {
+            "source": "checkpoint",
+            "checkpoint_name": checkpoint_name,
+            "targets": [target],
+            "topic": topic,
+        }
+        self.inject_message(target, prompt, metadata=metadata)
+
+    def _get_role_specific_checkpoint_instructions(self, target: str) -> str:
+        """Return role-specific instructions for post-checkpoint."""
+        lower_target = (target or "").lower()
+        if "lead" in lower_target:
+            return "LeadDeveloper: Begin next section implementation"
+        if "review" in lower_target:
+            return "CodeReviewer: Resume MONITORING state for next section"
+        return ""
+
+    def _detect_escalation_signal(self, response: Optional[str], speaker: str) -> Optional[Dict[str, Any]]:
+        """Detect [[ESCALATION:reason]] signals."""
+        if not response:
+            return None
+        match = re.search(r"\[\[ESCALATION:([^\]]+)\]\]", response)
+        if not match:
+            return None
+
+        return {
+            "reason": match.group(1).strip(),
+            "agent": speaker,
+            "turn": self._turn_counter,
+            "timestamp": time.time(),
+        }
+
+    def _handle_escalation(self, escalation: Dict[str, Any], full_response: str) -> None:
+        """Log escalation with configured behavior."""
+        if not self._escalation_enabled:
+            return
+
+        log_level = self._escalation_log_level
+        pause_on_escalation = self._escalation_pause
+
+        self.logger.log(
+            log_level,
+            "ESCALATION: %s from %s (turn=%s)",
+            escalation.get("reason"),
+            escalation.get("agent"),
+            escalation.get("turn"),
+        )
+
+        self.history.append(
+            {
+                "type": "escalation",
+                "agent": escalation.get("agent"),
+                "reason": escalation.get("reason"),
+                "turn": escalation.get("turn"),
+                "timestamp": escalation.get("timestamp"),
+                "full_response": full_response,
+            }
+        )
+
+        if pause_on_escalation and getattr(self.orchestrator, "discussion_state", "").upper() == "RUNNING":
+            setattr(self.orchestrator, "discussion_state", "ESCALATED")
+            self.logger.warning("Discussion paused due to escalation")
+
+        if self._escalation_notify_human:
+            self.logger.info("Escalation notification would be sent (notify_human enabled)")
 
     def _get_clear_stats_snapshot(self) -> Dict[str, Any]:
         return {

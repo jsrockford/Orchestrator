@@ -120,19 +120,18 @@ ROLE_DEFAULTS = {
     },
     'CodeReviewer': {
         'primary_responsibilities': [
-            'Review code for correctness, quality, and bugs',
-            'Test functionality thoroughly',
-            'Verify PRD requirements are met',
-            'Identify edge cases that aren\'t handled',
-            'Provide constructive feedback',
-            'Approve code when ready',
-            'Trigger [[CLEAR]] at review checkpoints to ensure fresh context on new modules'
+            'Remain in MONITORING state until a [[REVIEW_REQUEST:<section>]] is received',
+            'Review code for correctness, quality, bugs, and PRD alignment',
+            'Run tests and validate functionality before issuing approval',
+            'Identify edge cases that aren\'t handled and request fixes',
+            'Provide evidence-based feedback or approvals (never rubber-stamp)',
+            'Trigger context resets at review checkpoints to ensure fresh context on new modules'
         ],
         'secondary_responsibilities': [
-            'Suggest improvements (non-blocking)',
-            'Verify test coverage',
-            'Check documentation quality',
-            'Emit [[CLEAR:agent]] when review scope shifts to a new feature area'
+            'Suggest non-blocking improvements backed by evidence',
+            'Verify test coverage and add integration/regression tests when appropriate',
+            'Check documentation quality for accuracy',
+            'Emit [[CLEAR:agent]] when review scope shifts or context drifts'
         ],
         'support_authority': 'Quality gate - must approve before completion'
     }
@@ -399,6 +398,7 @@ class ProjectConfig:
     """Configuration for the project being created"""
     project_name: str
     project_path: str
+    working_directory: str
     project_type: str  # cli, webapp, game, library, etc.
     domain: str  # financial, gaming, general, etc.
     tech_stack: str  # python, javascript, etc.
@@ -412,10 +412,11 @@ class ProjectConfig:
 class InstructionFileGenerator:
     """Generates instruction files based on project configuration"""
 
-    def __init__(self):
+    def __init__(self, working_dir_override: Optional[str] = None):
         self.repo_root = Path(__file__).parent.parent
         self.templates_dir = self.repo_root / "templates"
         self.template_file = self.templates_dir / "ALL_MODELS_TEMPLATE.md"
+        self.working_dir_override = working_dir_override
 
     def run(self):
         """Main entry point for the generator"""
@@ -459,6 +460,18 @@ class InstructionFileGenerator:
             "What is the absolute path where this project will be developed?",
             default=default_path
         )
+
+        # Working directory (actual code location)
+        user_request_working_dir = self._extract_working_directory_from_user_request(Path(project_path))
+        working_dir_default = self.working_dir_override or user_request_working_dir or project_path
+        if self.working_dir_override:
+            working_directory = working_dir_default
+            print(f"Using working directory from CLI override: {working_directory}")
+        else:
+            working_directory = self._prompt(
+                "Where is the working directory for code and tests (absolute path)?",
+                default=working_dir_default
+            )
 
         # Project type
         print("\nWhat type of project is this?")
@@ -549,6 +562,7 @@ class InstructionFileGenerator:
         config = ProjectConfig(
             project_name=project_name,
             project_path=project_path,
+            working_directory=working_directory,
             project_type=project_type,
             domain=domain,
             tech_stack=tech_stack,
@@ -760,6 +774,7 @@ class InstructionFileGenerator:
         print("=" * 70)
         print(f"Project Name: {config.project_name}")
         print(f"Project Path: {config.project_path}")
+        print(f"Working Directory: {config.working_directory}")
         print(f"Project Type: {config.project_type}")
         print(f"Domain: {config.domain}")
         print(f"Tech Stack: {config.tech_stack}")
@@ -884,6 +899,7 @@ class InstructionFileGenerator:
 
         # Build workflow phases from defaults
         phase_workflows = PHASE_WORKFLOWS.get(phase_name, {}).get('phases', [])
+        workflow_heading = "## Workflow Phases"
         workflow_section = ""
         for i, phase_def in enumerate(phase_workflows, 1):
             steps_text = '\n  - [ ] '.join(phase_def['steps'])
@@ -963,9 +979,22 @@ class InstructionFileGenerator:
 - Default cadence: every 3–5 major tasks or at module boundaries; increase frequency for risky areas.
 - Reference: docs/Context_Management_Guide.md."""
         elif phase_name == "Implementation":
-            context_section = f"""
+            if role_name == "CodeReviewer":
+                workflow_heading = "## CodeReviewer State Machine"
+                workflow_section = self._build_codereviewer_state_machine()
+                context_section = f"""
 ## Context Management & Checkpoints
-- Honor checkpoint meta-tasks: after completing the section, include `[[CLEAR:{role_name.lower()}]]` in your delimited response.
+- Pilot synchronized checkpoint for Section 1: after reviewing Section 1, emit `[[CHECKPOINT:Core_Logic_Complete]]` so both agents clear together; await LeadDeveloper's matching signal.
+- For remaining sections, honor PROJECT_TASKS.md meta-tasks that still use `[[CLEAR:{role_name.lower()}]]` until synchronized checkpoints roll out further.
+- Stay in MONITORING until you see `[[REVIEW_REQUEST:section_name]]`; acknowledge progress with short notes, no code.
+- If token usage is high (~60–70%) or context drifts mid-task, include `[[CLEAR:{role_name.lower()}]]` in your delimited response.
+- Clearing does not lose progress—files are the source of truth.
+- References: docs/Context_Management_Guide.md and the checkpoint templates under templates/."""
+            else:
+                context_section = f"""
+## Context Management & Checkpoints
+- Pilot synchronized checkpoint for Section 1: after finishing Section 1, emit `[[CHECKPOINT:Core_Logic_Complete]]` in your delimited response; wait for CodeReviewer to emit the same so the orchestrator clears both agents together.
+- For remaining sections, honor PROJECT_TASKS.md meta-tasks that still use `[[CLEAR:{role_name.lower()}]]` until synchronized checkpoints roll out further.
 - If token usage is high (~60–70%) or context drifts mid-task, include `[[CLEAR:{role_name.lower()}]]` in your delimited response.
 - Clearing does not lose progress—files are the source of truth.
 - The orchestrator will handle the clear command and resume the conversation.
@@ -988,7 +1017,7 @@ class InstructionFileGenerator:
 ## Project Context
 
 **Phase**: {phase_name}
-**Working Directory:** {config.project_path}
+**Working Directory:** {config.working_directory or config.project_path}
 
 **Input Artifacts:**
 - [TODO: List required input files]
@@ -999,7 +1028,7 @@ class InstructionFileGenerator:
 **Success Criteria:**
 - [TODO: Define completion criteria]
 
-## Workflow Phases
+{workflow_heading}
 
 {workflow_section.strip()}
 
@@ -1016,6 +1045,8 @@ class InstructionFileGenerator:
 {collab_section}
 
 {context_section}
+
+{self._build_additional_sections(phase_name, role_name)}
 
 ## Common Pitfalls to Avoid
 
@@ -1056,6 +1087,209 @@ class InstructionFileGenerator:
 **You may signal [[PROJECT_COMPLETE]] when:**
 {conditions_text}"""
 
+    def _build_additional_sections(self, phase_name: str, role_name: str) -> str:
+        """Return additional role/phase specific sections (state machine, review protocol, escalation)."""
+        sections: List[str] = []
+
+        if phase_name == "Implementation" and role_name == "CodeReviewer":
+            sections.append(self._build_evidence_requirements())
+            sections.append(self._build_escalation_protocol())
+        elif phase_name == "Implementation" and role_name == "LeadDeveloper":
+            sections.append(self._build_review_request_protocol())
+            sections.append(self._build_escalation_protocol())
+        elif phase_name == "Implementation":
+            sections.append(self._build_escalation_protocol())
+
+        return "\n\n".join([s for s in sections if s]).strip()
+
+    def _build_codereviewer_state_machine(self) -> str:
+        """Build CodeReviewer state machine section."""
+        return """You operate in one of four states. Transition between states based on signals from LeadDeveloper.
+
+### State 1: MONITORING (Initial State)
+**What you do:**
+- Read LeadDeveloper's delimited responses passively
+- Track which PROJECT_TASKS sections they're working on
+- Note when they complete tasks
+- Do NOT write code, create files, or implement features
+- Respond with brief acknowledgments: "Noted - monitoring Section 1 progress"
+
+**Transition:** When you see `[[REVIEW_REQUEST:section_name]]` → Go to ACTIVE REVIEW
+
+---
+
+### State 2: ACTIVE REVIEW
+**What you do:**
+- Read all code files mentioned in the review request
+- Identify bugs, logic errors, missing edge cases
+- Check that PRD requirements are met
+- Verify coding standards and best practices
+- Prepare defect list OR approval decision
+
+**Transition:** Once analysis complete → Go to TESTING
+
+---
+
+### State 3: TESTING
+**What you do:**
+- Run test commands (e.g., `npm test`, `python -m pytest`)
+- Execute integration tests if applicable
+- Verify files exist and have expected content
+- Test edge cases manually if needed
+- Collect evidence for approval/rejection
+
+**Transition:** Once testing complete → Go to APPROVAL/FEEDBACK
+
+---
+
+### State 4: APPROVAL/FEEDBACK
+**What you do:**
+- If tests pass and no critical issues: Provide APPROVAL with evidence
+- If issues found: Provide DEFECT LIST with evidence
+- Use evidence-based feedback (reference specific files, line numbers, test results)
+
+**Transition:** After providing approval/feedback → Return to MONITORING
+
+---
+
+### Critical Rules:
+- NEVER implement code while in MONITORING state
+- NEVER approve without evidence
+- NEVER skip TESTING state
+- Suggestions welcome, but approval is binary: APPROVED or DEFECTS FOUND"""
+
+    def _build_review_request_protocol(self) -> str:
+        """Guidance for LeadDeveloper review requests."""
+        return """## Requesting Code Review
+
+After completing each PROJECT_TASKS section:
+1. Ensure all code is committed (if git workflow)
+2. Self-review for obvious issues
+3. Signal review request: `[[REVIEW_REQUEST:section_name]]`
+4. Include summary: "Completed Section 1 - Core Game Logic. Implemented dice.ts, payouts.ts, rules.ts with unit tests."
+5. Wait for CodeReviewer's approval or defect list before proceeding to next section"""
+
+    def _build_evidence_requirements(self) -> str:
+        """Evidence requirements for CodeReviewer approvals."""
+        return """## Evidence Requirements for Approval
+
+Your APPROVAL response MUST include at least TWO of the following types of evidence:
+
+1. **Test Results**: "Ran `npm test` - all 15 tests passing"
+2. **File Verification**: "Confirmed files exist: src/logic/dice.ts (127 lines), src/logic/payouts.ts (89 lines)"
+3. **Manual Testing**: "Manually tested Field bet with roll of 3 - correctly paid 1:1"
+4. **Code Inspection**: "Reviewed calculatePayout() at payouts.ts:45 - handles all 8 bet categories per PRD"
+5. **Edge Case Verification**: "Tested boundary: Hard 6 with rolls (3,3) pays 9:1, (2,4) loses - correct"
+
+**Invalid Approvals**:
+- "Looks good!"
+- "LGTM"
+- "Approved" (without evidence)
+- "Great work!" (without specific verification)"""
+
+    def _build_escalation_protocol(self) -> str:
+        """Escalation protocol for critical disagreements."""
+        return """## Escalation Protocol
+
+**When to escalate:**
+- Critical security vulnerability disagreement
+- Data loss or corruption risk
+- PRD interpretation deadlock after 2 exchanges
+- Fundamental architecture disagreement blocking progress
+
+**How to escalate:**
+Emit `[[ESCALATION:brief_reason]]` and explain the issue:
+```
+[[ESCALATION:security_risk]]
+
+I believe the current implementation has a critical vulnerability. LeadDeveloper disagrees, citing that PRD doesn't specify input sanitization. However, this is a security best practice that should override the PRD silence on this matter.
+```
+
+**After escalation:**
+- Discussion continues (orchestrator logs but doesn't halt)
+- Consider documenting the decision in code comments or README
+- LeadDeveloper retains final authority per role definition
+- CodeReviewer may withhold [[PROJECT_COMPLETE]] approval if issue remains"""
+
+    def _ensure_section_present(self, content: str, header: str, body: str) -> Tuple[str, bool]:
+        """Ensure a section with ``header`` exists; insert before Common Pitfalls if missing."""
+        section_header = f"## {header}"
+        section_body = body
+        if body.lstrip().startswith("## "):
+            section_body = body.split('\n', 1)[1].lstrip()
+
+        insertion_marker = "## Common Pitfalls"
+        section_text = f"{section_header}\n\n{section_body}\n\n"
+        if section_header in content:
+            new_content, changed = self._replace_section_block(content, section_header, section_text)
+            return new_content, changed
+        if insertion_marker in content:
+            return content.replace(insertion_marker, section_text + insertion_marker, 1), True
+        return content + "\n\n" + section_text, True
+
+    def _ensure_codereviewer_state_machine_block(self, content: str) -> Tuple[str, bool]:
+        """Replace Workflow Phases with the CodeReviewer state machine block when missing."""
+        if "CodeReviewer State Machine" in content:
+            return content, False
+
+        pattern = re.compile(r'## Workflow Phases\s*(.*?)(?=\n## [^\n]+)', re.DOTALL | re.IGNORECASE)
+        new_block = f"## CodeReviewer State Machine\n\n{self._build_codereviewer_state_machine()}\n\n"
+        match = pattern.search(content)
+        if match:
+            return content[:match.start()] + new_block + content[match.end():], True
+        return new_block + content, True
+
+    def _build_implementation_context(self, role_name: str) -> str:
+        """Build implementation context/checkpoint guidance for a role."""
+        role_token = role_name.lower()
+        if role_name == "CodeReviewer":
+            return f"""## Context Management & Checkpoints
+- Pilot synchronized checkpoint for Section 1: after reviewing Section 1, emit `[[CHECKPOINT:Core_Logic_Complete]]` so both agents clear together; await LeadDeveloper's matching signal.
+- For remaining sections, honor PROJECT_TASKS.md meta-tasks that still use `[[CLEAR:{role_token}]]` until synchronized checkpoints roll out further.
+- Stay in MONITORING until you see `[[REVIEW_REQUEST:section_name]]`; acknowledge progress with short notes, no code.
+- If token usage is high (~60–70%) or context drifts mid-task, include `[[CLEAR:{role_token}]]` in your delimited response.
+- Clearing does not lose progress—files are the source of truth.
+- References: docs/Context_Management_Guide.md and the checkpoint templates under templates/."""
+
+        return f"""## Context Management & Checkpoints
+- Pilot synchronized checkpoint for Section 1: after finishing Section 1, emit `[[CHECKPOINT:Core_Logic_Complete]]` in your delimited response; wait for CodeReviewer to emit the same so the orchestrator clears both agents together.
+- For remaining sections, honor PROJECT_TASKS.md meta-tasks that still use `[[CLEAR:{role_token}]]` until synchronized checkpoints roll out further.
+- If token usage is high (~60–70%) or context drifts mid-task, include `[[CLEAR:{role_token}]]` in your delimited response.
+- Clearing does not lose progress—files are the source of truth.
+- The orchestrator will handle the clear command and resume the conversation.
+- References: docs/Context_Management_Guide.md and the checkpoint templates under templates/."""
+
+    def _replace_section_block(self, content: str, header: str, new_block: str) -> Tuple[str, bool]:
+        """Replace a section starting with ``header`` with ``new_block``."""
+        pattern = re.compile(rf"{re.escape(header)}\s*(.*?)(?=\n## [^\n]+|\Z)", re.DOTALL | re.IGNORECASE)
+        match = pattern.search(content)
+        block_text = new_block.strip() + "\n\n"
+        if match:
+            return content[:match.start()] + block_text + content[match.end():], True
+        return content + "\n\n" + block_text, True
+
+    def _refresh_responsibilities(self, content: str, role_name: str) -> Tuple[str, bool]:
+        """Refresh primary/secondary responsibilities from ROLE_DEFAULTS."""
+        defaults = ROLE_DEFAULTS.get(role_name)
+        if not defaults:
+            return content, False
+
+        primary_section = '\n'.join(f'- {resp}' for resp in defaults.get('primary_responsibilities', []))
+        secondary_section = '\n'.join(f'- {resp}' for resp in defaults.get('secondary_responsibilities', []))
+
+        pattern = re.compile(
+            r"\*\*Primary Responsibilities:\*\*\n(.*?)(\n\n\*\*Secondary Responsibilities:\*\*\n)(.*?)(\n\n\*\*Team Position:\*\*)",
+            re.DOTALL,
+        )
+        replacement = (
+            f"**Primary Responsibilities:**\n{primary_section}\n\n"
+            f"**Secondary Responsibilities:**\n{secondary_section}\n\n"
+        )
+        if pattern.search(content):
+            new_content = pattern.sub(replacement + r"\4", content, count=1)
+            return new_content, new_content != content
+        return content, False
+
     def _customize_template(
         self,
         template: str,
@@ -1067,6 +1301,7 @@ class InstructionFileGenerator:
         """Replace variables in template with actual values"""
         replacements = {
             "[PROJECT_PATH]": config.project_path,
+            "[PROJECT_DIRECTORY]": config.working_directory or config.project_path,
             "[PROJECT_NAME]": config.project_name,
             "[ROLE_NAME]": role_name,
             "[PHASE_NAME]": phase_name,
@@ -1080,6 +1315,28 @@ class InstructionFileGenerator:
             result = result.replace(placeholder, value)
 
         return result
+
+    def _replace_security_placeholders(self, content: str, config: Optional[ProjectConfig]) -> str:
+        """Replace [PROJECT_DIRECTORY]/[PROJECT_PATH] placeholders in existing files (refine mode)."""
+        if not config:
+            return content
+        replacements = {
+            "[PROJECT_PATH]": config.project_path,
+            "[PROJECT_DIRECTORY]": config.working_directory or config.project_path,
+            "[PROJECT_NAME]": config.project_name,
+        }
+        for placeholder, value in replacements.items():
+            content = content.replace(placeholder, value)
+
+        # Normalize working directory line if present
+        if config.working_directory:
+            content = re.sub(
+                r'\*\*Working Directory:\*\*.*',
+                f'**Working Directory:** {config.working_directory}',
+                content
+            )
+
+        return content
 
     def _generate_readme(self, config: ProjectConfig, output_dir: Path):
         """Generate README.md with workflow overview"""
@@ -1235,6 +1492,7 @@ python run_orchestrated_discussion.py \\
         config_dict = {
             "project_name": config.project_name,
             "project_path": config.project_path,
+            "working_directory": config.working_directory,
             "project_type": config.project_type,
             "domain": config.domain,
             "tech_stack": config.tech_stack,
@@ -1278,6 +1536,38 @@ python run_orchestrated_discussion.py \\
         print("  - docs/instruction_file_creation_guide.md")
         print("  - docs/instruction_file_templates.md")
         print()
+
+    def _extract_working_directory_from_user_request(self, base_path: Path) -> Optional[str]:
+        """Extract working directory from USER_REQUEST.md if present"""
+        try:
+            user_request_path = base_path / "USER_REQUEST.md"
+            if not user_request_path.exists():
+                return None
+            content = user_request_path.read_text()
+            match = re.search(r'Working\s*Directory\s*:\s*([^\n]+)', content, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        except Exception:
+            return None
+        return None
+
+    def _apply_working_directory_override(self, config: ProjectConfig, project_dir: Path) -> None:
+        """Apply working directory overrides in precedence order"""
+        user_request_dir = self._extract_working_directory_from_user_request(project_dir)
+        if self.working_dir_override:
+            config.working_directory = self.working_dir_override
+        elif user_request_dir:
+            config.working_directory = user_request_dir
+        elif getattr(config, "working_directory", ""):
+            # Respect existing config value
+            pass
+        else:
+            # Fallback to project_dir if provided, otherwise project_path
+            config.working_directory = str(project_dir) if project_dir else config.project_path
+
+        # If project_path points somewhere else (old configs), prefer the on-disk project_dir for path replacement
+        if project_dir:
+            config.project_path = str(project_dir)
 
     # Utility methods
     def _prompt(self, question: str, default: str = "") -> str:
@@ -1355,6 +1645,8 @@ python run_orchestrated_discussion.py \\
 
         # Load project config
         config = self._load_project_config(project_dir)
+        if config:
+            self._apply_working_directory_override(config, project_dir)
 
         # Find Phase 2 instruction files
         phase2_files = self._find_phase_files(project_dir, 2, config)
@@ -1432,6 +1724,8 @@ python run_orchestrated_discussion.py \\
 
         # Load project config
         config = self._load_project_config(project_dir)
+        if config:
+            self._apply_working_directory_override(config, project_dir)
 
         # Find Phase 3 instruction files
         phase3_files = self._find_phase_files(project_dir, 3, config)
@@ -1533,18 +1827,32 @@ python run_orchestrated_discussion.py \\
             'modules': [],
             'design_patterns': [],
             'directory_structure': [],
-            'dependencies': []
+            'dependencies': [],
+            'tech_guidance': ''
         }
+
+        # Remove code fences for text-only extraction
+        content_no_code = re.sub(r'```.*?```', '', arch_content, flags=re.DOTALL)
 
         # Extract technology stack
         tech_section = re.search(
-            r'##\s*(?:Technology\s*Stack|Tech\s*Stack|Technologies).*?(?=##|$)',
+            r'##\s*(?:\d+\.\s*)?(?:Technology\s*Stack|Tech\s*Stack|Technologies).*?(?=\n##\s+[^#]|\Z)',
             arch_content,
             re.DOTALL | re.IGNORECASE
         )
         if tech_section:
+            cleaned_tech_section = re.sub(r'```.*?```', '', tech_section.group(), flags=re.DOTALL)
+            guidance_lines = [
+                line.strip(" -*")
+                for line in cleaned_tech_section.splitlines()
+                if line.strip() and not line.strip().lower().startswith('##')
+            ]
+            guidance_lines = [ln for ln in guidance_lines if not re.match(r'^\d+\.', ln)]
+            if guidance_lines:
+                data['tech_guidance'] = '\n'.join(guidance_lines).strip()
+
             # Look for Python version
-            python_version = re.search(r'Python\s+(3\.\d+(?:\.\d+)?)', tech_section.group(), re.IGNORECASE)
+            python_version = re.search(r'Python\s+(3\.\d+(?:\.\d+)?)', cleaned_tech_section, re.IGNORECASE)
             if python_version:
                 data['tech_stack'].append(f"Python {python_version.group(1)}")
 
@@ -1555,12 +1863,45 @@ python run_orchestrated_discussion.py \\
                 r'-\s*`?([a-zA-Z0-9_-]+)`?\s*(?:for|:)'
             ]
             for pattern in lib_patterns:
-                libs = re.findall(pattern, tech_section.group(), re.IGNORECASE)
+                libs = re.findall(pattern, cleaned_tech_section, re.IGNORECASE)
                 data['tech_stack'].extend(libs)
+
+        # Keyword-based detection across document (without code blocks)
+        tech_keywords = [
+            "React",
+            "TypeScript",
+            "JavaScript",
+            "Vite",
+            "React Context",
+            "Context API",
+            "Python",
+            "FastAPI",
+            "Flask",
+            "Django",
+            "SQL",
+            "PostgreSQL",
+            "SQLite",
+            "Vitest",
+            "Jest",
+        ]
+        for keyword in tech_keywords:
+            if re.search(rf'\b{re.escape(keyword)}\b', content_no_code, re.IGNORECASE):
+                data['tech_stack'].append(keyword)
+
+        # Deduplicate tech stack entries while preserving order
+        seen_stack = set()
+        deduped_stack = []
+        for tech in data['tech_stack']:
+            key = tech.lower()
+            if key in seen_stack:
+                continue
+            seen_stack.add(key)
+            deduped_stack.append(tech)
+        data['tech_stack'] = deduped_stack
 
         # Extract components/modules
         component_section = re.search(
-            r'##\s*(?:Components?|Modules?|System\s*Architecture).*?(?=##|$)',
+            r'##\s*(?:\d+\.\s*)?(?:Core\s*Components?|Components?|Modules?|System\s*Architecture).*?(?=\n##\s+[^#]|\Z)',
             arch_content,
             re.DOTALL | re.IGNORECASE
         )
@@ -1580,14 +1921,15 @@ python run_orchestrated_discussion.py \\
                 data['design_patterns'].append(keyword.title())
 
         # Extract directory structure
-        dir_section = re.search(
-            r'(?:```|```text|```bash)\s*(.*?(?:src/|lib/|app/).*?)```',
-            arch_content,
-            re.DOTALL
-        )
-        if dir_section:
-            lines = [l.strip() for l in dir_section.group(1).split('\n') if l.strip() and '/' in l]
-            data['directory_structure'] = lines[:10]  # Limit to 10 lines
+        fence_pattern = re.compile(r'```(?:[a-zA-Z]+)?\s*(.*?)```', re.DOTALL)
+        for match in fence_pattern.finditer(arch_content):
+            block = match.group(1)
+            if 'src/' in block or 'lib/' in block or 'app/' in block:
+                lines = [l.strip() for l in block.split('\n') if l.strip()]
+                path_lines = [l for l in lines if '/' in l or l.startswith('├') or l.startswith('└') or l.startswith('|') or l.startswith('.')]
+                if path_lines:
+                    data['directory_structure'] = path_lines[:10]
+                    break
 
         # Extract dependencies (requirements)
         dep_section = re.search(
@@ -1610,6 +1952,42 @@ python run_orchestrated_discussion.py \\
             'total_tasks': 0,
             'total_effort_hours': 0
         }
+
+        seen_ids = set()
+        seen_descriptions = set()
+
+        def _clean_description(text: str) -> str:
+            """Normalize whitespace and strip markdown emphasis"""
+            text = re.sub(r'\*\*', '', text)
+            text = re.sub(r'\s+', ' ', text)
+            return text.strip()
+
+        def _add_task(task_id: Optional[str], description: str, effort: int = 0, is_high_priority: bool = False):
+            """Add a task entry while preventing duplicates"""
+            normalized_desc = _clean_description(description)
+            # Prefer IDs for dedupe; fall back to description
+            if task_id:
+                if task_id in seen_ids:
+                    return
+            elif normalized_desc.lower() in seen_descriptions:
+                return
+
+            final_id = task_id or f"TASK-{len(data['tasks']) + 1:03d}"
+            task_info = {
+                'id': final_id,
+                'description': normalized_desc[:150],
+                'effort_hours': effort,
+                'is_high_priority': is_high_priority
+            }
+
+            data['tasks'].append(task_info)
+            data['total_effort_hours'] += effort
+
+            if is_high_priority:
+                data['high_priority_tasks'].append(task_info)
+
+            seen_ids.add(final_id)
+            seen_descriptions.add(normalized_desc.lower())
 
         # Task sections use Markdown headings (### P1.1 ...) with ID/metadata blocks.
         task_section_pattern = r'###\s+.+?(?=\n###\s+|$)'
@@ -1637,18 +2015,39 @@ python run_orchestrated_discussion.py \\
             priority = priority_match.group(1).strip().lower() if priority_match else 'medium'
             is_high_priority = priority in ('high', 'critical')
 
-            task_info = {
-                'id': task_id,
-                'description': description[:150],
-                'effort_hours': effort,
-                'is_high_priority': is_high_priority
-            }
+            _add_task(task_id, description, effort=effort, is_high_priority=is_high_priority)
 
-            data['tasks'].append(task_info)
-            data['total_effort_hours'] += effort
+        # Parse checkbox tasks (counts both parent tasks and subtasks)
+        checkbox_pattern = re.compile(r'^\s*(?:[-*]|\d+\.)\s*\[(?: |x|X)\]\s*(.+)$', re.MULTILINE)
+        for match in checkbox_pattern.finditer(tasks_content):
+            raw_desc = match.group(1).strip()
+            if re.search(r'checkpoint', raw_desc, re.IGNORECASE):
+                continue  # Skip checkpoint meta-tasks
 
-            if is_high_priority:
-                data['high_priority_tasks'].append(task_info)
+            task_id = None
+            id_match = re.search(r'Task\s*([0-9A-Za-z.\-]+)', raw_desc, re.IGNORECASE)
+            if id_match:
+                task_id = f"Task {id_match.group(1)}"
+
+            # Remove leading "Task X:" label from description
+            clean_desc = re.sub(r'^Task\s*[0-9A-Za-z.\-]+\s*:?', '', _clean_description(raw_desc), flags=re.IGNORECASE).strip()
+            _add_task(task_id, clean_desc or raw_desc)
+
+        # Parse numbered list tasks (without checkboxes)
+        numbered_pattern = re.compile(r'^\s*\d+\.\s+(?!\[[ xX]\])(.+)$', re.MULTILINE)
+        for match in numbered_pattern.finditer(tasks_content):
+            raw_desc = match.group(1).strip()
+            if re.search(r'checkpoint', raw_desc, re.IGNORECASE):
+                continue
+            if re.search(r'\[(?: |x|X)\]', raw_desc):
+                continue  # Already handled checkbox format
+
+            task_id = None
+            id_match = re.search(r'Task\s*([0-9A-Za-z.\-]+)', raw_desc, re.IGNORECASE)
+            if id_match:
+                task_id = f"Task {id_match.group(1)}"
+            clean_desc = re.sub(r'^Task\s*[0-9A-Za-z.\-]+\s*:?', '', _clean_description(raw_desc), flags=re.IGNORECASE).strip()
+            _add_task(task_id, clean_desc or raw_desc)
 
         data['total_tasks'] = len(data['tasks'])
 
@@ -1755,6 +2154,7 @@ python run_orchestrated_discussion.py \\
         return ProjectConfig(
             project_name=config_data['project_name'],
             project_path=config_data['project_path'],
+            working_directory=config_data.get('working_directory', config_data['project_path']),
             project_type=config_data['project_type'],
             domain=config_data['domain'],
             tech_stack=config_data['tech_stack'],
@@ -1791,6 +2191,11 @@ python run_orchestrated_discussion.py \\
 
         original_content = content
         modified = False
+
+        replaced_security = self._replace_security_placeholders(content, config)
+        if replaced_security != content:
+            content = replaced_security
+            modified = True
 
         # Fill Input Artifacts TODO
         if '[TODO: List required input files]' in content:
@@ -1877,6 +2282,68 @@ python run_orchestrated_discussion.py \\
 
         original_content = content
         modified = False
+        role_name = None
+        if "LeadDeveloper" in file_path.name:
+            role_name = "LeadDeveloper"
+        elif "CodeReviewer" in file_path.name:
+            role_name = "CodeReviewer"
+
+        # Always ensure security placeholders are replaced even if no TODOs remain
+        replaced_security = self._replace_security_placeholders(content, config)
+        if replaced_security != content:
+            content = replaced_security
+            modified = True
+
+        if role_name:
+            content, updated = self._refresh_responsibilities(content, role_name)
+            if updated:
+                modified = True
+                print("  ✓ Refreshed responsibilities")
+
+        if role_name == "CodeReviewer":
+            content, updated = self._ensure_codereviewer_state_machine_block(content)
+            if updated:
+                modified = True
+                print("  ✓ Applied CodeReviewer state machine")
+            content, updated = self._ensure_section_present(
+                content,
+                "Evidence Requirements for Approval",
+                self._build_evidence_requirements()
+            )
+            if updated:
+                modified = True
+                print("  ✓ Added evidence requirements")
+
+        if role_name:
+            content, updated = self._ensure_section_present(
+                content,
+                "Escalation Protocol",
+                self._build_escalation_protocol()
+            )
+            if updated:
+                modified = True
+                print("  ✓ Added escalation protocol")
+
+        if role_name == "LeadDeveloper":
+            content, updated = self._ensure_section_present(
+                content,
+                "Requesting Code Review",
+                self._build_review_request_protocol()
+            )
+            if updated:
+                modified = True
+                print("  ✓ Added review request protocol")
+
+        if role_name:
+            new_context = self._build_implementation_context(role_name)
+            content, updated = self._replace_section_block(
+                content,
+                "## Context Management & Checkpoints",
+                new_context
+            )
+            if updated:
+                modified = True
+                print("  ✓ Updated context management for Phase 3")
 
         # Fill Input Artifacts TODO
         if '[TODO: List required input files]' in content:
@@ -1920,10 +2387,8 @@ python run_orchestrated_discussion.py \\
                 'Critical and High risks from RISKS.md are mitigated'
             ]
             criteria_text = '\n'.join(f'- {item}' for item in criteria_items)
-            content = content.replace(
-                '[TODO: Define completion criteria]',
-                criteria_text
-            )
+            content = content.replace('- [TODO: Define completion criteria]', criteria_text)
+            content = content.replace('[TODO: Define completion criteria]', criteria_text)
             modified = True
             print("  ✓ Filled Success Criteria")
 
@@ -1970,6 +2435,21 @@ python run_orchestrated_discussion.py \\
             modified = True
             print("  ✓ Filled Workflow Phase structure with tasks")
 
+        # Repair corrupted technology guidance blocks (e.g., code snippets instead of guidance)
+        tech_guidance_match = re.search(r'(##\s+[^\n]*Technology Guidance.*?)(?=\n##\s+|\Z)', content, re.DOTALL | re.IGNORECASE)
+        if tech_guidance_match:
+            block_text = tech_guidance_match.group(1)
+            corruption_markers = ['point:', 'BetType', 'saveProfile', 'TableLayout']
+            if any(marker in block_text for marker in corruption_markers):
+                new_guidance = self._build_tech_guidance(arch_data)
+                replacement = f"## Python-React Technology Guidance\n\n{new_guidance}\n\n"
+                content = content[:tech_guidance_match.start()] + replacement + content[tech_guidance_match.end():]
+                modified = True
+                print("  ✓ Rebuilt Technology Guidance section")
+
+        # Clean duplicate bullet prefixes introduced by template replacement
+        content = content.replace('\n- - ', '\n- ')
+
         if modified:
             # Write updated content
             with open(file_path, 'w') as f:
@@ -1983,6 +2463,12 @@ python run_orchestrated_discussion.py \\
     def _build_tech_guidance(self, arch_data: Dict) -> str:
         """Build technology-specific guidance from architecture data"""
         guidance = []
+
+        tech_guidance_text = arch_data.get('tech_guidance', '').strip()
+        if tech_guidance_text:
+            guidance.append("**Technology Guidance:**")
+            guidance.append(tech_guidance_text)
+            guidance.append("")
 
         if arch_data['tech_stack']:
             guidance.append("**Technology Stack:**")
@@ -2011,7 +2497,8 @@ python run_orchestrated_discussion.py \\
             guidance.append("")
 
         if not guidance:
-            guidance.append("Refer to ARCHITECTURE.md for detailed technology specifications.")
+            stack_label = ', '.join(arch_data.get('tech_stack', [])) if arch_data.get('tech_stack') else "this project"
+            return f"<!-- TODO: Add technology-specific guidance for {stack_label} -->"
 
         return '\n'.join(guidance)
 
@@ -2116,6 +2603,12 @@ Examples:
         help='Project directory containing instruction files (for refinement mode)'
     )
 
+    parser.add_argument(
+        '--working-dir',
+        type=str,
+        help='Absolute working directory for the project code (overrides project_path and USER_REQUEST.md)'
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -2128,7 +2621,7 @@ Examples:
             parser.error("Phase 3 refinement requires --architecture-file, --tasks-file, and --risks-file")
 
     try:
-        generator = InstructionFileGenerator()
+        generator = InstructionFileGenerator(working_dir_override=args.working_dir)
 
         if args.refine:
             # Refinement mode

@@ -254,6 +254,21 @@ context_management:
   log_file: "logs/context_clears.log"
   log_level: "INFO"
 
+review_requests:
+  blocking: false
+  timeout_seconds: 300
+
+checkpoints:
+  synchronized: true
+  timeout_seconds: 120
+  fallback_to_individual: true
+
+escalation:
+  enabled: true
+  log_level: "WARNING"
+  notify_human: false
+  pause_discussion: false
+
 response_validation:
   noise_log: "/home/dgray/Projects/Orchestrator/logs/filtered_patterns.log"
   error_log: "/home/dgray/Projects/Orchestrator/logs/response_errors.log"

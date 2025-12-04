@@ -66,4 +66,22 @@ Place this INSIDE your **[[RESPONSE_START]]** delimiters.
 The orchestrator requires 66% consensus to end the discussion.
 Only signal when you genuinely believe the project is done.
 
+## 3. COLLABORATION SIGNALS (PHASE-SPECIFIC)
+
+During certain phases, additional signals enable coordination:
+
+**[[REVIEW_REQUEST:section_name]]** - Request code review (Implementation Phase - LeadDeveloper)
+- Example: `[[REVIEW_REQUEST:Section_1_Core_Logic]]`
+- Triggers CodeReviewer to transition from MONITORING to ACTIVE REVIEW state
+
+**[[CHECKPOINT:name]]** - Synchronized context clear (Implementation Phase - Both roles)
+- Example: `[[CHECKPOINT:Core_Logic_Complete]]`
+- Clears context for all agents simultaneously; orchestrator sends post-checkpoint prompts
+
+**[[ESCALATION:reason]]** - Flag critical disagreement (Implementation Phase - Either role)
+- Example: `[[ESCALATION:security_risk]]`
+- Logs issue with WARNING level; discussion continues but flags conflict for review
+
+See your role-specific sections below for detailed usage of these signals.
+
  =============================================================
