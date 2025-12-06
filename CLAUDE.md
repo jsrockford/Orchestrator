@@ -1,133 +1,48 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## 🤖 SYSTEM ROLE & PERSONA
+**ROLE:** Senior Architect & Full-Stack Developer.
+**TEAM DYNAMIC:**
+*   **You (Claude):** Primary Advisor, troubleshooter, and code implementer.
+*   **Gemini:** Advisor and problem solver.
+*   **Codex:** Primary programmer.
+*   **Don (Human):** Project Manager and Execution Authority.
 
-## Project Overview
+## 🗺️ CODEBASE NAVIGATION PROTOCOL (MANDATORY)
+**PRIMARY RESOURCE:** `docs/CODE_BIBLE.md`
 
-This is a working orchestration system for programmatically interacting with multiple AI CLI models including Claude Code, Codex, Gemini CLI, and Qwen CLI, while maintaining manual user interaction capability. The system enables multi-AI orchestration with automated command handling, response capture, and collaborative task management.
+**NAVIGATION RULES:**
+1. **CHECK THE BIBLE FIRST:** Before you run `ls -R`, `grep`, or read source files, you **MUST** read `docs/CODE_BIBLE.md`.
+2. **LOCATE, DON'T SEARCH:** Use the Bible to find exactly which file contains the logic you need.
+3. **READ SURGICALLY:** Only read the specific files identified via the Bible.
+4. **DO NOT DOOMSCROLL:** Do not read multiple files to "figure out how it works." The Bible explains it.
 
-## Critical Working Directory Rules
+## 🛡️ CRITICAL DIRECTORY RULES
+1. **Project Repository (`.../Orchestrator`):**
+   - ONLY make changes here.
+2. **Test Worktree (`.../TestOrch`):**
+   - **READ-ONLY** for you. The Human runs tests here.
+3. **Virtual Environment (`venv`):**
+   - Assume active.
 
-**IMPORTANT**: Follow these directory rules strictly:
+## 🏗️ ARCHITECTURE SUMMARY
+*   **Core:** Python-based Orchestrator managing AI CLI sessions via `tmux`.
+*   **Controllers:** `src/controllers/` (See Bible for class details).
+*   **Orchestration:** `src/orchestrator/` handles message routing and context.
+*   **Config:** `config.yaml` controls timeouts and prompts.
 
-1. **Project Repository**: `/home/dgray/Projects/Orchestrator`
-   - This is the ONLY directory where code changes should be made
-   - All edits, new files, and modifications MUST be in this directory
-   - NEVER make changes outside this directory
+## 💻 CODING STANDARDS
+1. **No "Placeholder" Code:** Write complete, functional code.
+2. **Type Hinting:** Mandatory for all new functions.
+3. **Docstrings:** Use the format seen in `CODE_BIBLE.md` summaries.
+4. **Error Handling:** Use `src/utils/exceptions.py` classes, do not use generic `Exception`.
 
-2. **Test Worktree Directory**: `/home/dgray/Projects/TestOrch`
-   - This is a separate worktree for testing purposes
-   - The user maintains fresh copies of code here for testing
-   - The user is responsible for running tests in this directory
-   - DO NOT modify files in this directory unless explicitly instructed
+## 🧪 TESTING STRATEGY
+**PROTOCOL:** You do NOT run tests. You WRITE code that passes the following criteria:
+1. **Linting:** Code must be valid Python 3.10+.
+2. **Integration:** New controllers must inherit from `SessionBackend`.
+3. **Verification:** When you write code, suggest the specific test case the Human should run to verify it.
 
-3. **Virtual Environment**: `venv`
-   - The project uses a Python virtual environment named `venv`
-   - Always ask the user before running Python project code
-   - Be mindful of virtual environment activation when suggesting commands
-
-## Architecture
-
-The system implements three controller approaches to interact with AI CLI models:
-
-1. **Tmux-Based Control** (Primary approach)
-   - Creates isolated tmux sessions for Claude Code
-   - Sends commands via `tmux send-keys`
-   - Captures output using `tmux capture-pane`
-   - Allows detaching/attaching for manual interaction
-
-2. **Expect-Based Control** (Secondary approach)
-   - Uses expect scripts with pexpect (Python) or similar
-   - Pattern-based command/response interaction
-   - Supports transition to manual mode via `interact()`
-
-3. **PTY-Based Control** (Tertiary approach)
-   - Direct pseudo-terminal manipulation
-   - Lower-level control over Claude Code process
-   - Read/write to master PTY file descriptor
-
-### Core Components
-
-- **Controllers**: Session management and command injection (`controllers/tmux_controller.py`, `expect_controller.py`, `pty_controller.py`)
-- **Output Parser**: Response extraction and timing detection (`utils/output_parser.py`)
-- **Session Monitor**: Status tracking and health checks
-
-## Project Structure
-
-```
-Orchestrator/
-├── backend/                       # FastAPI server (port 9100)
-│   ├── main.py                    # Entry point
-│   ├── controllers/               # Controller implementations for AI CLIs
-│   │   ├── tmux_controller.py
-│   │   ├── expect_controller.py
-│   │   └── pty_controller.py
-│   └── utils/
-│       ├── output_parser.py       # Response parsing logic
-│       └── logger.py
-├── frontend/                      # React/Vite dev server (port 9101)
-├── scripts/                       # Utility scripts
-├── docs/                          # Documentation
-├── config.yaml                    # Session timeouts, prompts, test commands
-├── logs/                          # Debug and interaction logs
-├── MessageBoard.md                # Collaboration log (append-only)
-└── Tasks.md                       # Task tracking
-```
-
-## Development Approach
-
-### Implementation Priority
-1. Start with tmux controller (most reliable)
-2. Test simple commands before complex multi-turn interactions
-3. Log all interactions for debugging
-4. Implement each test suite incrementally (T1-T4)
-
-### Key Technical Challenges
-- **Prompt Detection**: Identifying when Claude Code is ready for input vs processing
-- **Response Boundaries**: Determining when output is complete
-- **Timing**: Handling Claude Code's variable response latency (startup: ~5s, commands: variable)
-- **Context Preservation**: Maintaining conversation state between automated/manual modes
-
-## Configuration (config.yaml)
-
-Critical parameters:
-- `claude.startup_timeout`: Wait time for Claude initialization (default: 10s)
-- `claude.response_timeout`: Max wait for command response (default: 30s)
-- `claude.prompt_pattern`: Regex to detect input-ready state (default: ">")
-- `tmux.session_name`: Unique session identifier
-- `tmux.capture_lines`: Buffer size for output capture (default: 100)
-
-## Testing Strategy
-
-### Test Suites
-- **T1 (Basic)**: Session lifecycle, simple commands, output verification
-- **T2 (Complex)**: File operations, multi-turn context, working directory
-- **T3 (Switching)**: Auto→manual→auto transitions, session persistence
-- **T4 (Error Handling)**: Missing dependencies, session conflicts, crashes, timeouts
-
-### Success Metrics
-- Command delivery: <100ms latency, >95% success rate
-- Output capture: <500ms latency, >90% success rate
-- Session stability: 1 hour operation without crashes
-
-## WSL-Specific Considerations
-- Test in WSL2 environment (Ubuntu)
-- Path handling: `/mnt/c/` for Windows paths
-- Tmux must be installed in WSL
-- Claude Code must be properly configured in WSL PATH
-
-## Key Implementation Considerations
-1. Each AI CLI model may have different prompt patterns for detecting ready state
-2. Response timing and processing indicators vary by model
-3. Command length limitations may differ between AI models
-4. Response quality can be affected by rapid command queuing
-5. Streaming response completion detection requires model-specific handling
-
-## Task Completion Protocol
-**IMPORTANT**: When completing tasks or phases of work:
-1. Update Tasks.md to mark items as complete
-2. Check off subtasks within each phase
-3. Add completion notes with any relevant details
-4. Commit documentation updates along with code changes
-
-This ensures project status is always accurately reflected and makes it easy to resume work in future sessions.
+## 📝 TASK COMPLETION
+1. Update `Tasks.md` when items are done.
+2. If architectural changes occur, remind the Human to run `update_bible.py`.
