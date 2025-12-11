@@ -2080,14 +2080,22 @@ python run_orchestrated_discussion.py \\
         }
 
         # Extract risk entries
-        # Format: ### Risk 1: Risk Name or **Risk ID:** RISK-001
-        risk_pattern = r'(?:###\s*Risk\s*\d+:|##\s*Risk\s*\d+:|\*\*Risk\s*(?:ID|Name):\*\*)\s*(.+?)(?=(?:###\s*Risk|##\s*Risk|##\s*[A-Z])|$)'
+        # Format: ### Risk 1: Risk Name, #### 1. Risk Name, or **Risk ID:** RISK-001
+        risk_pattern = r'(?:###\s*Risk\s*\d+:|##\s*Risk\s*\d+:|\*\*Risk\s*(?:ID|Name):\*\*|####?\s*\d+\.\s+)\s*(.+?)(?=(?:###\s*Risk|##\s*Risk|####?\s*\d+\.\s+|##\s*[A-Z]|###\s*[A-Z])|$)'
         risk_matches = re.findall(risk_pattern, risks_content, re.DOTALL | re.IGNORECASE)
 
         for risk_content in risk_matches:
             # Extract risk name/title (first line)
             lines = [l.strip() for l in risk_content.split('\n') if l.strip()]
             risk_name = lines[0] if lines else 'Unknown Risk'
+            description = ""
+            if len(lines) > 1:
+                for candidate in lines[1:]:
+                    lowered = candidate.lower()
+                    if lowered.startswith(("probability", "**probability", "impact", "**impact", "mitigation", "**mitigation", "strategy", "**strategy")):
+                        continue
+                    description = candidate
+                    break
 
             # Extract severity/priority
             severity_match = re.search(
@@ -2095,7 +2103,21 @@ python run_orchestrated_discussion.py \\
                 risk_content,
                 re.IGNORECASE
             )
-            severity = severity_match.group(1).lower() if severity_match else 'medium'
+            severity = severity_match.group(1).lower() if severity_match else None
+            if not severity:
+                prob_match = re.search(r'probability:\s*(high|medium|low)', risk_content, re.IGNORECASE)
+                impact_match = re.search(r'impact:\s*(high|medium|low)', risk_content, re.IGNORECASE)
+                if prob_match and impact_match:
+                    prob = prob_match.group(1).lower()
+                    impact = impact_match.group(1).lower()
+                    if impact == 'high' and prob in ['high', 'medium']:
+                        severity = 'critical'
+                    elif impact == 'high' or prob == 'high':
+                        severity = 'high'
+                    else:
+                        severity = 'medium'
+                else:
+                    severity = 'medium'
 
             # Extract mitigation strategies
             mitigation_section = re.search(
@@ -2111,6 +2133,7 @@ python run_orchestrated_discussion.py \\
 
             risk_info = {
                 'name': risk_name.strip()[:100],
+                'description': description.strip()[:120] if description else '',
                 'severity': severity,
                 'mitigations': mitigations,
                 'full_content': risk_content[:300]  # First 300 chars for context
@@ -2513,7 +2536,8 @@ python run_orchestrated_discussion.py \\
         if risks_data['critical_risks']:
             pitfalls.append("**Critical Risk Areas:**")
             for risk in risks_data['critical_risks'][:3]:  # Top 3
-                pitfalls.append(f"- **{risk['name']}**")
+                desc = f" - {risk['description']}" if risk.get('description') else ""
+                pitfalls.append(f"- **{risk['name']}**{desc}")
                 if risk['mitigations']:
                     pitfalls.append(f"  - Mitigation: {risk['mitigations'][0]}")
             pitfalls.append("")
@@ -2522,7 +2546,8 @@ python run_orchestrated_discussion.py \\
         if risks_data['high_risks']:
             pitfalls.append("**High Risk Areas:**")
             for risk in risks_data['high_risks'][:4]:  # Top 4
-                pitfalls.append(f"- **{risk['name']}**")
+                desc = f" - {risk['description']}" if risk.get('description') else ""
+                pitfalls.append(f"- **{risk['name']}**{desc}")
                 if risk['mitigations']:
                     pitfalls.append(f"  - Mitigation: {risk['mitigations'][0]}")
             pitfalls.append("")

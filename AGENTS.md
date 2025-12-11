@@ -12,10 +12,11 @@
 Your job is to write high-quality, executable Python code. You focus on syntax, logic, type safety, and PEP 8 compliance. While Gemini plans *what* to do, you figure out *how* to code it.
 
 ## 🗺️ CODEBASE NAVIGATION PROTOCOL (MANDATORY)
-**PRIMARY RESOURCE:** `docs/CODE_BIBLE.md`
+**PRIMARY RESOURCE:** `docs/CODE_INDEX.md` (The Map)
+**SECONDARY RESOURCE:** `docs/CODE_BIBLE.md` (The Encyclopedia)
 
 **NAVIGATION RULES:**
-1. **CHECK THE BIBLE FIRST:** Before you run `ls -R`, `grep`, or attempt to read source files blindly, you **MUST** read `docs/CODE_BIBLE.md`.
+1. **CHECK THE INDEX FIRST / FOLLOW UP WITH BIBLE IF NEEDED:** Before you run `ls -R`, `grep`, or attempt to read source files blindly, you **MUST** read `docs/CODE_INDEX.md` then `docs/CODE_BIBLE.md` if more detail is needed.
 2. **LOCATE, DON'T SEARCH:** Use the Bible to find exactly which file contains the logic you need.
 3. **READ SURGICALLY:** Once you identify the correct file from the Bible, use your file-reading tool to read *only* that specific file.
 4. **DO NOT DOOMSCROLL:** Do not read multiple files to "figure out how it works." The Bible already explains how it works.

@@ -1,0 +1,81 @@
+[
+    {
+      "category": "functional",
+      "description": "Backend server starts successfully and responds to health check",
+      "steps": [
+        "Step 1: Start the Express server",
+        "Step 2: Send GET request to /api/health endpoint",
+        "Step 3: Verify response status is 200",
+        "Step 4: Verify response body contains status: 'ok'"
+      ],
+      "passes": true
+    },
+    {
+      "category": "functional",
+      "description": "Frontend application loads and renders without errors",
+      "steps": [
+        "Step 1: Start the Vite development server",
+        "Step 2: Navigate to localhost:frontend_port in browser",
+        "Step 3: Verify the page loads without console errors",
+        "Step 4: Verify the main layout components are rendered"
+      ],
+      "passes": true
+    },
+    {
+      "category": "functional",
+      "description": "SQLite database initializes with all required tables",
+      "steps": [
+        "Step 1: Start the backend server",
+        "Step 2: Check that SQLite database file is created",
+        "Step 3: Verify users table exists with correct schema",
+        "Step 4: Verify projects table exists with correct schema",
+        "Step 5: Verify conversations table exists with correct schema",
+        "Step 6: Verify messages table exists with correct schema",
+        "Step 7: Verify artifacts table exists with correct schema",
+        "Step 8: Verify shared_conversations table exists",
+        "Step 9: Verify prompt_library table exists",
+        "Step 10: Verify conversation folders table exists",
+        "Step 11: Verify usage_tracking table exists"
+      ],
+      "passes": true
+    },
+    {
+      "category": "functional",
+      "description": "New conversation can be created via API",
+      "steps": [
+        "Step 1: Send POST request to /api/conversations with valid data",
+        "Step 2: Verify response status is 201",
+        "Step 3: Verify response contains conversation ID",
+        "Step 4: Verify conversation is persisted in database"
+      ],
+      "passes": true
+    },
+    {
+      "category": "functional",
+      "description": "New conversation can be created via UI",
+      "steps": [
+        "Step 1: Navigate to the application",
+        "Step 2: Click 'New Chat' button in sidebar",
+        "Step 3: Verify new conversation is displayed",
+        "Step 4: Verify welcome screen or empty state is shown",
+        "Step 5: Verify input field is focused and ready for input"
+      ],
+      "passes": true
+    },
+    {
+      "category": "functional",
+      "description": "Message can be sent and received via streaming",
+      "steps": [
+        "Step 1: Create or select a conversation",
+        "Step 2: Type a message in the input field",
+        "Step 3: Click send button or press enter",
+        "Step 4: Verify user message appears in chat",
+        "Step 5: Verify typing indicator is shown",
+        "Step 6: Verify response streams in word by word",
+        "Step 7: Verify complete response is displayed",
+        "Step 8: Verify message is persisted in database"
+      ],
+      "passes": true
+    }
+  ]
+  

@@ -847,6 +847,9 @@ class TmuxController(SessionBackend):
 
         Args:
             macro_config: Mapping containing either ``keys`` (list/str) or ``command`` (str).
+                Optional flags:
+                - ``single_submit`` / ``no_fallback_submit``: When true, send exactly
+                  one submit key and skip fallback submits (for interactive menus).
 
         Raises:
             ValueError: If the macro configuration is missing required fields.
@@ -855,6 +858,11 @@ class TmuxController(SessionBackend):
         """
         if macro_config is None:
             raise ValueError("Macro config is required")
+
+        single_submit = bool(
+            macro_config.get("single_submit")
+            or macro_config.get("no_fallback_submit")
+        )
 
         if "keys" in macro_config:
             keys = macro_config.get("keys")
@@ -883,11 +891,15 @@ class TmuxController(SessionBackend):
                 raise ValueError("Macro command must be a non-empty string")
 
             self.send_text(command_text)
-            self.send_enter()
+            if single_submit:
+                self._send_single_submit()
+            else:
+                self.send_enter()
             self.logger.debug(
-                "Sent macro command '%s' to tmux session '%s'",
+                "Sent macro command '%s' to tmux session '%s' (single_submit=%s)",
                 command_text,
                 self.session_name,
+                single_submit,
             )
             return
 
@@ -949,6 +961,36 @@ class TmuxController(SessionBackend):
                 raise SessionBackendError(f"Failed to send Ctrl+C: {result.stderr}")
         except TmuxError as e:
             raise SessionBackendError(f"Failed to send Ctrl+C: {e}") from e
+
+    def _send_single_submit(self) -> None:
+        """
+        Send a single submit key without any fallback submit attempts.
+
+        Used for interactive macros that should not receive repeated Enter presses.
+        """
+        if not self.session_exists():
+            raise SessionNotFoundError(f"Session '{self.session_name}' does not exist")
+
+        submit_key = self.submit_key or "Enter"
+        try:
+            time.sleep(self.text_enter_delay)
+            result = self._run_tmux_command([
+                "send-keys", "-t", self.session_name, submit_key
+            ])
+        except TmuxError as exc:
+            raise SessionBackendError(f"Failed to send single submit: {exc}") from exc
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise SessionBackendError(
+                f"tmux send-keys failed for single submit '{submit_key}': {stderr or 'unknown error'}"
+            )
+
+        self.logger.debug(
+            "Sent single submit key '%s' to tmux session '%s'",
+            submit_key,
+            self.session_name,
+        )
 
     def capture_output(
         self,
