@@ -92,7 +92,7 @@ class OutputParser:
         return self.ANSI_ESCAPE.sub('', text)
 
     PROMPT_MARKERS = ('>', '›')
-    RESPONSE_MARKERS = ('●', '✦', '•')
+    RESPONSE_MARKERS = ('●', '✦', '•', '▸')
     # Explicit delimiter patterns (formatted + backward-compatible legacy tokens)
     BOLD_RESPONSE_DELIMITER_PATTERN = re.compile(
         r'\*\*\s*\[\[RESPONSE_START\]\]\s*\*\*(.*?)\*\*\s*\[\[RESPONSE_END\]\]\s*\*\*',

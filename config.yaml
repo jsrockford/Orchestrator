@@ -415,6 +415,10 @@ interactive_macros:
       command: "/reset"
       description: "Reset the conversation"
       category: "slash"
+    switch_model:
+      command: "/model"
+      description: "Switch active model"
+      category: "slash"
     cycle_permission_mode:
       keys: ["S-Tab"]
       description: "Cycle: Auto-Accept → Plan → Normal"
@@ -444,6 +448,10 @@ interactive_macros:
     compress:
       command: "/compress"
       description: "Summarize to free context"
+      category: "slash"
+    switch_model:
+      command: "/model"
+      description: "Switch active model"
       category: "slash"
     toggle_yolo:
       keys: ["C-y"]
@@ -481,3 +489,8 @@ interactive_macros:
       command: "/tools"
       description: "List tools (desc/nodesc/schema)"
       category: "slash"
+    switch_model:
+      command: "/model"
+      description: "Switch active model"
+      category: "slash"
+      single_submit: true

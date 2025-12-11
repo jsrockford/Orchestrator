@@ -1,12 +1,15 @@
+# Creates and/or updates /docs/CODE_BIBLE.md - project code documentation for Python files
+# Version 0.2 (Created by AI STUDIO: GEMINI 3) - 12-6-25
+
 import os
 import httpx
 import re
 from datetime import datetime
 
 # ================= CONFIGURATION =================
-SOURCE_DIR = "./src"
-BIBLE_FILE = "./docs/CODE_BIBLE.md"
-API_URL = "http://127.0.0.1:5804/v1/chat/completions"
+SOURCE_DIR = "../src"
+BIBLE_FILE = "../docs/CODE_BIBLE.md"
+API_URL = "http://127.0.0.1:5804/v1/chat/completions"  # Adjust port if needed
 MODEL = "Granite-4.0-h-small"
 
 # TIMEOUT: Increased to 15 minutes for your large files

@@ -19,6 +19,7 @@ from ..controllers.session_backend import SessionBackendError, SessionNotFoundEr
 from ..utils.exceptions import SessionAlreadyExists
 from ..utils.logger import get_logger
 from ..utils.config_loader import get_config
+from ..utils.output_parser import OutputParser
 
 if TYPE_CHECKING:
     from .orchestrator import DevelopmentTeamOrchestrator
@@ -1061,6 +1062,33 @@ def register_control_routes(app: FastAPI) -> None:
                 detail=f"Failed to send macro: {exc}",
             ) from exc
 
+        # Wait for the command to complete and capture output
+        output = ""
+        try:
+            # Wait for controller to be ready (command complete)
+            wait_ready = getattr(controller, "wait_for_ready", None)
+            if callable(wait_ready):
+                import asyncio
+                # Run wait_for_ready in executor with timeout (5 seconds max)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(wait_ready),
+                        timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.debug("wait_for_ready() timed out for macro '%s' on %s", request.macro_name, agent)
+                    # Continue anyway - macro was sent successfully
+
+                # Capture the output
+                capture = getattr(controller, "capture_output", None)
+                if callable(capture):
+                    raw_output = capture()
+                    # Strip ANSI escape codes for clean display
+                    output = OutputParser.strip_ansi(raw_output) if raw_output else ""
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to wait for or capture macro response: %s", exc)
+            # Don't fail the request if we can't capture output
+
         description = macro_def.get("description")
         keys = macro_def.get("keys")
         command = macro_def.get("command")
@@ -1072,6 +1100,7 @@ def register_control_routes(app: FastAPI) -> None:
             "description": description,
             "keys": keys,
             "command": command,
+            "output": output,
             "timestamp": timestamp,
         }
         try:
@@ -1081,12 +1110,13 @@ def register_control_routes(app: FastAPI) -> None:
 
         return {
             "success": True,
-            "message": f"Macro '{request.macro_name}' sent to agent '{agent}'",
+            "message": f"Macro '{request.macro_name}' executed on agent '{agent}'",
             "agent": agent,
             "macro": request.macro_name,
             "description": description,
             "keys": keys,
             "command": command,
+            "output": output,
             "timestamp": timestamp,
         }
 
