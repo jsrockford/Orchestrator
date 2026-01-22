@@ -24,7 +24,7 @@
 2. **Test Worktree (`.../TestOrch`):**
    - **READ-ONLY** for you. The Human runs tests here.
 3. **Virtual Environment (`venv`):**
-   - Assume active.
+   - Verify active if running code.
 
 ## 🏗️ ARCHITECTURE SUMMARY
 *   **Core:** Python-based Orchestrator managing AI CLI sessions via `tmux`.
